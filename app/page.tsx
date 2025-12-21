@@ -18,9 +18,17 @@ export default function Dashboard() {
 
   const fetchPosts = async () => {
     setLoading(true);
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setLoading(false);
+      return;
+    }
+
     const { data, error } = await supabase
       .from('posts')
       .select('*')
+      .eq('user_id', session.user.id)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -52,23 +60,22 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-slate-800">Your Reels</h1>
+    <div className="space-y-6 pb-20 md:pb-0">
+      <div className="flex items-center justify-between px-2">
+        <h1 className="text-[34px] font-bold tracking-tight text-ios-text">Reels</h1>
         <button
           onClick={fetchPosts}
           disabled={loading}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+          className="text-ios-blue active:opacity-50 transition-opacity"
         >
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          Refresh
+          <RefreshCw size={22} className={loading ? 'animate-spin' : ''} />
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 px-2">
         {posts.map((post) => (
-          <div key={post.id} className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden flex flex-col">
-            <div className="aspect-[9/16] bg-black relative group">
+          <div key={post.id} className="ios-card bg-ios-card flex flex-col relative group">
+            <div className="aspect-[9/16] bg-black relative">
               <video
                 src={post.video_url}
                 className="w-full h-full object-cover"
@@ -78,30 +85,29 @@ export default function Dashboard() {
                 {getStatusBadge(post.status)}
               </div>
             </div>
-            <div className="p-4 flex-1 flex flex-col gap-2">
-              <div className="flex items-start gap-2">
-                <ALargeSmall className="text-slate-400 mt-1 flex-shrink-0" size={16} />
-                <p className="text-sm text-slate-600 line-clamp-3">{post.caption || 'No caption'}</p>
-              </div>
 
-              <div className="mt-auto pt-4 border-t border-slate-100 text-xs text-slate-400 flex justify-between items-center">
-                <span>{new Date(post.created_at).toLocaleDateString()}</span>
-                {post.status === 'failed' && post.error_message && (
-                  <div className="relative group/tooltip">
-                    <span className="text-red-500 font-medium cursor-help">Error Details</span>
-                    <div className="absolute bottom-full right-0 mb-2 w-48 p-2 bg-slate-800 text-white text-xs rounded shadow-lg opacity-0 group-hover/tooltip:opacity-100 transition-opacity pointer-events-none z-10">
-                      {post.error_message}
-                    </div>
-                  </div>
-                )}
-              </div>
+            <div className="p-3 flex-1 flex flex-col gap-1">
+              <p className="text-[13px] text-ios-text line-clamp-2 leading-tight">
+                {post.caption || 'No caption'}
+              </p>
+              <span className="text-[11px] text-ios-text-secondary mt-auto pt-2">
+                {new Date(post.created_at).toLocaleDateString()}
+              </span>
+
+              {post.status === 'failed' && post.error_message && (
+                <p className="text-[10px] text-ios-red truncate">{post.error_message}</p>
+              )}
             </div>
           </div>
         ))}
 
         {!loading && posts.length === 0 && (
-          <div className="col-span-full py-12 text-center text-slate-500 bg-white rounded-lg border border-slate-200 border-dashed">
-            <p>No posts found. Create your first Reel!</p>
+          <div className="col-span-full py-20 text-center text-ios-text-secondary flex flex-col items-center gap-4">
+            <div className="w-16 h-16 bg-gray-200 dark:bg-gray-800 rounded-full flex items-center justify-center">
+              <ALargeSmall size={32} className="opacity-50" />
+            </div>
+            <p className="font-medium">No Reels yet</p>
+            <p className="text-sm max-w-xs">Tap "New Post" to create your first Reel.</p>
           </div>
         )}
       </div>

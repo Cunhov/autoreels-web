@@ -1,26 +1,90 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  /* iOS System Colors - Light Mode */
+  --ios-background: #F2F2F7; /* systemGroupedBackground */
+  --ios-card: #FFFFFF; /* systemBackground */
+  --ios-text: #000000; /* label */
+  --ios-text-secondary: #8E8E93; /* secondaryLabel */
+  --ios-blue: #007AFF; /* systemBlue */
+  --ios-indigo: #5856D6; /* systemIndigo */
+  --ios-red: #FF3B30; /* systemRed */
+  --ios-green: #34C759; /* systemGreen */
+  --ios-separator: #C6C6C8; /* separator */
+  --ios-gray-2: #AEAeb2;
+  --ios-gray-3: #C7C7CC;
+  --ios-gray-4: #D1D1D6;
+  --ios-gray-5: #E5E5EA;
+  --ios-gray-6: #F2F2F7;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    /* iOS System Colors - Dark Mode */
+    --ios-background: #000000; /* systemGroupedBackground is pure black in some contexts or very dark gray */
+    --ios-card: #1C1C1E; /* secondarySystemGroupedBackground */
+    --ios-text: #FFFFFF;
+    --ios-text-secondary: #8E8E93;
+    --ios-separator: #38383A;
+    --ios-gray-2: #636366;
+    --ios-gray-3: #48484A;
+    --ios-gray-4: #3A3A3C;
+    --ios-gray-5: #2C2C2E;
+    --ios-gray-6: #1C1C1E;
   }
 }
 
+@theme inline {
+  --color-background: var(--ios-background);
+  --color-card: var(--ios-card);
+  --color-foreground: var(--ios-text);
+  --color-secondary-foreground: var(--ios-text-secondary);
+  --color-ios-blue: var(--ios-blue);
+  --color-ios-indigo: var(--ios-indigo);
+  --color-ios-red: var(--ios-red);
+  --color-ios-green: var(--ios-green);
+  --color-ios-separator: var(--ios-separator);
+  
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--ios-background);
+  color: var(--ios-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* iOS Utilities */
+.ios-blur {
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background-color: rgba(255, 255, 255, 0.7);
+}
+
+@media (prefers-color-scheme: dark) {
+  .ios-blur {
+    background-color: rgba(30, 30, 30, 0.7);
+  }
+}
+
+.ios-card {
+  background-color: var(--ios-card);
+  border-radius: 10px; /* Reduced radius for grouped inset look, updated to 10-12px usually */
+  overflow: hidden;
+}
+
+.ios-inset-grouped {
+  margin: 0 16px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.ios-btn {
+  transition: opacity 0.2s ease;
+}
+
+.ios-btn:active {
+  opacity: 0.5;
 }

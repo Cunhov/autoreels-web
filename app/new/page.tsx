@@ -44,12 +44,16 @@ export default function NewPost() {
             const videoUrl = publicUrlData.publicUrl;
 
             // 3. Insert into Database
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) throw new Error('You must be logged in to create a post.');
+
             const { error: insertError } = await supabase
                 .from('posts')
                 .insert({
                     video_url: videoUrl,
                     caption: caption,
-                    status: 'pending'
+                    status: 'pending',
+                    user_id: session.user.id
                 });
 
             if (insertError) throw insertError;
@@ -64,77 +68,71 @@ export default function NewPost() {
     };
 
     return (
-        <div className="max-w-2xl mx-auto">
-            <h1 className="text-2xl font-bold text-slate-800 mb-6">Create New Reel</h1>
+        <div className="max-w-2xl mx-auto pb-20 md:pb-0">
+            <h1 className="text-[34px] font-bold tracking-tight text-ios-text mb-6 px-4">New Reel</h1>
 
-            <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm">
-                <form onSubmit={handleSubmit} className="space-y-6">
+            <form onSubmit={handleSubmit} className="space-y-6">
 
-                    {/* File Upload Area */}
-                    <div className="space-y-2">
-                        <label className="block text-sm font-medium text-slate-700">Video File</label>
-                        <div className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${file ? 'border-indigo-500 bg-indigo-50' : 'border-slate-300 hover:border-indigo-400'}`}>
-
-                            {!file ? (
-                                <>
-                                    <Upload className="mx-auto h-12 w-12 text-slate-400" />
-                                    <div className="mt-4 flex text-sm leading-6 text-slate-600 justify-center">
-                                        <label htmlFor="file-upload" className="relative cursor-pointer rounded-md bg-white font-semibold text-indigo-600 focus-within:outline-none focus-within:ring-2 focus-within:ring-indigo-600 focus-within:ring-offset-2 hover:text-indigo-500 px-2">
-                                            <span>Upload a video</span>
-                                            <input id="file-upload" name="file-upload" type="file" className="sr-only" accept="video/*" onChange={handleFileChange} required />
-                                        </label>
-                                        <p className="pl-1">or drag and drop</p>
-                                    </div>
-                                    <p className="text-xs leading-5 text-slate-500">MP4, MOV up to 100MB</p>
-                                </>
-                            ) : (
-                                <div className="flex items-center justify-between bg-white p-2 rounded shadow-sm">
-                                    <span className="text-sm truncate max-w-[80%]">{file.name}</span>
-                                    <button type="button" onClick={() => setFile(null)} className="text-slate-400 hover:text-red-500">
-                                        <X size={20} />
-                                    </button>
+                {/* Visual File Picker */}
+                <div className="px-4">
+                    <label htmlFor="file-upload" className={`block w-full aspect-[9/16] max-w-[200px] mx-auto rounded-xl border-2 border-dashed transition-all relative overflow-hidden bg-ios-card ${file ? 'border-ios-blue' : 'border-ios-separator hover:border-ios-blue/50'}`}>
+                        {file ? (
+                            <div className="w-full h-full bg-black flex items-center justify-center relative">
+                                <video className="w-full h-full object-cover opacity-80" />
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                    <span className="text-white text-sm font-medium bg-black/50 px-3 py-1 rounded-full">{file.name}</span>
                                 </div>
-                            )}
-                        </div>
-                    </div>
+                                <button
+                                    type="button"
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        setFile(null);
+                                    }}
+                                    className="absolute top-2 right-2 bg-white/20 backdrop-blur-md p-1 rounded-full text-white"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="w-full h-full flex flex-col items-center justify-center text-ios-text-secondary gap-2 cursor-pointer">
+                                <Upload size={32} />
+                                <span className="text-sm font-medium">Select Video</span>
+                                <span className="text-[10px]">9:16 MP4</span>
+                            </div>
+                        )}
+                        <input id="file-upload" name="file-upload" type="file" className="absolute inset-0 opacity-0 cursor-pointer" accept="video/*" onChange={handleFileChange} required={!file} />
+                    </label>
+                </div>
 
-                    {/* Caption */}
-                    <div className="space-y-2">
-                        <label htmlFor="caption" className="block text-sm font-medium text-slate-700">Caption</label>
+                <div className="ios-inset-grouped bg-ios-card divide-y divide-ios-separator">
+                    <div className="bg-ios-card">
                         <textarea
                             id="caption"
                             rows={4}
-                            className="block w-full rounded-md border-0 py-1.5 text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-inset focus:ring-indigo-600 sm:text-sm sm:leading-6 p-3"
-                            placeholder="Write a catchy caption for your Reel..."
+                            className="block w-full bg-transparent p-4 text-[17px] text-ios-text placeholder:text-ios-text-secondary focus:outline-none resize-none"
+                            placeholder="Write a caption..."
                             value={caption}
                             onChange={(e) => setCaption(e.target.value)}
                         />
                     </div>
+                </div>
 
-                    {error && (
-                        <div className="p-3 bg-red-50 text-red-700 text-sm rounded-md">
-                            {error}
-                        </div>
-                    )}
-
-                    <div className="flex justify-end pt-4">
-                        <button
-                            type="submit"
-                            disabled={!file || uploading}
-                            className="px-6 py-2 bg-indigo-600 text-white font-medium rounded-md shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                        >
-                            {uploading ? (
-                                <>
-                                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                    Uploading...
-                                </>
-                            ) : (
-                                'Create Post'
-                            )}
-                        </button>
+                {error && (
+                    <div className="mx-4 p-3 bg-red-50 dark:bg-red-900/20 text-ios-red text-sm rounded-xl text-center">
+                        {error}
                     </div>
-                </form>
-            </div>
+                )}
+
+                <div className="px-4">
+                    <button
+                        type="submit"
+                        disabled={!file || uploading}
+                        className="ios-btn bg-ios-blue text-white w-full py-3.5 rounded-xl font-semibold text-[17px] disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                    >
+                        {uploading ? 'Uploading...' : 'Share'}
+                    </button>
+                </div>
+            </form>
         </div>
     );
 }
