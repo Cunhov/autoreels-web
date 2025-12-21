@@ -1,15 +1,34 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { Upload, X } from 'lucide-react';
+import { Upload, X, Radio, Calendar as CalendarIcon } from 'lucide-react';
+import { IOSInputRow } from '@/components/IOSComponents';
+
+interface Channel {
+    id: string;
+    name: string;
+    platform: string;
+}
 
 export default function NewPost() {
     const router = useRouter();
+    const [channels, setChannels] = useState<Channel[]>([]);
+    const [selectedChannel, setSelectedChannel] = useState('');
+    const [scheduledAt, setScheduledAt] = useState('');
     const [file, setFile] = useState<File | null>(null);
     const [caption, setCaption] = useState('');
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState('');
+
+    useEffect(() => {
+        fetchChannels();
+    }, []);
+
+    async function fetchChannels() {
+        const { data } = await supabase.from('channels').select('id, name, platform');
+        if (data) setChannels(data);
+    }
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -53,7 +72,9 @@ export default function NewPost() {
                     video_url: videoUrl,
                     caption: caption,
                     status: 'pending',
-                    user_id: session.user.id
+                    user_id: session.user.id,
+                    channel_id: selectedChannel || null,
+                    scheduled_at: scheduledAt || null
                 });
 
             if (insertError) throw insertError;
@@ -105,6 +126,36 @@ export default function NewPost() {
                 </div>
 
                 <div className="ios-inset-grouped bg-ios-card divide-y divide-ios-separator">
+                    <div className="flex items-center justify-between p-4 bg-ios-card">
+                        <label className="text-[17px] text-ios-text font-medium flex items-center gap-2">
+                            <Radio size={18} className="text-ios-blue" />
+                            Channel
+                        </label>
+                        <select
+                            value={selectedChannel}
+                            onChange={(e) => setSelectedChannel(e.target.value)}
+                            className="bg-transparent text-[17px] text-ios-blue text-right focus:outline-none"
+                        >
+                            <option value="">Default Account</option>
+                            {channels.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-ios-card">
+                        <label className="text-[17px] text-ios-text font-medium flex items-center gap-2">
+                            <CalendarIcon size={18} className="text-ios-blue" />
+                            Schedule
+                        </label>
+                        <input
+                            type="datetime-local"
+                            value={scheduledAt}
+                            onChange={(e) => setScheduledAt(e.target.value)}
+                            className="bg-transparent text-[17px] text-ios-blue text-right focus:outline-none"
+                        />
+                    </div>
+
                     <div className="bg-ios-card">
                         <textarea
                             id="caption"

@@ -1,115 +1,169 @@
-'use client';
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import { RefreshCw, ALargeSmall } from 'lucide-react';
+'use client'
+import { useState, useEffect } from 'react'
+import { supabase } from '@/lib/supabase'
+import { ChevronLeft, ChevronRight, Plus, RefreshCw, Calendar as CalendarIcon, Filter as FilterIcon } from 'lucide-react'
+import IOSButton from '@/components/IOSButton'
+import IOSCard from '@/components/IOSComponents'
 
 interface Post {
   id: string;
   video_url: string;
   caption: string;
-  status: 'pending' | 'processing_upload' | 'ready_to_publish' | 'published' | 'failed';
-  created_at: string;
-  error_message?: string;
+  status: string;
+  scheduled_at: string;
 }
 
-export default function Dashboard() {
+export default function CalendarPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const fetchPosts = async () => {
-    setLoading(true);
-
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      setLoading(false);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from('posts')
-      .select('*')
-      .eq('user_id', session.user.id)
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      console.error('Error fetching posts:', error);
-    } else {
-      setPosts((data as Post[]) || []);
-    }
-    setLoading(false);
-  };
+  const [currentDate, setCurrentDate] = useState(new Date());
 
   useEffect(() => {
     fetchPosts();
   }, []);
 
-  const getStatusBadge = (status: Post['status']) => {
-    const styles = {
-      pending: 'bg-yellow-100 text-yellow-800',
-      processing_upload: 'bg-blue-100 text-blue-800',
-      ready_to_publish: 'bg-indigo-100 text-indigo-800',
-      published: 'bg-green-100 text-green-800',
-      failed: 'bg-red-100 text-red-800',
-    };
+  async function fetchPosts() {
+    setLoading(true);
+    const { data } = await supabase.from('posts').select('*');
+    if (data) setPosts(data);
+    setLoading(false);
+  }
 
-    return (
-      <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border border-opacity-20 ${styles[status] || 'bg-gray-100'}`}>
-        {status.replace('_', ' ')}
-      </span>
-    );
+  const daysInMonth = (year: number, month: number) => new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = (year: number, month: number) => new Date(year, month, 1).getDay();
+
+  const year = currentDate.getFullYear();
+  const month = currentDate.getMonth();
+  const monthName = currentDate.toLocaleString('default', { month: 'long' });
+
+  const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
+  const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
+
+  const days = [];
+  const prevMonthDays = daysInMonth(year, month - 1);
+  const startDay = firstDayOfMonth(year, month);
+  const totalDays = daysInMonth(year, month);
+
+  // Padding for previous month
+  for (let i = startDay - 1; i >= 0; i--) {
+    days.push({ day: prevMonthDays - i, current: false });
+  }
+
+  // Days of current month
+  for (let i = 1; i <= totalDays; i++) {
+    days.push({ day: i, current: true, date: new Date(year, month, i) });
+  }
+
+  // Padding for next month
+  const remaining = 35 - days.length; // Use 35 (5 weeks) or adjust for 6 weeks if needed
+  const finalPadding = remaining > 0 ? remaining : (42 - days.length);
+  for (let i = 1; i <= finalPadding; i++) {
+    days.push({ day: i, current: false });
+  }
+
+  const getPostsForDay = (date: Date) => {
+    return posts.filter(p => {
+      if (!p.scheduled_at) return false;
+      const d = new Date(p.scheduled_at);
+      return d.getFullYear() === date.getFullYear() &&
+        d.getMonth() === date.getMonth() &&
+        d.getDate() === date.getDate();
+    });
   };
 
+  const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
   return (
-    <div className="space-y-6 pb-20 md:pb-0">
-      <div className="flex items-center justify-between px-2">
-        <h1 className="text-[34px] font-bold tracking-tight text-ios-text">Reels</h1>
-        <button
-          onClick={fetchPosts}
-          disabled={loading}
-          className="text-ios-blue active:opacity-50 transition-opacity"
-        >
-          <RefreshCw size={22} className={loading ? 'animate-spin' : ''} />
-        </button>
-      </div>
+    <div className="flex flex-col h-full bg-ios-background">
+      <header className="p-6 sticky top-0 z-20 bg-ios-background/80 backdrop-blur-md">
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-[34px] font-bold text-ios-text">Calendar</h1>
+          <div className="flex gap-2">
+            <IOSButton variant="secondary" className="!p-2">
+              <FilterIcon size={20} />
+            </IOSButton>
+            <IOSButton variant="primary" className="!py-2 !px-4" onClick={() => window.location.href = '/new'}>
+              <Plus size={20} className="inline mr-1" />
+              Schedule new post
+            </IOSButton>
+          </div>
+        </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 px-2">
-        {posts.map((post) => (
-          <div key={post.id} className="ios-card bg-ios-card flex flex-col relative group">
-            <div className="aspect-[9/16] bg-black relative">
-              <video
-                src={post.video_url}
-                className="w-full h-full object-cover"
-                controls
-              />
-              <div className="absolute top-2 right-2">
-                {getStatusBadge(post.status)}
+        <div className="flex items-center justify-between">
+          <div className="flex gap-1">
+            <IOSButton variant="secondary" className="!py-1.5 !px-3 font-medium text-[13px]">Week</IOSButton>
+            <IOSButton variant="primary" className="!py-1.5 !px-3 font-medium text-[13px]">Month</IOSButton>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <button onClick={prevMonth} className="p-1 text-ios-blue hover:bg-black/5 rounded-full">
+              <ChevronLeft size={24} />
+            </button>
+            <h2 className="text-lg font-semibold min-w-[140px] text-center">
+              {monthName} {year}
+            </h2>
+            <button onClick={nextMonth} className="p-1 text-ios-blue hover:bg-black/5 rounded-full">
+              <ChevronRight size={24} />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="flex-1 overflow-auto px-4 pb-10">
+        <div className="grid grid-cols-7 mb-2">
+          {weekDays.map(d => (
+            <div key={d} className="text-center text-[11px] font-bold text-ios-secondary uppercase py-2">
+              {d}
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-7 gap-px bg-ios-separator border border-ios-separator rounded-2xl overflow-hidden shadow-sm">
+          {days.map((item, i) => {
+            const dayPosts = item.current && item.date ? getPostsForDay(item.date) : [];
+            const isToday = item.current && item.date && item.date.toDateString() === new Date().toDateString();
+
+            return (
+              <div
+                key={i}
+                className={`min-h-[140px] bg-ios-card p-2 flex flex-col gap-2 ${!item.current ? 'bg-ios-background/50' : ''}`}
+              >
+                <div className="flex justify-between items-start">
+                  <span className={`text-[13px] font-medium w-6 h-6 flex items-center justify-center rounded-full ${isToday ? 'bg-ios-blue text-white' : item.current ? 'text-ios-text' : 'text-ios-secondary/50'
+                    }`}>
+                    {item.day}
+                  </span>
+                </div>
+
+                <div className="flex-1 space-y-1">
+                  {dayPosts.map(p => (
+                    <div
+                      key={p.id}
+                      className="group relative aspect-[9/16] rounded-lg overflow-hidden border border-ios-separator shadow-xs cursor-pointer hover:ring-2 ring-ios-blue transition-all"
+                    >
+                      <video src={p.video_url} className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/20 group-hover:bg-black/0 transition-colors" />
+                      <div className="absolute top-1 right-1">
+                        <div className={`w-2 h-2 rounded-full ${p.status === 'published' ? 'bg-green-500' : 'bg-yellow-500'
+                          }`} />
+                      </div>
+                      <div className="absolute bottom-0 inset-x-0 p-1 bg-black/40 backdrop-blur-xs">
+                        <p className="text-[8px] text-white font-medium truncate">
+                          {new Date(p.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  {item.current && dayPosts.length > 2 && (
+                    <div className="text-[10px] text-center font-bold text-ios-blue">
+                      +{dayPosts.length - 2} more
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-
-            <div className="p-3 flex-1 flex flex-col gap-1">
-              <p className="text-[13px] text-ios-text line-clamp-2 leading-tight">
-                {post.caption || 'No caption'}
-              </p>
-              <span className="text-[11px] text-ios-text-secondary mt-auto pt-2">
-                {new Date(post.created_at).toLocaleDateString()}
-              </span>
-
-              {post.status === 'failed' && post.error_message && (
-                <p className="text-[10px] text-ios-red truncate">{post.error_message}</p>
-              )}
-            </div>
-          </div>
-        ))}
-
-        {!loading && posts.length === 0 && (
-          <div className="col-span-full py-20 text-center text-ios-text-secondary flex flex-col items-center gap-4">
-            <div className="w-16 h-16 bg-gray-200 dark:bg-gray-800 rounded-full flex items-center justify-center">
-              <ALargeSmall size={32} className="opacity-50" />
-            </div>
-            <p className="font-medium">No Reels yet</p>
-            <p className="text-sm max-w-xs">Tap "New Post" to create your first Reel.</p>
-          </div>
-        )}
+            );
+          })}
+        </div>
       </div>
     </div>
   );

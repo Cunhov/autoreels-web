@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Home, PlusSquare, Settings, LogOut } from 'lucide-react';
+import { Calendar, BarChart2, Radio, Sliders, Settings, PlusSquare, LogOut } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 
 export default function Sidebar() {
@@ -9,7 +9,10 @@ export default function Sidebar() {
     const isActive = (path: string) => pathname === path;
 
     const navItems = [
-        { name: 'Dashboard', path: '/', icon: Home },
+        { name: 'Calendar', path: '/', icon: Calendar },
+        { name: 'Analytics', path: '/analytics', icon: BarChart2 },
+        { name: 'Channels', path: '/channels', icon: Radio },
+        { name: 'Planners', path: '/planners', icon: Sliders },
         { name: 'New Post', path: '/new', icon: PlusSquare },
         { name: 'Settings', path: '/settings', icon: Settings },
     ];
@@ -30,8 +33,8 @@ export default function Sidebar() {
                             key={item.path}
                             href={item.path}
                             className={`flex items-center gap-3 px-4 py-3 text-[17px] font-medium rounded-xl transition-all ${isActive(item.path)
-                                    ? 'bg-ios-blue/10 text-ios-blue'
-                                    : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
+                                ? 'bg-ios-blue/10 text-ios-blue'
+                                : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800'
                                 }`}
                         >
                             <item.icon size={22} strokeWidth={isActive(item.path) ? 2.5 : 2} />

@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Home, PlusSquare, Settings } from 'lucide-react';
+import { Calendar, BarChart2, Radio, Sliders, Settings, PlusSquare } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 
 export default function TabBar() {
@@ -8,8 +8,11 @@ export default function TabBar() {
     const isActive = (path: string) => pathname === path;
 
     const navItems = [
-        { name: 'Dashboard', path: '/', icon: Home },
-        { name: 'New Post', path: '/new', icon: PlusSquare },
+        { name: 'Calendar', path: '/', icon: Calendar },
+        { name: 'Analytics', path: '/analytics', icon: BarChart2 },
+        { name: 'Channels', path: '/channels', icon: Radio },
+        { name: 'Planners', path: '/planners', icon: Sliders },
+        { name: 'Post', path: '/new', icon: PlusSquare },
         { name: 'Settings', path: '/settings', icon: Settings },
     ];
 
