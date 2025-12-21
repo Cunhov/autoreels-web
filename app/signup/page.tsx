@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import IOSButton from '@/components/IOSButton'
@@ -13,7 +13,6 @@ export default function Signup() {
     const [error, setError] = useState<string | null>(null)
     const [success, setSuccess] = useState(false)
     const router = useRouter()
-    const supabase = createClientComponentClient()
 
     const handleSignup = async (e: React.FormEvent) => {
         e.preventDefault()
