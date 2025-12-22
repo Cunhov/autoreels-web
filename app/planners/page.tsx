@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { Sliders, Plus, Play, Pause, Trash2, Calendar, Instagram } from 'lucide-react'
+import { Sliders, Plus, Play, Pause, Trash2, Calendar, Instagram, Terminal, X, RefreshCw } from 'lucide-react'
 import IOSButton from '@/components/IOSButton'
 import IOSCard from '@/components/IOSComponents'
 import PlannerWizard from '@/components/PlannerWizard'
@@ -21,6 +21,9 @@ export default function PlannersPage() {
     const [loading, setLoading] = useState(true);
     const [isWizardOpen, setIsWizardOpen] = useState(false);
     const [editingPlanner, setEditingPlanner] = useState<Planner | null>(null);
+    const [viewingLogs, setViewingLogs] = useState<Planner | null>(null);
+    const [logs, setLogs] = useState<any[]>([]);
+    const [loadingLogs, setLoadingLogs] = useState(false);
 
     useEffect(() => {
         fetchPlanners();
@@ -75,6 +78,27 @@ export default function PlannersPage() {
         setIsWizardOpen(false);
         setEditingPlanner(null);
     };
+
+    async function fetchLogs(plannerId: string) {
+        setLoadingLogs(true);
+        try {
+            const { data } = await supabase
+                .from('planner_logs')
+                .select('*')
+                .eq('planner_id', plannerId)
+                .order('created_at', { ascending: false })
+                .limit(50);
+            setLogs(data || []);
+        } finally {
+            setLoadingLogs(false);
+        }
+    }
+
+    useEffect(() => {
+        if (viewingLogs) {
+            fetchLogs(viewingLogs.id);
+        }
+    }, [viewingLogs]);
 
     return (
         <div className="flex flex-col h-full bg-ios-background">
@@ -164,6 +188,13 @@ export default function PlannersPage() {
                                 </div>
                                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button
+                                        onClick={() => setViewingLogs(planner)}
+                                        className="p-2 text-ios-secondary hover:bg-ios-secondary/10 rounded-lg transition-colors"
+                                        title="View Logs"
+                                    >
+                                        <Terminal size={20} />
+                                    </button>
+                                    <button
                                         onClick={() => handleEdit(planner)}
                                         className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-lg transition-colors">
                                         <Sliders size={20} />
@@ -186,6 +217,63 @@ export default function PlannersPage() {
                 onSuccess={fetchPlanners}
                 initialData={editingPlanner}
             />
+
+            {/* Logs Modal */}
+            {viewingLogs && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-ios-background w-full max-w-2xl max-h-[80vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className="p-6 border-b border-ios-separator flex items-center justify-between">
+                            <div>
+                                <h2 className="text-xl font-bold text-ios-text">Logs: {viewingLogs.name}</h2>
+                                <p className="text-xs text-ios-secondary">Recently execution history</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    onClick={() => fetchLogs(viewingLogs.id)}
+                                    className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors"
+                                    disabled={loadingLogs}
+                                >
+                                    <RefreshCw size={20} className={loadingLogs ? 'animate-spin' : ''} />
+                                </button>
+                                <button
+                                    onClick={() => setViewingLogs(null)}
+                                    className="p-2 text-ios-secondary hover:bg-ios-secondary/10 rounded-full transition-colors"
+                                >
+                                    <X size={24} />
+                                </button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#f8f8f8]">
+                            {logs.length === 0 ? (
+                                <div className="text-center py-12 text-ios-secondary">
+                                    <Terminal size={32} className="mx-auto mb-2 opacity-20" />
+                                    <p>No logs found for this planner.</p>
+                                </div>
+                            ) : (
+                                logs.map(log => (
+                                    <div key={log.id} className="bg-white p-3 rounded-xl border border-ios-separator shadow-sm text-sm">
+                                        <div className="flex items-center justify-between mb-1">
+                                            <span className={`font-bold uppercase text-[10px] px-1.5 py-0.5 rounded ${log.level === 'error' ? 'bg-ios-red/10 text-ios-red' : 'bg-ios-blue/10 text-ios-blue'
+                                                }`}>
+                                                {log.level}
+                                            </span>
+                                            <span className="text-[10px] text-ios-secondary">
+                                                {new Date(log.created_at).toLocaleString()}
+                                            </span>
+                                        </div>
+                                        <p className="text-ios-text font-medium">{log.message}</p>
+                                        {log.details && (
+                                            <pre className="mt-2 text-[10px] bg-gray-50 p-2 rounded border border-gray-100 overflow-x-auto text-gray-500 max-h-32">
+                                                {JSON.stringify(log.details, null, 2)}
+                                            </pre>
+                                        )}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
