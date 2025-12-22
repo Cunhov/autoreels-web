@@ -1,0 +1,90 @@
+import React from 'react';
+import { ChevronLeft, ChevronRight, Plus, Filter, Calendar as CalendarIcon } from 'lucide-react';
+import IOSButton from '@/components/IOSButton';
+
+interface CalendarHeaderProps {
+    currentDate: Date;
+    viewMode: 'month' | 'week';
+    onViewChange: (mode: 'month' | 'week') => void;
+    onPrev: () => void;
+    onNext: () => void;
+    onToday: () => void;
+    onNewPost: () => void;
+}
+
+export default function CalendarHeader({
+    currentDate,
+    viewMode,
+    onViewChange,
+    onPrev,
+    onNext,
+    onToday,
+    onNewPost
+}: CalendarHeaderProps) {
+    const monthName = currentDate.toLocaleString('default', { month: 'long' });
+    const year = currentDate.getFullYear();
+
+    return (
+        <header className="px-6 py-4 sticky top-0 z-20 bg-ios-background/90 backdrop-blur-xl border-b border-ios-separator/50 transition-all duration-300">
+            <div className="flex items-center justify-between mb-4">
+                <h1 className="text-[34px] font-bold text-ios-text tracking-tight">Calendar</h1>
+                <div className="flex gap-3">
+                    <IOSButton variant="secondary" className="!p-2.5 bg-ios-card/80 hover:bg-ios-card shadow-sm">
+                        <Filter size={20} className="text-ios-blue" />
+                    </IOSButton>
+                    <IOSButton
+                        variant="primary"
+                        className="!py-2.5 !px-5 shadow-md shadow-ios-blue/20 transition-transform active:scale-95"
+                        onClick={onNewPost}
+                    >
+                        <Plus size={20} className="inline mr-1.5" />
+                        Schedule Post
+                    </IOSButton>
+                </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+                <div className="bg-ios-gray-5/50 p-1 rounded-lg flex gap-0.5 backdrop-blur-sm">
+                    <button
+                        onClick={() => onViewChange('week')}
+                        className={`px-4 py-1.5 text-[13px] font-medium rounded-md transition-all duration-300 ${viewMode === 'week'
+                                ? 'bg-ios-card text-ios-text shadow-sm'
+                                : 'text-ios-text-secondary hover:text-ios-text'
+                            }`}
+                    >
+                        Week
+                    </button>
+                    <button
+                        onClick={() => onViewChange('month')}
+                        className={`px-4 py-1.5 text-[13px] font-medium rounded-md transition-all duration-300 ${viewMode === 'month'
+                                ? 'bg-ios-card text-ios-text shadow-sm'
+                                : 'text-ios-text-secondary hover:text-ios-text'
+                            }`}
+                    >
+                        Month
+                    </button>
+                </div>
+
+                <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={onPrev}
+                            className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors active:scale-90"
+                        >
+                            <ChevronLeft size={24} />
+                        </button>
+                        <h2 className="text-xl font-semibold min-w-[160px] text-center tabular-nums cursor-pointer hover:opacity-70 transition-opacity" onClick={onToday}>
+                            {monthName} <span className="text-ios-text-secondary">{year}</span>
+                        </h2>
+                        <button
+                            onClick={onNext}
+                            className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors active:scale-90"
+                        >
+                            <ChevronRight size={24} />
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+    );
+}
