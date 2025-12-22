@@ -52,30 +52,15 @@ export default function PlannersPage() {
                         <Sliders size={48} className="mx-auto mb-4 opacity-50" strokeWidth={1} />
                         <h3 className="text-xl font-semibold mb-2 text-ios-text">No active planners</h3>
                         <p className="max-w-xs mx-auto mb-6">Create a planner to automatically generate and schedule reels based on your niche.</p>
-                        <IOSButton variant="primary" className="mx-auto">Create Your First Planner</IOSButton>
+                        <IOSButton variant="primary" className="mx-auto" onClick={() => alert('Planner creation coming soon!')}>
+                            Create Your First Planner
+                        </IOSButton>
                     </IOSCard>
 
                     <h3 className="text-lg font-bold px-2">Templates</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <IOSCard className="p-4 flex gap-4 cursor-pointer hover:bg-ios-card/80">
-                            <div className="w-12 h-12 rounded-2xl bg-blue-100 flex items-center justify-center text-blue-600">
-                                <Clock size={24} />
-                            </div>
-                            <div>
-                                <h4 className="font-bold">Daily Motivation</h4>
-                                <p className="text-[13px] text-ios-secondary">Posts 1 reel every day at 9:00 AM</p>
-                            </div>
-                        </IOSCard>
-                        <IOSCard className="p-4 flex gap-4 cursor-pointer hover:bg-ios-card/80">
-                            <div className="w-12 h-12 rounded-2xl bg-purple-100 flex items-center justify-center text-purple-600">
-                                <Calendar size={24} />
-                            </div>
-                            <div>
-                                <h4 className="font-bold">Weekly Digest</h4>
-                                <p className="text-[13px] text-ios-secondary">Posts a summary every Sunday</p>
-                            </div>
-                        </IOSCard>
-                    </div>
+                    <IOSCard className="p-6 text-center text-ios-secondary">
+                        <p className="text-sm italic">Automated planner templates (Daily Motivation, Weekly Digest) are coming soon.</p>
+                    </IOSCard>
                 </div>
             ) : (
                 <div className="space-y-4">
@@ -87,12 +72,14 @@ export default function PlannersPage() {
                                 </div>
                                 <div>
                                     <h4 className="font-bold">{planner.name}</h4>
-                                    <p className="text-[13px] text-ios-secondary">Next run: Today at 5:00 PM</p>
+                                    <p className="text-[13px] text-ios-secondary">
+                                        {planner.is_active ? 'Active' : 'Paused'}
+                                    </p>
                                 </div>
                             </div>
                             <div className="flex gap-2">
                                 <button className="p-2 text-ios-blue hover:bg-ios-background rounded-lg transition-colors">
-                                    <Clock size={18} />
+                                    <Sliders size={18} />
                                 </button>
                                 <button className="p-2 text-ios-red hover:bg-ios-background rounded-lg transition-colors">
                                     <Trash2 size={18} />

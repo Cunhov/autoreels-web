@@ -42,10 +42,9 @@ export default function ChannelsPage() {
     const platforms = [
         { name: 'All', icon: Shield, count: channels.length },
         { name: 'Instagram', icon: Instagram, count: channels.filter(c => c.platform === 'instagram').length },
-        { name: 'Facebook', icon: Facebook, count: 0 },
-        { name: 'Twitter', icon: Twitter, count: 0 },
-        { name: 'Youtube', icon: Youtube, count: 0 },
     ];
+
+    const filteredPlatforms = platforms.filter(p => p.name === 'All' || p.count > 0);
 
     const filteredChannels = channels.filter(c => {
         const matchesSearch = c.name.toLowerCase().includes(search.toLowerCase());
@@ -86,7 +85,7 @@ export default function ChannelsPage() {
                 {/* Platform Sidebar */}
                 <aside className="w-64 hidden lg:block overflow-y-auto">
                     <div className="space-y-1">
-                        {platforms.map((p) => (
+                        {filteredPlatforms.map((p) => (
                             <button
                                 key={p.name}
                                 onClick={() => setSelectedPlatform(p.name)}
