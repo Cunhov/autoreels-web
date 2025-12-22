@@ -716,30 +716,16 @@ export default function ContentLibrary({
     });
 
     const handleSelectAll = () => {
-        // Select all currently filtered items
         const allFilteredIds = filteredItems.map(i => i.id);
-        // Merge with existing selection to not lose items selected in other folders/filters if we want persistent selection?
-        // Usually Select All in a view means "Select these". 
-        // Let's replace selection or add? "Add" is safer for "Select All Apparent".
-        // But if I want to select ONLY these, I might expect others to be deselected?
-        // The user said "Select all options apparent".
-        // Let's add them to the set.
-        const newSet = new Set(selectedIds);
-        allFilteredIds.forEach(id => newSet.add(id));
-        setSelectedIds(Array.from(newSet));
-    };
+        const allSelected = allFilteredIds.every(id => selectedIds.includes(id));
 
-    const handleDeselectAll = () => {
-        if (selectedIds.length === 0 && filteredItems.length > 0) {
-            // Case: Nothing selected, maybe user meant "Clear Selection" but nothing is selected?
-            // User asked for "Select All" and "Deselect All".
-            // If items are selected, Deselect All should probably clear the selection of visible items?
-            // Or Clear All Selection globally?
-            setSelectedIds([]);
+        if (allSelected) {
+            // Deselect only the visible ones
+            setSelectedIds(selectedIds.filter(id => !allFilteredIds.includes(id)));
         } else {
-            // Deselect only the visible ones? Or just clear all?
-            // "Deselect All" usually implies clearing the selection.
-            setSelectedIds([]);
+            // Select all visible ones
+            const newSet = new Set([...selectedIds, ...allFilteredIds]);
+            setSelectedIds(Array.from(newSet));
         }
     };
 
@@ -786,22 +772,18 @@ export default function ContentLibrary({
                     {/* Selection Actions & Select All */}
                     <div className="flex items-center gap-2">
                         {/* Select All / Deselect All - Visible always or only when items exist? */}
-                        {filteredItems.length > 0 && mode === 'manage' && (
+                        {/* Select All / Deselect All Toggle */}
+                        {filteredItems.length > 0 && (
                             <div className="flex items-center gap-1 mr-2">
                                 <button
                                     onClick={handleSelectAll}
-                                    className="text-xs font-medium text-ios-blue hover:bg-ios-blue/10 px-2 py-1 rounded transition-colors"
+                                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${filteredItems.every(i => selectedIds.includes(i.id))
+                                        ? 'bg-ios-blue text-white border-ios-blue'
+                                        : 'bg-ios-card border-ios-separator text-ios-blue hover:bg-ios-blue/5'
+                                        }`}
                                 >
-                                    Select All
+                                    {filteredItems.every(i => selectedIds.includes(i.id)) ? 'Deselect All' : 'Select All'}
                                 </button>
-                                {selectedIds.length > 0 && (
-                                    <button
-                                        onClick={handleDeselectAll}
-                                        className="text-xs font-medium text-ios-secondary hover:text-ios-text hover:bg-black/5 px-2 py-1 rounded transition-colors"
-                                    >
-                                        Deselect
-                                    </button>
-                                )}
                             </div>
                         )}
 
@@ -866,8 +848,8 @@ export default function ContentLibrary({
                     </div>
                 </div>
 
-                {/* Search */}
-                <div className="relative w-full flex gap-2">
+                {/* Search & Bulk Actions */}
+                <div className="relative w-full flex items-center gap-2">
                     <div className="relative flex-1">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                         <input
@@ -878,6 +860,22 @@ export default function ContentLibrary({
                             className="w-full bg-ios-card/50 border border-ios-separator rounded-xl py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-ios-blue transition-all"
                         />
                     </div>
+
+                    {/* Select All shortcut in Search Row */}
+                    {filteredItems.length > 0 && (
+                        <button
+                            onClick={handleSelectAll}
+                            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm font-medium transition-all ${filteredItems.every(i => selectedIds.includes(i.id))
+                                    ? 'bg-ios-blue text-white border-ios-blue shadow-sm'
+                                    : 'bg-ios-card border-ios-separator text-ios-secondary hover:text-ios-blue hover:border-ios-blue/30'
+                                }`}
+                            title={filteredItems.every(i => selectedIds.includes(i.id)) ? 'Deselect All' : 'Select All'}
+                        >
+                            {filteredItems.every(i => selectedIds.includes(i.id)) ? <Check size={16} /> : <div className="w-4 h-4 border-2 border-current rounded-sm" />}
+                            <span className="hidden sm:inline">Select All</span>
+                        </button>
+                    )}
+
                     <button
                         onClick={() => setShowFilters(!showFilters)}
                         className={`p-2 rounded-xl transition-colors ${showFilters ? 'bg-ios-blue text-white shadow-sm' : 'bg-ios-card border border-ios-separator text-ios-secondary hover:text-ios-text'}`}

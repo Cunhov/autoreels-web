@@ -45,7 +45,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
     const [sleepEnabled, setSleepEnabled] = useState(false);
     const [sleepStart, setSleepStart] = useState('00:00');
     const [sleepEnd, setSleepEnd] = useState('06:00');
-    const [sortOrder, setSortOrder] = useState('random'); // random, repeat, new_to_old, old_to_new
+    const [sortOrder, setSortOrder] = useState('random_loop'); // random_loop, old_to_new, new_to_old
 
     // Advanced Content Settings
     const [mediaType, setMediaType] = useState<'REELS' | 'STORIES' | 'IMAGE' | 'CAROUSEL' | 'VIDEO'>('REELS');
@@ -525,10 +525,9 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                             <label className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide mb-3">Sort Order</label>
                             <div className="grid grid-cols-1 gap-2">
                                 {[
-                                    { id: 'random', label: 'Random', desc: 'Schedule will share posts in random order without duplicates.' },
-                                    { id: 'repeat', label: 'Repeat Planner', desc: 'Planner repeats after verified content is finished.' },
-                                    { id: 'new_to_old', label: 'From New to Old', desc: 'Schedule will sort posts from last uploaded to first.' },
-                                    { id: 'old_to_new', label: 'From Old to New', desc: 'Schedule will sort posts from old to new. Waits for new posts.' },
+                                    { id: 'random_loop', label: 'Infinite Random', desc: 'Posts randomly without duplicates. Repeats automatically once all items are posted.' },
+                                    { id: 'old_to_new', label: 'Oldest to Newest', desc: 'Posts items in chronological order. Repeats once the end is reached.' },
+                                    { id: 'new_to_old', label: 'Newest to Oldest', desc: 'Posts items in reverse chronological order. Repeats once the end is reached.' },
                                 ].map(option => (
                                     <div
                                         key={option.id}
