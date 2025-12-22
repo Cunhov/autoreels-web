@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
-import { X, ChevronRight, ChevronLeft, Calendar, Clock, Instagram, Layers, ArrowUpDown, Check } from 'lucide-react';
+import { X, ChevronRight, ChevronLeft, Calendar, Clock, Instagram, Layers, ArrowUpDown, Check, Image as ImageIcon, Film } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import MediaUploader from './MediaUploader';
 import ContentLibrary from './ContentLibrary';
@@ -47,13 +47,34 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
     const [sleepEnd, setSleepEnd] = useState('06:00');
     const [sortOrder, setSortOrder] = useState('random'); // random, repeat, new_to_old, old_to_new
 
+    // Advanced Content Settings
+    const [mediaType, setMediaType] = useState<'REELS' | 'STORIES' | 'IMAGE' | 'CAROUSEL' | 'VIDEO'>('REELS');
+    const [shareToFeed, setShareToFeed] = useState(true);
+    const [isCarousel, setIsCarousel] = useState(false);
+    const [caption, setCaption] = useState('');
+    const [location, setLocation] = useState('');
+
     useEffect(() => {
         if (isOpen) {
             fetchChannels();
-            // Reset state slightly
             setStep(0);
         }
     }, [isOpen]);
+
+    // When files change, auto-detect media type if simple
+    useEffect(() => {
+        if (files.length > 0) {
+            const hasVideo = files.some(f => f.type.startsWith('video/'));
+            const hasImage = files.some(f => f.type.startsWith('image/'));
+
+            if (hasVideo && !hasImage) setMediaType('REELS');
+            else if (!hasVideo && hasImage) setMediaType('IMAGE');
+
+            if (files.length > 1) {
+                // Propose Carousel if multiple images, but user must confirm
+            }
+        }
+    }, [files]);
 
     async function fetchChannels() {
         const { data } = await supabase
@@ -81,14 +102,15 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
     };
 
     const uploadFiles = async (userId: string) => {
-        const uploadedUrls: string[] = [];
+        const uploadedItems: { url: string, type: string }[] = [];
 
         for (const file of files) {
             const fileExt = file.name.split('.').pop();
             const fileName = `${userId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+            const fileType = file.type.startsWith('image/') ? 'image' : 'video';
 
             const { error: uploadError } = await supabase.storage
-                .from('instagram-videos')
+                .from('instagram-videos') // Keeping existing bucket name for now
                 .upload(fileName, file);
 
             if (uploadError) {
@@ -100,9 +122,9 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                 .from('instagram-videos')
                 .getPublicUrl(fileName);
 
-            uploadedUrls.push(data.publicUrl);
+            uploadedItems.push({ url: data.publicUrl, type: fileType });
         }
-        return uploadedUrls;
+        return uploadedItems;
     };
 
     const handleSubmit = async () => {
@@ -113,14 +135,58 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
             if (!session) throw new Error('Not authenticated');
 
             // 1. Upload New Files
-            const uploadedUrls = await uploadFiles(session.user.id);
+            const uploadedItems = await uploadFiles(session.user.id);
 
             // 2. Prepare Content Array
-            // Combine raw uploads and selected library items
-            const content = [
-                ...uploadedUrls.map(url => ({ type: 'video', url })),
-                ...selectedContentIds.map(id => ({ type: 'library_item', id }))
-            ];
+            let content;
+
+            if (isCarousel) {
+                // If creating a SINGLE carousel post from all items
+                // Note: We need children_urls array.
+                // For library items, we only have ID here. 
+                // Currently assume library items are NOT supported in Carousel mixing yet or resolved by ID later?
+                // Ideally we resolve Library Items URLs here, but we can't easily fetch them all without query.
+                // For simplicity, we'll store them as mixed list and assume backend handles it?
+                // The new backend logic expects children_urls: {url, type}[].
+                // We'll map library_item to type 'library_item' and let backend/scheduler resolve it?
+                // Or I can't resolve it.
+                // Assuming currently user only uses upload for carousel in this flow.
+
+                content = [{
+                    type: 'config', // Special type for fully configured post
+                    media_type: 'CAROUSEL',
+                    children_urls: [
+                        ...uploadedItems,
+                        // If library items selected, we might fail or need to fetch their URLs.
+                        // For now ignoring library items in carousel unless we fetch.
+                    ],
+                    caption,
+                    location_id: location
+                }];
+
+                if (selectedContentIds.length > 0) {
+                    alert("Note: Selected library items are not yet supported in Carousel creation via Wizard. Only uploaded files included.");
+                }
+            } else {
+                // Separate Posts
+                content = [
+                    ...uploadedItems.map(item => ({
+                        ...item,
+                        media_type: mediaType,
+                        share_to_feed: shareToFeed,
+                        caption,
+                        location_id: location
+                    })),
+                    ...selectedContentIds.map(id => ({
+                        type: 'library_item',
+                        id,
+                        media_type: mediaType, // Applies preference to library items too
+                        share_to_feed: shareToFeed,
+                        caption, // Applies same caption to all?
+                        location_id: location
+                    }))
+                ];
+            }
 
             // 3. Prepare Config in JSON
             const plannerConfig = {
@@ -161,7 +227,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-ios-card w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="bg-ios-card w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[95vh]">
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-ios-separator flex items-center justify-between bg-ios-background">
                     <div>
@@ -248,8 +314,10 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
 
                     {/* Step 2: Content */}
                     {step === 2 && (
-                        <div className="animate-in fade-in slide-in-from-right-4 duration-300 flex flex-col h-full">
-                            <div className="flex gap-2 mb-4 p-1 bg-ios-separator/50 rounded-lg shrink-0">
+                        <div className="animate-in fade-in slide-in-from-right-4 duration-300 flex flex-col h-full space-y-4">
+
+                            {/* Tabs */}
+                            <div className="flex gap-2 p-1 bg-ios-separator/50 rounded-lg shrink-0">
                                 <button
                                     onClick={() => setContentTab('upload')}
                                     className={`flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition-all ${contentTab === 'upload' ? 'bg-white shadow-sm text-ios-text' : 'text-ios-secondary hover:text-ios-text'
@@ -266,11 +334,12 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                                 </button>
                             </div>
 
-                            <div className="flex-1 overflow-hidden">
+                            {/* Uploader / Library */}
+                            <div className="flex-1 overflow-hidden min-h-[300px]">
                                 {contentTab === 'upload' ? (
                                     <MediaUploader files={files} onFilesChange={setFiles} />
                                 ) : (
-                                    <div className="h-full border border-ios-separator rounded-xl overflow-hidden">
+                                    <div className="h-full border border-ios-separator rounded-xl overflow-hidden min-h-[300px]">
                                         <ContentLibrary
                                             mode="select"
                                             initialSelection={selectedContentIds}
@@ -280,15 +349,85 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                                 )}
                             </div>
 
-                            <p className="text-xs text-ios-secondary mt-2">
+                            <p className="text-xs text-ios-secondary">
                                 {files.length} new files, {selectedContentIds.length} library items selected.
                             </p>
+
+                            {/* Post Configuration */}
+                            <div className="bg-ios-card border border-ios-separator rounded-xl p-4 space-y-4 shadow-sm">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-[13px] font-bold text-ios-secondary uppercase tracking-wide">Post Configuration</h3>
+                                    {(files.length + selectedContentIds.length > 1) && (
+                                        <div
+                                            onClick={() => setIsCarousel(!isCarousel)}
+                                            className="flex items-center gap-2 cursor-pointer"
+                                        >
+                                            <div className={`w-8 h-5 rounded-full relative transition-colors ${isCarousel ? 'bg-ios-blue' : 'bg-gray-300'}`}>
+                                                <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform ${isCarousel ? 'translate-x-[14px]' : 'translate-x-1'}`} />
+                                            </div>
+                                            <span className="text-xs text-ios-text font-medium">Group as Carousel</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-xs font-medium text-ios-text mb-1.5 block">Media Type</label>
+                                        <select
+                                            value={mediaType}
+                                            onChange={(e) => setMediaType(e.target.value as any)}
+                                            className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
+                                            disabled={isCarousel} // Forced to CAROUSEL if isCarousel
+                                        >
+                                            <option value="REELS">Reels</option>
+                                            <option value="IMAGE">Post / Image</option>
+                                            <option value="STORIES">Story</option>
+                                            <option value="VIDEO">Video</option>
+                                        </select>
+                                    </div>
+                                    {(mediaType === 'REELS' && !isCarousel) && (
+                                        <div className="flex flex-col justify-center">
+                                            <label className="text-xs font-medium text-ios-text mb-1.5 block">Options</label>
+                                            <div
+                                                onClick={() => setShareToFeed(!shareToFeed)}
+                                                className="flex items-center gap-2 cursor-pointer"
+                                            >
+                                                <div className={`w-4 h-4 border rounded flex items-center justify-center ${shareToFeed ? 'bg-ios-blue border-ios-blue' : 'border-gray-300'}`}>
+                                                    {shareToFeed && <Check size={10} className="text-white" />}
+                                                </div>
+                                                <span className="text-sm text-ios-text">Share to Feed</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <div>
+                                    <label className="text-xs font-medium text-ios-text mb-1.5 block">Caption</label>
+                                    <textarea
+                                        value={caption}
+                                        onChange={(e) => setCaption(e.target.value)}
+                                        className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-16 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400"
+                                        placeholder="Write a caption for your post(s)..."
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="text-xs font-medium text-ios-text mb-1.5 block">Location ID (Optional)</label>
+                                    <input
+                                        value={location}
+                                        onChange={(e) => setLocation(e.target.value)}
+                                        className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
+                                        placeholder="Instagram Location ID"
+                                    />
+                                </div>
+                            </div>
                         </div>
                     )}
 
                     {/* Step 3: Schedule */}
                     {step === 3 && (
                         <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
+                            {/* ... Configs ... */}
                             <div>
                                 <label className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide mb-2">Posting Interval</label>
                                 <div className="flex gap-4">

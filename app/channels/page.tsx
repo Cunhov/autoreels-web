@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { Plus, Search, Instagram, ExternalLink, Settings, Shield, Radio, MoreVertical } from 'lucide-react'
+import { Plus, Search, Instagram, Pencil, Trash2 } from 'lucide-react'
 import IOSButton from '@/components/IOSButton'
 import IOSCard from '@/components/IOSComponents'
 import ChannelModal from '@/components/ChannelModal'
@@ -12,6 +12,8 @@ interface Channel {
     platform: string;
     status: string;
     account_id: string;
+    access_token?: string;
+    profile_picture_url?: string;
 }
 
 export default function ChannelsPage() {
@@ -19,6 +21,7 @@ export default function ChannelsPage() {
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [editingChannel, setEditingChannel] = useState<Channel | undefined>(undefined);
 
     useEffect(() => {
         fetchChannels();
@@ -41,6 +44,33 @@ export default function ChannelsPage() {
             setLoading(false);
         }
     }
+
+    const handleEdit = (channel: Channel) => {
+        setEditingChannel(channel);
+        setIsModalOpen(true);
+    };
+
+    const handleDelete = async (id: string) => {
+        if (!confirm('Are you sure you want to delete this channel?')) return;
+
+        try {
+            const { error } = await supabase
+                .from('channels')
+                .delete()
+                .eq('id', id);
+
+            if (error) throw error;
+            fetchChannels();
+        } catch (error) {
+            console.error('Error deleting channel:', error);
+            alert('Failed to delete channel');
+        }
+    };
+
+    const handleCloseModal = () => {
+        setIsModalOpen(false);
+        setEditingChannel(undefined);
+    };
 
     const filteredChannels = channels.filter(c =>
         c.name.toLowerCase().includes(search.toLowerCase())
@@ -98,11 +128,21 @@ export default function ChannelsPage() {
                         <div className="bg-ios-card rounded-2xl border border-ios-separator overflow-hidden divide-y divide-ios-separator shadow-sm">
                             {filteredChannels.map((channel) => (
                                 <div key={channel.id} className="flex items-center p-4 hover:bg-black/5 transition-colors group">
-                                    <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 p-[2px] mr-4 shadow-sm">
-                                        <div className="w-full h-full rounded-full bg-white flex items-center justify-center">
-                                            <Instagram size={24} className="text-pink-600" />
+                                    {channel.profile_picture_url ? (
+                                        <div className="w-12 h-12 rounded-full mr-4 shadow-sm overflow-hidden border border-ios-separator">
+                                            <img
+                                                src={channel.profile_picture_url}
+                                                alt={channel.name}
+                                                className="w-full h-full object-cover"
+                                            />
                                         </div>
-                                    </div>
+                                    ) : (
+                                        <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 p-[2px] mr-4 shadow-sm">
+                                            <div className="w-full h-full rounded-full bg-white flex items-center justify-center">
+                                                <Instagram size={24} className="text-pink-600" />
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="flex-1">
                                         <div className="flex items-center gap-2 mb-0.5">
                                             <h4 className="font-semibold text-[17px] text-ios-text">{channel.name}</h4>
@@ -113,11 +153,19 @@ export default function ChannelsPage() {
                                         <p className="text-[13px] text-ios-secondary font-mono">ID: {channel.account_id}</p>
                                     </div>
                                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-lg transition-colors" title="View settings">
-                                            <Settings size={18} />
+                                        <button
+                                            onClick={() => handleEdit(channel)}
+                                            className="p-2 text-ios-text hover:bg-ios-text/10 rounded-lg transition-colors"
+                                            title="Edit channel"
+                                        >
+                                            <Pencil size={18} />
                                         </button>
-                                        <button className="p-2 text-ios-text hover:bg-ios-text/10 rounded-lg transition-colors" title="More options">
-                                            <MoreVertical size={18} />
+                                        <button
+                                            onClick={() => handleDelete(channel.id)}
+                                            className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                                            title="Delete channel"
+                                        >
+                                            <Trash2 size={18} />
                                         </button>
                                     </div>
                                 </div>
@@ -129,8 +177,9 @@ export default function ChannelsPage() {
 
             <ChannelModal
                 isOpen={isModalOpen}
-                onClose={() => setIsModalOpen(false)}
+                onClose={handleCloseModal}
                 onSuccess={fetchChannels}
+                channel={editingChannel}
             />
         </div>
     );

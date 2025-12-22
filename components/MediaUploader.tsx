@@ -1,6 +1,6 @@
 'use client';
 import { useState, useRef } from 'react';
-import { Upload, X, Film, PlayCircle } from 'lucide-react';
+import { Upload, X, Film, Image as ImageIcon } from 'lucide-react';
 
 interface MediaUploaderProps {
     files: File[];
@@ -22,7 +22,9 @@ export default function MediaUploader({ files, onFilesChange }: MediaUploaderPro
         e.preventDefault();
         setIsDragging(false);
         if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-            const newFiles = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('video/'));
+            const newFiles = Array.from(e.dataTransfer.files).filter(file =>
+                file.type.startsWith('video/') || file.type.startsWith('image/')
+            );
             onFilesChange([...files, ...newFiles]);
         }
     };
@@ -46,15 +48,15 @@ export default function MediaUploader({ files, onFilesChange }: MediaUploaderPro
                 <div className="w-16 h-16 bg-ios-blue/10 text-ios-blue rounded-full flex items-center justify-center mb-4">
                     <Upload size={32} />
                 </div>
-                <h3 className="text-lg font-semibold text-ios-text mb-1">Upload Videos</h3>
+                <h3 className="text-lg font-semibold text-ios-text mb-1">Upload Media</h3>
                 <p className="text-ios-secondary text-sm max-w-[200px]">
-                    Drag and drop your video files here or click to browse.
+                    Drag and drop images or videos here or click to browse.
                 </p>
                 <input
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    accept="video/*"
+                    accept="video/*,image/*"
                     className="hidden"
                     onChange={handleFileChange}
                 />
@@ -77,7 +79,7 @@ export default function MediaUploader({ files, onFilesChange }: MediaUploaderPro
                         {files.map((file, idx) => (
                             <div key={`${file.name}-${idx}`} className="flex items-center p-3 hover:bg-black/5 group">
                                 <div className="w-10 h-10 bg-ios-background rounded-lg flex items-center justify-center text-ios-blue mr-3 flex-shrink-0">
-                                    <Film size={20} />
+                                    {file.type.startsWith('image/') ? <ImageIcon size={20} /> : <Film size={20} />}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-medium truncate">{file.name}</p>
