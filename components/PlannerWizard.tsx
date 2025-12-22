@@ -16,6 +16,7 @@ interface PlannerWizardProps {
     isOpen: boolean;
     onClose: () => void;
     onSuccess: () => void;
+    initialData?: any;
 }
 
 const STEPS = [
@@ -26,7 +27,7 @@ const STEPS = [
     { id: 'sorting', title: 'Sorting' }
 ];
 
-export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWizardProps) {
+export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData }: PlannerWizardProps) {
     const [step, setStep] = useState(0);
     const [loading, setLoading] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -58,8 +59,60 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
         if (isOpen) {
             fetchChannels();
             setStep(0);
+
+            if (initialData) {
+                setName(initialData.name || '');
+                setSelectedChannels(initialData.channel_ids || []);
+
+                const config = initialData.config || {};
+                setFrequencyValue(config.frequency?.value || 1);
+                setFrequencyUnit(config.frequency?.unit || 'hours');
+                setTimezone(config.timezone || 'America/Sao_Paulo');
+                setStartTime(config.start_time || '');
+                setSortOrder(config.sort_order || 'random_loop');
+
+                if (config.sleep_schedule) {
+                    setSleepEnabled(true);
+                    setSleepStart(config.sleep_schedule.start || '00:00');
+                    setSleepEnd(config.sleep_schedule.end || '06:00');
+                } else {
+                    setSleepEnabled(false);
+                }
+
+                // Load existing content (we only show IDs for library items if possible)
+                const content = config.content || [];
+                if (content.length > 0) {
+                    const libIds = content.filter((c: any) => c.type === 'library_item').map((c: any) => c.id);
+                    setSelectedContentIds(libIds);
+                    setContentTab('library');
+
+                    // Detect if it was a carousel
+                    if (content[0]?.media_type === 'CAROUSEL') {
+                        setIsCarousel(true);
+                        setMediaType('CAROUSEL');
+                        setCaption(content[0].caption || '');
+                        setLocation(content[0].location_id || '');
+                    } else {
+                        setMediaType(content[0]?.media_type || 'REELS');
+                        setShareToFeed(content[0]?.share_to_feed !== false);
+                        setCaption(content[0]?.caption || '');
+                        setLocation(content[0]?.location_id || '');
+                    }
+                }
+            } else {
+                // Reset for new
+                setName('');
+                setSelectedChannels([]);
+                setSelectedContentIds([]);
+                setFiles([]);
+                setFrequencyValue(1);
+                setFrequencyUnit('hours');
+                setStartTime('');
+                setCaption('');
+                setIsCarousel(false);
+            }
         }
-    }, [isOpen]);
+    }, [isOpen, initialData]);
 
     // When files change, auto-detect media type if simple
     useEffect(() => {
@@ -200,16 +253,24 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                 content
             };
 
-            // 4. Insert Planner
-            const { error } = await supabase.from('planners').insert({
-                user_id: session.user.id,
-                name,
-                channel_ids: selectedChannels,
-                config: plannerConfig,
-                status: 'active'
-            });
-
-            if (error) throw error;
+            // 4. Update or Insert Planner
+            if (initialData?.id) {
+                const { error } = await supabase.from('planners').update({
+                    name,
+                    channel_ids: selectedChannels,
+                    config: plannerConfig,
+                }).eq('id', initialData.id);
+                if (error) throw error;
+            } else {
+                const { error } = await supabase.from('planners').insert({
+                    user_id: session.user.id,
+                    name,
+                    channel_ids: selectedChannels,
+                    config: plannerConfig,
+                    status: 'active'
+                });
+                if (error) throw error;
+            }
 
             onSuccess();
             onClose();

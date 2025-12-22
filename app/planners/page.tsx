@@ -1,7 +1,7 @@
 'use client'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { Sliders, Plus, Play, Pause, Trash2, Calendar, LayoutGrid, Instagram } from 'lucide-react'
+import { Sliders, Plus, Play, Pause, Trash2, Calendar, Instagram } from 'lucide-react'
 import IOSButton from '@/components/IOSButton'
 import IOSCard from '@/components/IOSComponents'
 import PlannerWizard from '@/components/PlannerWizard'
@@ -20,6 +20,7 @@ export default function PlannersPage() {
     const [planners, setPlanners] = useState<Planner[]>([]);
     const [loading, setLoading] = useState(true);
     const [isWizardOpen, setIsWizardOpen] = useState(false);
+    const [editingPlanner, setEditingPlanner] = useState<Planner | null>(null);
 
     useEffect(() => {
         fetchPlanners();
@@ -38,6 +39,43 @@ export default function PlannersPage() {
         }
     }
 
+    async function toggleStatus(planner: Planner) {
+        const newStatus = planner.status === 'active' ? 'inactive' : 'active';
+        try {
+            const { error } = await supabase
+                .from('planners')
+                .update({ status: newStatus })
+                .eq('id', planner.id);
+            if (error) throw error;
+            fetchPlanners();
+        } catch (error) {
+            console.error(error);
+            alert('Failed to update status');
+        }
+    }
+
+    async function handleDelete(id: string) {
+        if (!confirm('Are you sure you want to delete this planner?')) return;
+        try {
+            const { error } = await supabase.from('planners').delete().eq('id', id);
+            if (error) throw error;
+            fetchPlanners();
+        } catch (error) {
+            console.error(error);
+            alert('Failed to delete planner');
+        }
+    }
+
+    const handleEdit = (planner: Planner) => {
+        setEditingPlanner(planner);
+        setIsWizardOpen(true);
+    };
+
+    const handleCloseWizard = () => {
+        setIsWizardOpen(false);
+        setEditingPlanner(null);
+    };
+
     return (
         <div className="flex flex-col h-full bg-ios-background">
             <header className="sticky top-0 z-10 p-6 pb-4 bg-ios-background/80 backdrop-blur-md flex items-center justify-between">
@@ -48,7 +86,10 @@ export default function PlannersPage() {
                 <IOSButton
                     variant="primary"
                     className="!py-2 !px-4 flex items-center gap-1"
-                    onClick={() => setIsWizardOpen(true)}
+                    onClick={() => {
+                        setEditingPlanner(null);
+                        setIsWizardOpen(true);
+                    }}
                 >
                     <Plus size={20} />
                     New Planner
@@ -76,8 +117,10 @@ export default function PlannersPage() {
                         {planners.map(planner => (
                             <IOSCard key={planner.id} className="p-5 flex items-center justify-between group hover:border-ios-blue/30 transition-colors">
                                 <div className="flex items-center gap-5">
-                                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${planner.status === 'active' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'
-                                        }`}>
+                                    <div
+                                        onClick={() => toggleStatus(planner)}
+                                        className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors cursor-pointer hover:opacity-80 ${planner.status === 'active' ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'
+                                            }`}>
                                         {planner.status === 'active' ? <Play size={24} fill="currentColor" /> : <Pause size={24} fill="currentColor" />}
                                     </div>
                                     <div>
@@ -107,7 +150,6 @@ export default function PlannersPage() {
                                                     else if (freq.unit === 'days') nextDate.setDate(nextDate.getDate() + freq.value);
                                                     else if (freq.unit === 'weeks') nextDate.setDate(nextDate.getDate() + freq.value * 7);
 
-                                                    // Use Sao Paulo timezone for display
                                                     return nextDate.toLocaleString('pt-BR', {
                                                         timeZone: 'America/Sao_Paulo',
                                                         day: '2-digit',
@@ -121,10 +163,14 @@ export default function PlannersPage() {
                                     </div>
                                 </div>
                                 <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-lg transition-colors">
+                                    <button
+                                        onClick={() => handleEdit(planner)}
+                                        className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-lg transition-colors">
                                         <Sliders size={20} />
                                     </button>
-                                    <button className="p-2 text-ios-red hover:bg-ios-red/10 rounded-lg transition-colors">
+                                    <button
+                                        onClick={() => handleDelete(planner.id)}
+                                        className="p-2 text-ios-red hover:bg-ios-red/10 rounded-lg transition-colors">
                                         <Trash2 size={20} />
                                     </button>
                                 </div>
@@ -136,8 +182,9 @@ export default function PlannersPage() {
 
             <PlannerWizard
                 isOpen={isWizardOpen}
-                onClose={() => setIsWizardOpen(false)}
+                onClose={handleCloseWizard}
                 onSuccess={fetchPlanners}
+                initialData={editingPlanner}
             />
         </div>
     );
