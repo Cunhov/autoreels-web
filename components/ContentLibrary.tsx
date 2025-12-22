@@ -13,6 +13,7 @@ import MoveContentModal from './MoveContentModal';
 import UploadProgressPanel, { UploadTask } from './UploadProgressPanel';
 import IOSToast, { ToastType } from './IOSToast';
 import { useRef } from 'react';
+import EditContentModal from './EditContentModal';
 
 const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -34,6 +35,8 @@ interface ContentItem {
     id: string;
     type: 'image' | 'video' | 'carousel_folder' | 'carousel_item';
     name: string;
+    title?: string;
+    caption?: string;
     url?: string;
     path?: string;
     tags?: string[];
@@ -74,7 +77,11 @@ export default function ContentLibrary({
     // Modal states
     const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
     const [moveItems, setMoveItems] = useState<ContentItem[]>([]);
-    const [editingItem, setEditingItem] = useState<ContentItem | null>(null); // For rename
+
+    // Edit Modal State
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [itemsToEdit, setItemsToEdit] = useState<ContentItem[]>([]);
+    const [editingItem, setEditingItem] = useState<ContentItem | null>(null); // Legacy, kept for logic but unused if we switch full to modal
 
     // Upload Queue State
     const [uploadQueue, setUploadQueue] = useState<UploadTask[]>([]);
@@ -565,27 +572,19 @@ export default function ContentLibrary({
     };
 
     const handleRename = async () => {
-        if (!editingItem) return;
-        const newName = prompt('New name:', editingItem.name);
-        if (!newName || newName === editingItem.name) {
-            setEditingItem(null);
-            return;
-        }
+        // Legacy rename function - redirecting to openEditModal
+        if (editingItem) openEditModal([editingItem]);
+    };
 
-        try {
-            const { error } = await supabase
-                .from('content_items')
-                .update({ name: newName })
-                .eq('id', editingItem.id);
+    const openEditModal = (items: ContentItem[]) => {
+        setItemsToEdit(items);
+        setIsEditModalOpen(true);
+    };
 
-            if (error) throw error;
-            fetchContent(currentFolderId);
-        } catch (error) {
-            console.error('Rename failed', error);
-            alert('Rename failed');
-        } finally {
-            setEditingItem(null);
-        }
+    const onEditComplete = () => {
+        fetchContent(currentFolderId);
+        setSelectedIds([]);
+        setItemsToEdit([]);
     };
 
     // Triggered when "Move" is clicked on an item or selection
@@ -676,6 +675,17 @@ export default function ContentLibrary({
                                     <Trash2 size={14} />
                                 </button>
                             </div>
+                        )}
+
+                        {/* Edit Action for Selection */}
+                        {selectedIds.length > 0 && mode === 'manage' && (
+                            <IOSButton
+                                variant="secondary"
+                                onClick={() => openEditModal(items.filter(i => selectedIds.includes(i.id)))}
+                                className="!py-1.5 !px-3 text-sm flex items-center gap-1 mr-2"
+                            >
+                                <Edit2 size={14} /> Edit
+                            </IOSButton>
                         )}
 
                         <IOSButton variant="secondary" onClick={createFolder} className="!py-1.5 !px-3 text-sm flex items-center gap-1">
@@ -794,9 +804,9 @@ export default function ContentLibrary({
                                 {mode === 'manage' && (
                                     <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 translate-x-2 group-hover:translate-x-0 duration-200">
                                         <button
-                                            onClick={(e) => { e.stopPropagation(); setEditingItem(item); handleRename(); }}
+                                            onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
                                             className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-                                            title="Rename"
+                                            title="Edit"
                                         >
                                             <Edit2 size={12} />
                                         </button>
@@ -831,6 +841,13 @@ export default function ContentLibrary({
                 onClose={() => setIsMoveModalOpen(false)}
                 itemsToMove={moveItems}
                 onMoveComplete={onMoveComplete}
+            />
+
+            <EditContentModal
+                isOpen={isEditModalOpen}
+                onClose={() => setIsEditModalOpen(false)}
+                itemsToEdit={itemsToEdit}
+                onEditComplete={onEditComplete}
             />
 
             <UploadProgressPanel

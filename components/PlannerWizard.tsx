@@ -402,12 +402,28 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                                 </div>
 
                                 <div>
-                                    <label className="text-xs font-medium text-ios-text mb-1.5 block">Caption</label>
+                                    <div className="flex justify-between items-center mb-1.5">
+                                        <label className="text-xs font-medium text-ios-text block">Caption</label>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => setCaption(prev => prev + ' {post_title}')}
+                                                className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
+                                            >
+                                                + Title
+                                            </button>
+                                            <button
+                                                onClick={() => setCaption(prev => prev + ' {post_caption}')}
+                                                className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
+                                            >
+                                                + Caption
+                                            </button>
+                                        </div>
+                                    </div>
                                     <textarea
                                         value={caption}
                                         onChange={(e) => setCaption(e.target.value)}
-                                        className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-16 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400"
-                                        placeholder="Write a caption for your post(s)..."
+                                        className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
+                                        placeholder="Write a caption... Use tags for dynamic content."
                                     />
                                 </div>
 
