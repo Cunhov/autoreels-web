@@ -241,6 +241,14 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
             }
 
             // 3. Prepare Config in JSON
+            // Check if content has changed - if so, reset state to prevent incorrect indexing
+            const existingContent = initialData?.config?.content || [];
+            const contentChanged = JSON.stringify(content) !== JSON.stringify(existingContent);
+            const existingState = initialData?.config?.state || {};
+
+            // Reset state if content changed
+            const preservedState = contentChanged ? {} : existingState;
+
             const plannerConfig = {
                 frequency: {
                     value: frequencyValue,
@@ -250,7 +258,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 start_time: startTime,
                 sleep_schedule: sleepEnabled ? { start: sleepStart, end: sleepEnd } : null,
                 sort_order: sortOrder,
-                content
+                content,
+                state: preservedState
             };
 
             // 4. Update or Insert Planner
