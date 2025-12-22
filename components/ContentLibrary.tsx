@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import {
     Folder, Video, MoreVertical,
     Upload, Plus, ArrowLeft, Check, Trash2, Edit2, Search,
-    ChevronRight, Move
+    ChevronRight, Move, Filter, X
 } from 'lucide-react';
 import IOSButton from './IOSButton';
 import { useDropzone } from 'react-dropzone';
@@ -73,6 +73,9 @@ export default function ContentLibrary({
     const [selectedIds, setSelectedIds] = useState<string[]>(initialSelection);
     const [uploading, setUploading] = useState(false);
     const [search, setSearch] = useState('');
+    const [showFilters, setShowFilters] = useState(false);
+    const [filterTags, setFilterTags] = useState<string[]>([]);
+    const [excludeTags, setExcludeTags] = useState<string[]>([]);
 
     // Modal states
     const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
@@ -602,9 +605,31 @@ export default function ContentLibrary({
     // Renders
     // -------------------------------------------------------------------------
 
-    const filteredItems = items.filter(item =>
-        item.name.toLowerCase().includes(search.toLowerCase())
-    );
+    // Caluclate all unique tags from current items
+    const allTags = useMemo(() => {
+        const tags = new Set<string>();
+        items.forEach(item => item.tags?.forEach(t => tags.add(t)));
+        return Array.from(tags).sort();
+    }, [items]);
+
+    const filteredItems = items.filter(item => {
+        const term = search.toLowerCase();
+        // 1. Text match (Name, Title, Caption, Tags)
+        const matchesText = !term || (
+            item.name.toLowerCase().includes(term) ||
+            (item.title && item.title.toLowerCase().includes(term)) ||
+            (item.caption && item.caption.toLowerCase().includes(term)) ||
+            (item.tags && item.tags.some(t => t.toLowerCase().includes(term)))
+        );
+
+        // 2. Tag Inclusion Filter
+        const matchesIncludedTags = filterTags.length === 0 || filterTags.every(t => item.tags?.includes(t));
+
+        // 3. Tag Exclusion Filter
+        const matchesExcludedTags = excludeTags.some(t => item.tags?.includes(t));
+
+        return matchesText && matchesIncludedTags && !matchesExcludedTags;
+    });
 
     // If we are in 'select' mode (Planner), we generally want to return ID of the item.
     // However, if we select a Folder, we might mean "Use this carousel".
@@ -709,16 +734,72 @@ export default function ContentLibrary({
                 </div>
 
                 {/* Search */}
-                <div className="relative w-full">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                    <input
-                        type="text"
-                        placeholder="Search files and folders..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        className="w-full bg-ios-card/50 border border-ios-separator rounded-xl py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-ios-blue transition-all"
-                    />
+                <div className="relative w-full flex gap-2">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                        <input
+                            type="text"
+                            placeholder="Search name, caption, tags..."
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            className="w-full bg-ios-card/50 border border-ios-separator rounded-xl py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-ios-blue transition-all"
+                        />
+                    </div>
+                    <button
+                        onClick={() => setShowFilters(!showFilters)}
+                        className={`p-2 rounded-xl border transition-colors ${showFilters ? 'bg-ios-blue/10 border-ios-blue text-ios-blue' : 'bg-ios-card/50 border-ios-separator text-ios-secondary hover:text-ios-text'}`}
+                    >
+                        <Filter size={18} />
+                    </button>
                 </div>
+
+                {/* Filter Panel */}
+                {showFilters && (
+                    <div className="animate-in slide-in-from-top-2 fade-in duration-200 bg-ios-card/50 border border-ios-separator rounded-xl p-4 space-y-4">
+                        <div>
+                            <span className="text-xs font-medium text-ios-secondary uppercase tracking-wide mb-2 block">Include Tags</span>
+                            <div className="flex flex-wrap gap-2">
+                                {allTags.map(tag => (
+                                    <button
+                                        key={tag}
+                                        onClick={() => {
+                                            if (filterTags.includes(tag)) setFilterTags(filterTags.filter(t => t !== tag));
+                                            else setFilterTags([...filterTags, tag]);
+                                        }}
+                                        className={`text-xs px-2 py-1 rounded-md border transition-colors ${filterTags.includes(tag)
+                                                ? 'bg-ios-blue text-white border-ios-blue'
+                                                : 'bg-ios-background border-ios-separator text-ios-secondary hover:border-ios-blue'
+                                            }`}
+                                    >
+                                        {tag}
+                                    </button>
+                                ))}
+                                {allTags.length === 0 && <span className="text-xs text-gray-400">No tags found.</span>}
+                            </div>
+                        </div>
+
+                        <div>
+                            <span className="text-xs font-medium text-ios-secondary uppercase tracking-wide mb-2 block">Exclude Tags</span>
+                            <div className="flex flex-wrap gap-2">
+                                {allTags.map(tag => (
+                                    <button
+                                        key={tag}
+                                        onClick={() => {
+                                            if (excludeTags.includes(tag)) setExcludeTags(excludeTags.filter(t => t !== tag));
+                                            else setExcludeTags([...excludeTags, tag]);
+                                        }}
+                                        className={`text-xs px-2 py-1 rounded-md border transition-colors ${excludeTags.includes(tag)
+                                                ? 'bg-red-500 text-white border-red-500'
+                                                : 'bg-ios-background border-ios-separator text-ios-secondary hover:border-red-500'
+                                            }`}
+                                    >
+                                        {tag}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Drag Overlay */}

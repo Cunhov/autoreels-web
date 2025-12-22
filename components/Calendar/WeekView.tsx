@@ -4,9 +4,10 @@ import { Post } from '@/app/types';
 interface WeekViewProps {
     currentDate: Date;
     posts: Post[];
+    onPostClick: (post: Post) => void;
 }
 
-export default function WeekView({ currentDate, posts }: WeekViewProps) {
+export default function WeekView({ currentDate, posts, onPostClick }: WeekViewProps) {
     const getWeekDays = (date: Date) => {
         const days = [];
         const startOfWeek = new Date(date);
@@ -33,6 +34,14 @@ export default function WeekView({ currentDate, posts }: WeekViewProps) {
                 d.getMonth() === date.getMonth() &&
                 d.getDate() === date.getDate();
         });
+    };
+
+    const getBorderClass = (status: string) => {
+        switch (status) {
+            case 'failed': return 'border-red-500 ring-1 ring-red-500/50 shadow-red-500/10';
+            case 'published': return 'border-green-500 ring-1 ring-green-500/50 shadow-green-500/10';
+            default: return 'border-gray-400 dark:border-gray-600';
+        }
     };
 
     const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -70,11 +79,14 @@ export default function WeekView({ currentDate, posts }: WeekViewProps) {
                                 {dayPosts.map(p => (
                                     <div
                                         key={p.id}
-                                        className="group relative aspect-[9/16] w-full rounded-xl overflow-hidden border border-ios-separator/50 shadow-sm cursor-pointer hover:ring-2 ring-ios-blue transition-all hover:scale-[1.02] hover:shadow-md bg-black/5"
+                                        onClick={(e) => { e.stopPropagation(); onPostClick(p); }}
+                                        className={`group relative aspect-[9/16] w-full rounded-xl overflow-hidden border shadow-sm cursor-pointer hover:scale-[1.02] hover:shadow-md bg-black/5 transition-all
+                                             ${getBorderClass(p.status)}
+                                        `}
                                     >
                                         <video src={p.video_url} className="w-full h-full object-cover" muted />
                                         <div className="absolute top-2 right-2">
-                                            <div className={`w-2.5 h-2.5 rounded-full border border-white/20 shadow-sm ${p.status === 'published' ? 'bg-ios-green' : 'bg-yellow-500 animate-pulse'}`} />
+                                            <div className={`w-2.5 h-2.5 rounded-full border border-white/20 shadow-sm ${p.status === 'published' ? 'bg-ios-green' : p.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'}`} />
                                         </div>
                                         <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 via-black/40 to-transparent backdrop-blur-[2px]">
                                             <p className="text-[10px] text-white/90 font-medium truncate text-center">

@@ -9,6 +9,7 @@ interface ContentItem {
     name: string;
     title?: string;
     caption?: string;
+    tags?: string[];
     type: string;
 }
 
@@ -31,6 +32,8 @@ export default function EditContentModal({
     const [name, setName] = useState('');
     const [title, setTitle] = useState('');
     const [caption, setCaption] = useState('');
+    const [tags, setTags] = useState<string[]>([]);
+    const [tagInput, setTagInput] = useState('');
 
     const isBulk = itemsToEdit.length > 1;
 
@@ -47,9 +50,25 @@ export default function EditContentModal({
                 setName(item.name || '');
                 setTitle(item.title || '');
                 setCaption(item.caption || '');
+                setTags(item.tags || []);
             }
         }
     }, [isOpen, itemsToEdit, isBulk]);
+
+    const handleAddTag = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            const newTag = tagInput.trim();
+            if (newTag && !tags.includes(newTag)) {
+                setTags([...tags, newTag]);
+            }
+            setTagInput('');
+        }
+    };
+
+    const removeTag = (tagToRemove: string) => {
+        setTags(tags.filter(tag => tag !== tagToRemove));
+    };
 
     const handleSave = async () => {
         setLoading(true);
@@ -73,6 +92,7 @@ export default function EditContentModal({
                 updates.name = name;
                 updates.title = title;
                 updates.caption = caption;
+                updates.tags = tags;
             }
 
             if (Object.keys(updates).length === 0) {
@@ -159,6 +179,30 @@ export default function EditContentModal({
                             className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none transition-all"
                             placeholder={isBulk ? "Leave empty to keep existing" : "Write a caption..."}
                         />
+                    </div>
+
+                    <div>
+                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
+                            Tags
+                        </label>
+                        <div className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 min-h-[50px] flex flex-wrap gap-2 items-center focus-within:ring-2 focus-within:ring-blue-500 transition-all">
+                            {tags.map(tag => (
+                                <span key={tag} className="bg-blue-500/10 text-blue-500 px-2 py-1 rounded-md text-sm flex items-center gap-1">
+                                    {tag}
+                                    <button onClick={() => removeTag(tag)} className="hover:text-blue-700">
+                                        <X size={12} />
+                                    </button>
+                                </span>
+                            ))}
+                            <input
+                                type="text"
+                                value={tagInput}
+                                onChange={(e) => setTagInput(e.target.value)}
+                                onKeyDown={handleAddTag}
+                                className="bg-transparent border-none outline-none flex-1 min-w-[100px] text-[15px] text-gray-900 dark:text-white placeholder-gray-400"
+                                placeholder={tags.length === 0 ? "Add tags (press Enter)..." : ""}
+                            />
+                        </div>
                     </div>
                 </div>
 
