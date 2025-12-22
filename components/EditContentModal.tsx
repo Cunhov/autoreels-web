@@ -87,7 +87,7 @@ export default function EditContentModal({
             if (isBulk) {
                 if (title) updates.title = title;
                 if (caption) updates.caption = caption;
-                // Typically avoid bulk renaming to same name unless intended.
+                if (tags.length > 0) updates.tags = tags;
             } else {
                 updates.name = name;
                 updates.title = title;
