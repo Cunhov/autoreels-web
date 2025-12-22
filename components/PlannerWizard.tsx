@@ -157,8 +157,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                     media_type: 'CAROUSEL',
                     children_urls: [
                         ...uploadedItems,
-                        // If library items selected, we might fail or need to fetch their URLs.
-                        // For now ignoring library items in carousel unless we fetch.
+                        ...selectedContentIds.map(id => ({ type: 'library_item', id }))
                     ],
                     caption,
                     location_id: location
