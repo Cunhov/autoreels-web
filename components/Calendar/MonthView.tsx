@@ -4,9 +4,10 @@ import { Post } from '@/app/types';
 interface MonthViewProps {
     currentDate: Date;
     posts: Post[];
+    onPostClick: (post: Post) => void;
 }
 
-export default function MonthView({ currentDate, posts }: MonthViewProps) {
+export default function MonthView({ currentDate, posts, onPostClick }: MonthViewProps) {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
 
@@ -31,7 +32,6 @@ export default function MonthView({ currentDate, posts }: MonthViewProps) {
 
     // Padding for next month
     const remaining = 35 - days.length; // 5 weeks grid
-    // If we need 6 rows, we adjust. Usually 35 or 42.
     const finalPadding = remaining > 0 ? remaining : (42 - days.length);
 
     for (let i = 1; i <= finalPadding; i++) {
@@ -46,6 +46,14 @@ export default function MonthView({ currentDate, posts }: MonthViewProps) {
                 d.getMonth() === date.getMonth() &&
                 d.getDate() === date.getDate();
         });
+    };
+
+    const getBorderClass = (status: string) => {
+        switch (status) {
+            case 'failed': return 'border-red-500 ring-1 ring-red-500/50 shadow-red-500/10';
+            case 'published': return 'border-green-500 ring-1 ring-green-500/50 shadow-green-500/10';
+            default: return 'border-gray-400 dark:border-gray-600';
+        }
     };
 
     const weekDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -86,16 +94,29 @@ export default function MonthView({ currentDate, posts }: MonthViewProps) {
                                 {dayPosts.slice(0, 3).map(p => (
                                     <div
                                         key={p.id}
-                                        className="group/item relative aspect-[4/5] rounded-lg overflow-hidden border border-ios-separator/50 shadow-sm cursor-pointer hover:ring-2 ring-ios-blue transition-all hover:scale-[1.02] hover:z-20 bg-black/5"
+                                        onClick={(e) => { e.stopPropagation(); onPostClick(p); }}
+                                        className={`group/item relative aspect-[4/5] rounded-lg overflow-hidden border shadow-sm cursor-pointer hover:scale-[1.02] hover:z-20 bg-black/5 transition-all
+                                            ${getBorderClass(p.status)}
+                                        `}
                                     >
-                                        {p.video_url ? (
-                                            <video src={p.video_url} className="w-full h-full object-cover opacity-90 group-hover/item:opacity-100 transition-opacity" muted />
+                                        {p.video_url || p.thumbnail_url ? (
+                                            <video
+                                                src={p.video_url || p.thumbnail_url}
+                                                className="w-full h-full object-cover opacity-90 group-hover/item:opacity-100 transition-opacity"
+                                                muted
+                                                playsInline
+                                                onMouseOver={e => e.currentTarget.play().catch(() => { })}
+                                                onMouseOut={e => {
+                                                    e.currentTarget.pause();
+                                                    e.currentTarget.currentTime = 0;
+                                                }}
+                                            />
                                         ) : (
                                             <div className="w-full h-full bg-ios-gray-5 flex items-center justify-center text-[10px] text-ios-secondary">No Media</div>
                                         )}
 
                                         <div className="absolute top-1 right-1">
-                                            <div className={`w-2 h-2 rounded-full border border-white/20 shadow-sm ${p.status === 'published' ? 'bg-ios-green' : 'bg-yellow-500'}`} />
+                                            <div className={`w-2 h-2 rounded-full border border-white/20 shadow-sm ${p.status === 'published' ? 'bg-ios-green' : p.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'}`} />
                                         </div>
                                         <div className="absolute bottom-0 inset-x-0 p-1 bg-black/30 backdrop-blur-md">
                                             <p className="text-[9px] text-white font-medium truncate text-center">
