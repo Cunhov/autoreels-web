@@ -97,7 +97,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess }: ChannelModa
 
                         <div>
                             <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
-                                Redis List Get Request (Access Token)
+                                Redis List Key
                             </label>
                             <div className="relative">
                                 <input
@@ -105,7 +105,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess }: ChannelModa
                                     required
                                     value={accessToken}
                                     onChange={(e) => setAccessToken(e.target.value)}
-                                    placeholder="redis://... or http://..."
+                                    placeholder="instagram_access_tokens"
                                     className="w-full bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue transition-all font-mono text-sm"
                                 />
                                 <div className="absolute right-3 top-3.5 text-ios-text-secondary opacity-50">
@@ -113,7 +113,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess }: ChannelModa
                                 </div>
                             </div>
                             <p className="text-[11px] text-ios-secondary mt-1.5 px-1">
-                                Enter the Redis list request string that returns the valid access token.
+                                Enter the Redis list key that contains the access tokens. Usage will be based on REDIS_URL in .env.
                             </p>
                         </div>
                     </div>
