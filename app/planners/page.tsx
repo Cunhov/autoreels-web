@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Sliders, Plus, Play, Pause, Trash2, Calendar, LayoutGrid, Instagram } from 'lucide-react'
 import IOSButton from '@/components/IOSButton'
@@ -12,6 +12,7 @@ interface Planner {
     config: any;
     status: string;
     channel_ids: string[];
+    last_run?: string;
     created_at: string;
 }
 
@@ -92,7 +93,29 @@ export default function PlannersPage() {
                                             </span>
                                             <span className="flex items-center gap-1">
                                                 <Calendar size={12} />
-                                                Next: Soon
+                                                Next: {(() => {
+                                                    const config = planner.config;
+                                                    if (!config || !config.frequency) return 'Soon';
+
+                                                    const lastRunStr = planner.last_run;
+                                                    const lastRun = lastRunStr ? new Date(lastRunStr) : new Date(planner.created_at);
+                                                    const freq = config.frequency;
+                                                    const nextDate = new Date(lastRun);
+
+                                                    if (freq.unit === 'minutes') nextDate.setMinutes(nextDate.getMinutes() + freq.value);
+                                                    else if (freq.unit === 'hours') nextDate.setHours(nextDate.getHours() + freq.value);
+                                                    else if (freq.unit === 'days') nextDate.setDate(nextDate.getDate() + freq.value);
+                                                    else if (freq.unit === 'weeks') nextDate.setDate(nextDate.getDate() + freq.value * 7);
+
+                                                    // Use Sao Paulo timezone for display
+                                                    return nextDate.toLocaleString('pt-BR', {
+                                                        timeZone: 'America/Sao_Paulo',
+                                                        day: '2-digit',
+                                                        month: '2-digit',
+                                                        hour: '2-digit',
+                                                        minute: '2-digit'
+                                                    });
+                                                })()}
                                             </span>
                                         </div>
                                     </div>

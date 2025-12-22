@@ -40,7 +40,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
     const [contentTab, setContentTab] = useState<'upload' | 'library'>('upload');
     const [frequencyValue, setFrequencyValue] = useState(1);
     const [frequencyUnit, setFrequencyUnit] = useState('hours'); // minutes, hours, days
-    const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    const [timezone, setTimezone] = useState('America/Sao_Paulo');
     const [startTime, setStartTime] = useState('');
     const [sleepEnabled, setSleepEnabled] = useState(false);
     const [sleepStart, setSleepStart] = useState('00:00');
