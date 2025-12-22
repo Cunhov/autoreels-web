@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import {
     Folder, Video, MoreVertical,
     Upload, Plus, ArrowLeft, Check, Trash2, Edit2, Search,
-    ChevronRight, Move, Filter, X
+    ChevronRight, Move, Filter, X, Grid, List as ListIcon
 } from 'lucide-react';
 import IOSButton from './IOSButton';
 import { useDropzone } from 'react-dropzone';
@@ -43,6 +43,8 @@ interface ContentItem {
     description?: string;
     parent_id?: string | null;
     created_at: string;
+    size?: number; // bytes
+    duration?: number; // seconds
 }
 
 interface ContentLibraryProps {
@@ -76,6 +78,10 @@ export default function ContentLibrary({
     const [showFilters, setShowFilters] = useState(false);
     const [filterTags, setFilterTags] = useState<string[]>([]);
     const [excludeTags, setExcludeTags] = useState<string[]>([]);
+    const [filterTypes, setFilterTypes] = useState<string[]>([]);
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+    const [sizeFilter, setSizeFilter] = useState<'all' | 'small' | 'medium' | 'large'>('all');
+    const [durationFilter, setDurationFilter] = useState<'all' | 'short' | 'medium' | 'long'>('all');
 
     // Modal states
     const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
@@ -304,6 +310,8 @@ export default function ContentLibrary({
                 url: publicUrlData.publicUrl,
                 path: task.storagePath,
                 parent_id: task.dbParentId,
+                size: task.file.size,
+                duration: (task as any).duration || 0
             }).select().single();
 
             if (insertError) throw insertError;
@@ -439,6 +447,30 @@ export default function ContentLibrary({
                     for (const file of folderGroups[groupName]) {
                         const fileExt = file.name.split('.').pop();
                         const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+
+                        // Calculate duration for video
+                        let duration = 0;
+                        if (file.type.startsWith('video/')) {
+                            try {
+                                const videoEl = document.createElement('video');
+                                videoEl.preload = 'metadata';
+                                videoEl.src = URL.createObjectURL(file);
+                                await new Promise((resolve) => {
+                                    videoEl.onloadedmetadata = () => {
+                                        duration = videoEl.duration;
+                                        URL.revokeObjectURL(videoEl.src);
+                                        resolve(null);
+                                    };
+                                    videoEl.onerror = () => {
+                                        URL.revokeObjectURL(videoEl.src);
+                                        resolve(null);
+                                    }
+                                });
+                            } catch (e) {
+                                console.error("Error getting duration", e);
+                            }
+                        }
+
                         newTasks.push({
                             id: Math.random().toString(36),
                             file,
@@ -448,7 +480,8 @@ export default function ContentLibrary({
                             size: file.size,
                             storagePath: fileName,
                             dbParentId: currentFolderId,
-                            forceType: null
+                            forceType: null,
+                            duration // Pass duration to task to be inserted
                         });
                     }
                 }
@@ -466,6 +499,29 @@ export default function ContentLibrary({
                         for (const file of groupFiles) {
                             const fileExt = file.name.split('.').pop();
                             const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+
+                            let duration = 0;
+                            if (file.type.startsWith('video/')) {
+                                try {
+                                    const videoEl = document.createElement('video');
+                                    videoEl.preload = 'metadata';
+                                    videoEl.src = URL.createObjectURL(file);
+                                    await new Promise((resolve) => {
+                                        videoEl.onloadedmetadata = () => {
+                                            duration = videoEl.duration;
+                                            URL.revokeObjectURL(videoEl.src);
+                                            resolve(null);
+                                        };
+                                        videoEl.onerror = () => {
+                                            URL.revokeObjectURL(videoEl.src);
+                                            resolve(null);
+                                        }
+                                    });
+                                } catch (e) {
+                                    console.error("Error getting duration", e);
+                                }
+                            }
+
                             newTasks.push({
                                 id: Math.random().toString(36),
                                 file,
@@ -475,7 +531,8 @@ export default function ContentLibrary({
                                 size: file.size,
                                 storagePath: fileName,
                                 dbParentId: folderData.id,
-                                forceType: 'carousel_item'
+                                forceType: 'carousel_item',
+                                duration
                             });
                         }
                     }
@@ -628,8 +685,63 @@ export default function ContentLibrary({
         // 3. Tag Exclusion Filter
         const matchesExcludedTags = excludeTags.some(t => item.tags?.includes(t));
 
-        return matchesText && matchesIncludedTags && !matchesExcludedTags;
+        // 4. Type Filter
+        const matchesType = filterTypes.length === 0 || filterTypes.some(t => {
+            if (t === 'carousel_folder') return item.type === 'carousel_folder';
+            if (t === 'image') return item.type === 'image' || item.type === 'carousel_item'; // simplified
+            if (t === 'video') return item.type === 'video';
+            return false;
+        });
+
+        // 5. Size Filter
+        const matchesSize = sizeFilter === 'all' || (() => {
+            const size = item.size || 0;
+            if (sizeFilter === 'small') return size < 5 * 1024 * 1024; // < 5MB
+            if (sizeFilter === 'medium') return size >= 5 * 1024 * 1024 && size < 20 * 1024 * 1024; // 5-20MB
+            if (sizeFilter === 'large') return size >= 20 * 1024 * 1024; // > 20MB
+            return true;
+        })();
+
+        // 6. Duration Filter (Videos only effectively, others are 0 or null)
+        const matchesDuration = durationFilter === 'all' || (() => {
+            if (item.type !== 'video' && item.type !== 'carousel_item') return true; // Keep non-videos
+            const duration = item.duration || 0;
+            if (durationFilter === 'short') return duration < 15; // < 15s
+            if (durationFilter === 'medium') return duration >= 15 && duration <= 60; // 15-60s
+            if (durationFilter === 'long') return duration > 60; // > 60s
+            return true;
+        })();
+
+        return matchesText && matchesIncludedTags && !matchesExcludedTags && matchesType && matchesSize && matchesDuration;
     });
+
+    const handleSelectAll = () => {
+        // Select all currently filtered items
+        const allFilteredIds = filteredItems.map(i => i.id);
+        // Merge with existing selection to not lose items selected in other folders/filters if we want persistent selection?
+        // Usually Select All in a view means "Select these". 
+        // Let's replace selection or add? "Add" is safer for "Select All Apparent".
+        // But if I want to select ONLY these, I might expect others to be deselected?
+        // The user said "Select all options apparent".
+        // Let's add them to the set.
+        const newSet = new Set(selectedIds);
+        allFilteredIds.forEach(id => newSet.add(id));
+        setSelectedIds(Array.from(newSet));
+    };
+
+    const handleDeselectAll = () => {
+        if (selectedIds.length === 0 && filteredItems.length > 0) {
+            // Case: Nothing selected, maybe user meant "Clear Selection" but nothing is selected?
+            // User asked for "Select All" and "Deselect All".
+            // If items are selected, Deselect All should probably clear the selection of visible items?
+            // Or Clear All Selection globally?
+            setSelectedIds([]);
+        } else {
+            // Deselect only the visible ones? Or just clear all?
+            // "Deselect All" usually implies clearing the selection.
+            setSelectedIds([]);
+        }
+    };
 
     // If we are in 'select' mode (Planner), we generally want to return ID of the item.
     // However, if we select a Folder, we might mean "Use this carousel".
@@ -671,7 +783,28 @@ export default function ContentLibrary({
                         )}
                     </div>
 
+                    {/* Selection Actions & Select All */}
                     <div className="flex items-center gap-2">
+                        {/* Select All / Deselect All - Visible always or only when items exist? */}
+                        {filteredItems.length > 0 && mode === 'manage' && (
+                            <div className="flex items-center gap-1 mr-2">
+                                <button
+                                    onClick={handleSelectAll}
+                                    className="text-xs font-medium text-ios-blue hover:bg-ios-blue/10 px-2 py-1 rounded transition-colors"
+                                >
+                                    Select All
+                                </button>
+                                {selectedIds.length > 0 && (
+                                    <button
+                                        onClick={handleDeselectAll}
+                                        className="text-xs font-medium text-ios-secondary hover:text-ios-text hover:bg-black/5 px-2 py-1 rounded transition-colors"
+                                    >
+                                        Deselect
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
                         {/* Selection Actions */}
                         {selectedIds.length > 0 && mode === 'manage' && (
                             <div className="mr-2 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-lg border border-blue-100 dark:border-blue-900/30">
@@ -747,10 +880,27 @@ export default function ContentLibrary({
                     </div>
                     <button
                         onClick={() => setShowFilters(!showFilters)}
-                        className={`p-2 rounded-xl border transition-colors ${showFilters ? 'bg-ios-blue/10 border-ios-blue text-ios-blue' : 'bg-ios-card/50 border-ios-separator text-ios-secondary hover:text-ios-text'}`}
+                        className={`p-2 rounded-xl transition-colors ${showFilters ? 'bg-ios-blue text-white shadow-sm' : 'bg-ios-card border border-ios-separator text-ios-secondary hover:text-ios-text'}`}
                     >
                         <Filter size={18} />
                     </button>
+                    {/* View Toggle */}
+                    <div className="flex bg-ios-card/50 rounded-xl border border-ios-separator p-1 gap-1">
+                        <button
+                            onClick={() => setViewMode('grid')}
+                            className={`p-1.5 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-ios-blue text-white shadow-sm' : 'text-ios-secondary hover:text-ios-text'}`}
+                            title="Grid View"
+                        >
+                            <Grid size={16} />
+                        </button>
+                        <button
+                            onClick={() => setViewMode('list')}
+                            className={`p-1.5 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-ios-blue text-white shadow-sm' : 'text-ios-secondary hover:text-ios-text'}`}
+                            title="List View"
+                        >
+                            <ListIcon size={16} />
+                        </button>
+                    </div>
                 </div>
 
                 {/* Filter Panel */}
@@ -767,14 +917,39 @@ export default function ContentLibrary({
                                             else setFilterTags([...filterTags, tag]);
                                         }}
                                         className={`text-xs px-2 py-1 rounded-md border transition-colors ${filterTags.includes(tag)
-                                                ? 'bg-ios-blue text-white border-ios-blue'
-                                                : 'bg-ios-background border-ios-separator text-ios-secondary hover:border-ios-blue'
+                                            ? 'bg-ios-blue text-white border-ios-blue'
+                                            : 'bg-ios-background border-ios-separator text-ios-secondary hover:border-ios-blue'
                                             }`}
                                     >
                                         {tag}
                                     </button>
                                 ))}
                                 {allTags.length === 0 && <span className="text-xs text-gray-400">No tags found.</span>}
+                            </div>
+                        </div>
+
+                        <div>
+                            <span className="text-xs font-medium text-ios-secondary uppercase tracking-wide mb-2 block">Content Type</span>
+                            <div className="flex flex-wrap gap-2">
+                                {[
+                                    { id: 'carousel_folder', label: 'Folders / Carousels' },
+                                    { id: 'image', label: 'Images' },
+                                    { id: 'video', label: 'Videos' }
+                                ].map(type => (
+                                    <button
+                                        key={type.id}
+                                        onClick={() => {
+                                            if (filterTypes.includes(type.id)) setFilterTypes(filterTypes.filter(t => t !== type.id));
+                                            else setFilterTypes([...filterTypes, type.id]);
+                                        }}
+                                        className={`text-xs px-2 py-1 rounded-md border transition-colors ${filterTypes.includes(type.id)
+                                            ? 'bg-ios-blue text-white border-ios-blue'
+                                            : 'bg-ios-background border-ios-separator text-ios-secondary hover:border-ios-blue'
+                                            }`}
+                                    >
+                                        {type.label}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
@@ -789,8 +964,8 @@ export default function ContentLibrary({
                                             else setExcludeTags([...excludeTags, tag]);
                                         }}
                                         className={`text-xs px-2 py-1 rounded-md border transition-colors ${excludeTags.includes(tag)
-                                                ? 'bg-red-500 text-white border-red-500'
-                                                : 'bg-ios-background border-ios-separator text-ios-secondary hover:border-red-500'
+                                            ? 'bg-red-500 text-white border-red-500'
+                                            : 'bg-ios-background border-ios-separator text-ios-secondary hover:border-red-500'
                                             }`}
                                     >
                                         {tag}
@@ -803,11 +978,13 @@ export default function ContentLibrary({
             </div>
 
             {/* Drag Overlay */}
-            {isDragActive && (
-                <div className="absolute inset-0 bg-ios-blue/10 border-2 border-dashed border-ios-blue z-50 flex items-center justify-center backdrop-blur-sm m-4 rounded-xl pointer-events-none">
-                    <p className="text-ios-blue font-bold text-lg bg-white/80 dark:bg-black/50 px-6 py-3 rounded-full shadow-sm">Drop to upload here</p>
-                </div>
-            )}
+            {
+                isDragActive && (
+                    <div className="absolute inset-0 bg-ios-blue/10 border-2 border-dashed border-ios-blue z-50 flex items-center justify-center backdrop-blur-sm m-4 rounded-xl pointer-events-none">
+                        <p className="text-ios-blue font-bold text-lg bg-white/80 dark:bg-black/50 px-6 py-3 rounded-full shadow-sm">Drop to upload here</p>
+                    </div>
+                )
+            }
 
             {/* Grid */}
             <div className="flex-1 overflow-y-auto p-4 scroller">
@@ -826,90 +1003,180 @@ export default function ContentLibrary({
                         </div>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                        {filteredItems.map(item => (
-                            <div
-                                key={item.id}
-                                onClick={() => {
-                                    if (item.type === 'carousel_folder') {
-                                        // Navigate into folder
-                                        router.push(`/content?folderId=${item.id}`);
-                                    } else {
-                                        toggleSelection(item.id);
-                                    }
-                                }}
-                                className={`
-                                    group relative aspect-square rounded-2xl border overflow-hidden cursor-pointer transition-all duration-200
-                                    ${selectedIds.includes(item.id)
-                                        ? 'ring-2 ring-ios-blue border-transparent shadow-lg scale-[1.02]'
-                                        : 'border-ios-separator hover:border-ios-blue/50 hover:shadow-md'}
-                                    bg-ios-card
-                                `}
-                            >
-                                {/* Thumbnail Content */}
-                                {item.type === 'carousel_folder' ? (
-                                    <div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors">
-                                        <Folder size={48} strokeWidth={1} className="text-blue-400 fill-blue-400/20" />
-                                        <span className="text-xs font-medium mt-3 px-3 text-center truncate w-full text-ios-secondary">{item.name}</span>
-                                    </div>
-                                ) : (
-                                    <>
-                                        {item.type === 'video' ? (
-                                            <div className="w-full h-full bg-black flex items-center justify-center relative">
-                                                <video src={item.url} className="w-full h-full object-cover opacity-80" />
-                                                <div className="absolute inset-0 flex items-center justify-center">
-                                                    <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center">
-                                                        <Video className="text-white fill-white" size={18} />
+                    viewMode === 'list' ? (
+                        <div className="bg-ios-card border border-ios-separator rounded-xl overflow-hidden shadow-sm">
+                            <table className="min-w-full divide-y divide-ios-separator">
+                                <thead className="bg-ios-background">
+                                    <tr>
+                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-ios-secondary uppercase tracking-wider">Name</th>
+                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-ios-secondary uppercase tracking-wider">Type</th>
+                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-ios-secondary uppercase tracking-wider">Size</th>
+                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-ios-secondary uppercase tracking-wider">Duration</th>
+                                        <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-ios-secondary uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-ios-card divide-y divide-ios-separator">
+                                    {filteredItems.map((item) => (
+                                        <tr
+                                            key={item.id}
+                                            onClick={() => {
+                                                if (item.type === 'carousel_folder') {
+                                                    router.push(`/content?folderId=${item.id}`);
+                                                } else {
+                                                    toggleSelection(item.id);
+                                                }
+                                            }}
+                                            className={`
+                                        cursor-pointer transition-colors hover:bg-ios-background/50
+                                        ${selectedIds.includes(item.id) ? 'bg-blue-50 dark:bg-blue-900/10' : ''}
+                                    `}
+                                        >
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <div className="flex items-center">
+                                                    <div className="flex-shrink-0 h-10 w-10 rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center border border-ios-separator">
+                                                        {item.type === 'carousel_folder' ? (
+                                                            <Folder size={20} className="text-blue-400" />
+                                                        ) : item.type === 'video' ? (
+                                                            <div className="relative w-full h-full">
+                                                                <video src={item.url} className="w-full h-full object-cover" />
+                                                                <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                                                                    <Video size={14} className="text-white" />
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <img className="h-10 w-10 object-cover" src={item.url} alt="" />
+                                                        )}
+                                                    </div>
+                                                    <div className="ml-4">
+                                                        <div className="text-sm font-medium text-ios-text">{item.name}</div>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        ) : (
-                                            <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
-                                        )}
-
-                                        {/* Overlay Info (Gradient) */}
-                                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 pt-8 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end">
-                                            <p className="text-white text-xs font-medium truncate drop-shadow-sm">{item.name}</p>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                            ${item.type === 'video' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300' :
+                                                        item.type === 'carousel_folder' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' :
+                                                            'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'}`}>
+                                                    {item.type === 'carousel_folder' ? 'Folder' : item.type === 'video' ? 'Video' : 'Image'}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-ios-secondary">
+                                                {formatBytes(item.size || 0)}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-ios-secondary">
+                                                {item.duration ? formatTime(item.duration) : '-'}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                                {mode === 'manage' && (
+                                                    <div className="flex justify-end gap-2">
+                                                        <button onClick={(e) => { e.stopPropagation(); openEditModal([item]); }} className="text-ios-secondary hover:text-ios-blue">
+                                                            <Edit2 size={16} />
+                                                        </button>
+                                                        <button onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }} className="text-ios-secondary hover:text-ios-blue">
+                                                            <Move size={16} />
+                                                        </button>
+                                                        <button onClick={(e) => deleteItem(e, item)} className="text-ios-secondary hover:text-red-500">
+                                                            <Trash2 size={16} />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                            {filteredItems.map(item => (
+                                <div
+                                    key={item.id}
+                                    onClick={() => {
+                                        if (item.type === 'carousel_folder') {
+                                            // Navigate into folder
+                                            router.push(`/content?folderId=${item.id}`);
+                                        } else {
+                                            toggleSelection(item.id);
+                                        }
+                                    }}
+                                    className={`
+                                        group relative aspect-square rounded-2xl border overflow-hidden cursor-pointer transition-all duration-200
+                                        ${selectedIds.includes(item.id)
+                                            ? 'ring-2 ring-ios-blue border-transparent shadow-lg scale-[1.02]'
+                                            : 'border-ios-separator hover:border-ios-blue/50 hover:shadow-md'}
+                                        bg-ios-card
+                                    `}
+                                >
+                                    {/* Thumbnail Content */}
+                                    {item.type === 'carousel_folder' ? (
+                                        <div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors">
+                                            <Folder size={48} strokeWidth={1} className="text-blue-400 fill-blue-400/20" />
+                                            <span className="text-xs font-medium mt-3 px-3 text-center truncate w-full text-ios-secondary">{item.name}</span>
                                         </div>
-                                    </>
-                                )}
+                                    ) : (
+                                        <>
+                                            {item.type === 'video' ? (
+                                                <div className="w-full h-full bg-black flex items-center justify-center relative">
+                                                    <video src={item.url} className="w-full h-full object-cover opacity-80" />
+                                                    <div className="absolute inset-0 flex items-center justify-center">
+                                                        <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center">
+                                                            <Video className="text-white fill-white" size={18} />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
+                                            )}
 
-                                {/* Selection Checkbox */}
-                                {selectedIds.includes(item.id) && (
-                                    <div className="absolute top-2 right-2 bg-ios-blue text-white rounded-full p-1 shadow-sm z-20 animate-in zoom-in duration-200">
-                                        <Check size={12} strokeWidth={3} />
-                                    </div>
-                                )}
+                                            {/* Overlay Info (Gradient) */}
+                                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 pt-8 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end">
+                                                <p className="text-white text-xs font-medium truncate drop-shadow-sm">{item.name}</p>
+                                                {/* Size / Duration Badge */}
+                                                <div className="flex items-center gap-2 mt-1 text-[10px] text-gray-200">
+                                                    {item.size && <span>{formatBytes(item.size)}</span>}
+                                                    {item.duration ? <span>• {formatTime(item.duration)}</span> : null}
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
 
-                                {/* Hover Actions (Context Menu triggers) */}
-                                {mode === 'manage' && (
-                                    <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 translate-x-2 group-hover:translate-x-0 duration-200">
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
-                                            className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-                                            title="Edit"
-                                        >
-                                            <Edit2 size={12} />
-                                        </button>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }}
-                                            className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-                                            title="Move"
-                                        >
-                                            <Move size={12} />
-                                        </button>
-                                        <button
-                                            onClick={(e) => deleteItem(e, item)}
-                                            className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
-                                            title="Delete"
-                                        >
-                                            <Trash2 size={12} />
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
+                                    {/* Selection Checkbox */}
+                                    {selectedIds.includes(item.id) && (
+                                        <div className="absolute top-2 right-2 bg-ios-blue text-white rounded-full p-1 shadow-sm z-20 animate-in zoom-in duration-200">
+                                            <Check size={12} strokeWidth={3} />
+                                        </div>
+                                    )}
+
+                                    {/* Hover Actions (Context Menu triggers) */}
+                                    {mode === 'manage' && (
+                                        <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 translate-x-2 group-hover:translate-x-0 duration-200">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
+                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
+                                                title="Edit"
+                                            >
+                                                <Edit2 size={12} />
+                                            </button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }}
+                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
+                                                title="Move"
+                                            >
+                                                <Move size={12} />
+                                            </button>
+                                            <button
+                                                onClick={(e) => deleteItem(e, item)}
+                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
+                                                title="Delete"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    )
                 )}
             </div>
 
@@ -944,6 +1211,6 @@ export default function ContentLibrary({
                 isVisible={toast.show}
                 onClose={() => setToast(prev => ({ ...prev, show: false }))}
             />
-        </div>
+        </div >
     );
 }
