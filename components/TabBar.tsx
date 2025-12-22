@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Calendar, BarChart2, Radio, Sliders, Settings, PlusSquare } from 'lucide-react';
+import { Calendar, BarChart2, Radio, Sliders, Settings, PlusSquare, Folder } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 
 export default function TabBar() {
@@ -12,6 +12,7 @@ export default function TabBar() {
         { name: 'Analytics', path: '/analytics', icon: BarChart2 },
         { name: 'Channels', path: '/channels', icon: Radio },
         { name: 'Planners', path: '/planners', icon: Sliders },
+        { name: 'Library', path: '/content', icon: Folder },
         { name: 'Post', path: '/new', icon: PlusSquare },
         { name: 'Settings', path: '/settings', icon: Settings },
     ];

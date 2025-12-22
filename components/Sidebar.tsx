@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Calendar, BarChart2, Radio, Sliders, Settings, PlusSquare, LogOut } from 'lucide-react';
+import { Calendar, BarChart2, Radio, Sliders, Settings, PlusSquare, LogOut, Folder } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 
 export default function Sidebar() {
@@ -13,6 +13,7 @@ export default function Sidebar() {
         { name: 'Analytics', path: '/analytics', icon: BarChart2 },
         { name: 'Channels', path: '/channels', icon: Radio },
         { name: 'Planners', path: '/planners', icon: Sliders },
+        { name: 'Library', path: '/content', icon: Folder },
         { name: 'New Post', path: '/new', icon: PlusSquare },
         { name: 'Settings', path: '/settings', icon: Settings },
     ];
