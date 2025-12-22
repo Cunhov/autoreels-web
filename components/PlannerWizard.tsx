@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { X, ChevronRight, ChevronLeft, Calendar, Clock, Instagram, Layers, ArrowUpDown, Check } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import MediaUploader from './MediaUploader';
+import ContentLibrary from './ContentLibrary';
 
 interface Channel {
     id: string;
@@ -35,6 +36,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
     const [name, setName] = useState('');
     const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
     const [files, setFiles] = useState<File[]>([]);
+    const [selectedContentIds, setSelectedContentIds] = useState<string[]>([]);
+    const [contentTab, setContentTab] = useState<'upload' | 'library'>('upload');
     const [frequencyValue, setFrequencyValue] = useState(1);
     const [frequencyUnit, setFrequencyUnit] = useState('hours'); // minutes, hours, days
     const [timezone, setTimezone] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -109,10 +112,17 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error('Not authenticated');
 
-            // 1. Upload Files
+            // 1. Upload New Files
             const uploadedUrls = await uploadFiles(session.user.id);
 
-            // 2. Prepare Config in JSON
+            // 2. Prepare Content Array
+            // Combine raw uploads and selected library items
+            const content = [
+                ...uploadedUrls.map(url => ({ type: 'video', url })),
+                ...selectedContentIds.map(id => ({ type: 'library_item', id }))
+            ];
+
+            // 3. Prepare Config in JSON
             const plannerConfig = {
                 frequency: {
                     value: frequencyValue,
@@ -122,10 +132,10 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                 start_time: startTime,
                 sleep_schedule: sleepEnabled ? { start: sleepStart, end: sleepEnd } : null,
                 sort_order: sortOrder,
-                content: uploadedUrls.map(url => ({ type: 'video', url })) // Basic content structure
+                content
             };
 
-            // 3. Insert Planner
+            // 4. Insert Planner
             const { error } = await supabase.from('planners').insert({
                 user_id: session.user.id,
                 name,
@@ -206,13 +216,13 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                                         key={channel.id}
                                         onClick={() => toggleChannel(channel.id)}
                                         className={`p-4 rounded-xl border flex items-center gap-4 cursor-pointer transition-all ${selectedChannels.includes(channel.id)
-                                                ? 'bg-ios-blue/10 border-ios-blue'
-                                                : 'bg-ios-card border-ios-separator hover:border-ios-blue/30'
+                                            ? 'bg-ios-blue/10 border-ios-blue'
+                                            : 'bg-ios-card border-ios-separator hover:border-ios-blue/30'
                                             }`}
                                     >
                                         <div className={`w-6 h-6 rounded-full border flex items-center justify-center ${selectedChannels.includes(channel.id)
-                                                ? 'bg-ios-blue border-ios-blue text-white'
-                                                : 'bg-transparent border-gray-300'
+                                            ? 'bg-ios-blue border-ios-blue text-white'
+                                            : 'bg-transparent border-gray-300'
                                             }`}>
                                             {selectedChannels.includes(channel.id) && <Check size={14} />}
                                         </div>
@@ -238,8 +248,41 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
 
                     {/* Step 2: Content */}
                     {step === 2 && (
-                        <div className="animate-in fade-in slide-in-from-right-4 duration-300">
-                            <MediaUploader files={files} onFilesChange={setFiles} />
+                        <div className="animate-in fade-in slide-in-from-right-4 duration-300 flex flex-col h-full">
+                            <div className="flex gap-2 mb-4 p-1 bg-ios-separator/50 rounded-lg shrink-0">
+                                <button
+                                    onClick={() => setContentTab('upload')}
+                                    className={`flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition-all ${contentTab === 'upload' ? 'bg-white shadow-sm text-ios-text' : 'text-ios-secondary hover:text-ios-text'
+                                        }`}
+                                >
+                                    Upload New
+                                </button>
+                                <button
+                                    onClick={() => setContentTab('library')}
+                                    className={`flex-1 py-1.5 px-3 rounded-md text-sm font-medium transition-all ${contentTab === 'library' ? 'bg-white shadow-sm text-ios-text' : 'text-ios-secondary hover:text-ios-text'
+                                        }`}
+                                >
+                                    From Library
+                                </button>
+                            </div>
+
+                            <div className="flex-1 overflow-hidden">
+                                {contentTab === 'upload' ? (
+                                    <MediaUploader files={files} onFilesChange={setFiles} />
+                                ) : (
+                                    <div className="h-full border border-ios-separator rounded-xl overflow-hidden">
+                                        <ContentLibrary
+                                            mode="select"
+                                            initialSelection={selectedContentIds}
+                                            onSelectionChange={setSelectedContentIds}
+                                        />
+                                    </div>
+                                )}
+                            </div>
+
+                            <p className="text-xs text-ios-secondary mt-2">
+                                {files.length} new files, {selectedContentIds.length} library items selected.
+                            </p>
                         </div>
                     )}
 
@@ -337,8 +380,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                                         key={option.id}
                                         onClick={() => setSortOrder(option.id)}
                                         className={`p-4 rounded-xl border cursor-pointer transition-all ${sortOrder === option.id
-                                                ? 'bg-ios-blue/10 border-ios-blue ring-1 ring-ios-blue'
-                                                : 'bg-ios-card border-ios-separator hover:border-ios-blue/30'
+                                            ? 'bg-ios-blue/10 border-ios-blue ring-1 ring-ios-blue'
+                                            : 'bg-ios-card border-ios-separator hover:border-ios-blue/30'
                                             }`}
                                     >
                                         <div className="flex items-center justify-between mb-1">
@@ -381,7 +424,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess }: PlannerWiz
                             disabled={
                                 (step === 0 && !name) ||
                                 (step === 1 && selectedChannels.length === 0) ||
-                                (step === 2 && files.length === 0)
+                                (step === 2 && files.length === 0 && selectedContentIds.length === 0)
                             }
                         >
                             Next <ChevronRight size={18} className="ml-1" />
