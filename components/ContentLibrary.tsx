@@ -10,6 +10,25 @@ import IOSButton from './IOSButton';
 import { useDropzone } from 'react-dropzone';
 import { useRouter, useSearchParams } from 'next/navigation';
 import MoveContentModal from './MoveContentModal';
+import UploadProgressPanel, { UploadTask } from './UploadProgressPanel';
+import IOSToast, { ToastType } from './IOSToast';
+import { useRef } from 'react';
+
+const formatBytes = (bytes: number) => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
+const formatTime = (seconds: number) => {
+    if (!isFinite(seconds) || seconds < 0) return '--';
+    if (seconds < 60) return `${Math.floor(seconds)}s`;
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}m ${s}s`;
+};
 
 interface ContentItem {
     id: string;
@@ -56,6 +75,17 @@ export default function ContentLibrary({
     const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
     const [moveItems, setMoveItems] = useState<ContentItem[]>([]);
     const [editingItem, setEditingItem] = useState<ContentItem | null>(null); // For rename
+
+    // Upload Queue State
+    const [uploadQueue, setUploadQueue] = useState<UploadTask[]>([]);
+    const [isUploadPanelOpen, setIsUploadPanelOpen] = useState(false);
+    const uploadingRef = useRef(false); // Ref to track if queue processing is active
+    const [uploadMetrics, setUploadMetrics] = useState({ speed: '', eta: '' });
+    const startTimeRef = useRef<number>(0);
+    const startBytesRef = useRef<number>(0);
+
+    // Toast State
+    const [toast, setToast] = useState<{ msg: string; type: ToastType; show: boolean }>({ msg: '', type: 'success', show: false });
 
     // -------------------------------------------------------------------------
     // Data Fetching & Navigation
@@ -160,14 +190,202 @@ export default function ContentLibrary({
     // Actions (Upload, Drop, Create Folder)
     // -------------------------------------------------------------------------
 
+    // -------------------------------------------------------------------------
+    // Upload Queue Processing
+    // -------------------------------------------------------------------------
+
+    const processUploadQueue = async () => {
+        if (uploadingRef.current) return;
+
+        // Find next pending task
+        // We need to use functional state update pattern carefully or refs
+        // Simplest is to find the first 'pending' in the current queue state
+        // But inside async function, state might be verify stale? 
+        // We will call this function recursively/iteratively using state updater to get fresh queue
+
+        setUploadQueue(prev => {
+            const nextTaskIndex = prev.findIndex(t => t.status === 'pending');
+            if (nextTaskIndex === -1) {
+                uploadingRef.current = false;
+                setUploading(false);
+                return prev;
+            }
+
+            // Start processing
+            uploadingRef.current = true;
+            const nextTask = prev[nextTaskIndex];
+
+            // Trigger the upload logic asynchronously
+            executeUpload(nextTask);
+
+            return prev;
+        });
+    };
+
+    // Execute single upload with XHR
+    const executeUpload = async (task: UploadTask) => {
+        if (!task.storagePath) {
+            console.error("Missing storage path for task", task);
+            setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'error', error: "Internal Error: Missing path" } : t));
+            processUploadQueue();
+            return;
+        }
+
+        try {
+            // Update status to uploading
+            setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'uploading' } : t));
+
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) throw new Error("No session");
+
+            // XHR Upload
+            await new Promise<void>((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                // Construct URL: Project URL + Storage API info
+                const projectId = process.env.NEXT_PUBLIC_SUPABASE_URL?.split('//')[1].split('.')[0];
+                const uploadUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/instagram-videos/${task.storagePath}`;
+
+                xhr.open('POST', uploadUrl);
+
+                xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
+                xhr.setRequestHeader('x-upsert', 'true'); // Optional: overwrite
+                xhr.setRequestHeader('apikey', process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+
+                // Track progress
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const percent = (e.loaded / e.total) * 100;
+                        setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, progress: percent } : t));
+                    }
+                };
+
+                xhr.onload = async () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        resolve();
+                    } else {
+                        reject(new Error(`Upload failed with status ${xhr.status}`));
+                    }
+                };
+
+                xhr.onerror = () => reject(new Error("Network error"));
+
+                xhr.send(task.file);
+            });
+
+            // Insert into DB
+            const { data: publicUrlData } = supabase.storage
+                .from('instagram-videos')
+                .getPublicUrl(task.storagePath!);
+
+            let type = 'video';
+            const ft = task.forceType;
+            if (ft) {
+                type = ft;
+            } else if (task.file.type.startsWith('image/')) {
+                type = task.dbParentId ? 'carousel_item' : 'image';
+            } else if (task.file.type.startsWith('video/')) {
+                type = task.dbParentId ? 'carousel_item' : 'video';
+            }
+
+            const { data: insertedData, error: insertError } = await supabase.from('content_items').insert({
+                user_id: session.user.id,
+                name: task.file.name,
+                type,
+                url: publicUrlData.publicUrl,
+                path: task.storagePath,
+                parent_id: task.dbParentId,
+            }).select().single();
+
+            if (insertError) throw insertError;
+
+            // Mark completed
+            setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t));
+
+            // Real-time Update: Optimistically add to list if in current folder
+            if (task.dbParentId === currentFolderId || (!task.dbParentId && !currentFolderId)) {
+                // If we got the inserted data back, we can safely add it to state
+                if (insertedData) {
+                    setItems(prev => [insertedData as ContentItem, ...prev]);
+                } else {
+                    // Fallback to fetch
+                    fetchContent(currentFolderId);
+                }
+            }
+
+        } catch (error: any) {
+            console.error('Task failed:', error);
+            setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'error', error: error.message } : t));
+        } finally {
+            // Process next
+            processUploadQueue();
+        }
+    };
+
+    // Global Metrics Calculation
+    useEffect(() => {
+        if (!uploadingRef.current || uploadQueue.length === 0) return;
+
+        const totalSize = uploadQueue.reduce((acc, t) => acc + t.size, 0);
+        const uploadedSize = uploadQueue.reduce((acc, t) => {
+            if (t.status === 'completed') return acc + t.size;
+            if (t.status === 'uploading') return acc + (t.size * (t.progress / 100));
+            return acc;
+        }, 0);
+
+        if (startTimeRef.current > 0) {
+            const now = Date.now();
+            const elapsed = (now - startTimeRef.current) / 1000; // seconds
+            if (elapsed > 1) { // Wait for stable sample
+                const speed = uploadedSize / elapsed; // bytes per second
+                const remaining = totalSize - uploadedSize;
+                const eta = speed > 0 ? remaining / speed : 0;
+
+                setUploadMetrics({
+                    speed: `${formatBytes(speed)}/s`,
+                    eta: formatTime(eta)
+                });
+            }
+        }
+    }, [uploadQueue]); // Updates on every progress tick
+
+    // Monitor for completion
+    useEffect(() => {
+        if (uploadQueue.length === 0) return;
+
+        const allComplete = uploadQueue.every(t => t.status === 'completed' || t.status === 'error');
+        const anyError = uploadQueue.some(t => t.status === 'error');
+        const completedCount = uploadQueue.filter(t => t.status === 'completed').length;
+
+        // Only trigger if we were recently uploading (simple check: queue exists and all done)
+        // We need to ensure we don't spam toasts. 
+        // We can check if isUploadPanelOpen is true to imply user is watching.
+
+        if (allComplete && isUploadPanelOpen) {
+            if (anyError) {
+                setToast({ msg: `Upload finished with ${completedCount} successes and some errors.`, type: 'error', show: true });
+            } else {
+                setToast({ msg: `Successfully uploaded ${completedCount} files.`, type: 'success', show: true });
+                // Optional: Close panel after delay?
+                setTimeout(() => setIsUploadPanelOpen(false), 2000);
+            }
+            // Reset uploading ref just in case
+            uploadingRef.current = false;
+        }
+    }, [uploadQueue, isUploadPanelOpen]);
+
     const onDrop = useCallback(async (acceptedFiles: File[]) => {
-        setUploading(true);
         try {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) return;
 
-            // Grouping logic for folders dropped... (same as before)
-            // But now we respect `currentFolderId` from URL
+            setIsUploadPanelOpen(true);
+            setUploading(true);
+
+            // Reset metrics start only if new session
+            if (!uploadingRef.current) {
+                startTimeRef.current = Date.now();
+                startBytesRef.current = 0;
+            }
 
             const folderGroups: Record<string, File[]> = {};
             const standaloneFiles: File[] = [];
@@ -184,85 +402,83 @@ export default function ContentLibrary({
                 }
             });
 
-            // Helper to upload a single file
-            const uploadSingleFile = async (file: File, parentId: string | null = null, forceType: string | null = null) => {
+            const newTasks: any[] = [];
+
+            // 1. Prepare Standalone
+            for (const file of standaloneFiles) {
                 const fileExt = file.name.split('.').pop();
                 const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.${fileExt}`;
-                const filePath = fileName;
 
-                const { error: uploadError } = await supabase.storage
-                    .from('instagram-videos')
-                    .upload(filePath, file);
-
-                if (uploadError) throw uploadError;
-
-                const { data: publicUrlData } = supabase.storage
-                    .from('instagram-videos')
-                    .getPublicUrl(filePath);
-
-                let type = 'video';
-                if (forceType) {
-                    type = forceType;
-                } else if (file.type.startsWith('image/')) {
-                    type = parentId ? 'carousel_item' : 'image';
-                } else if (file.type.startsWith('video/')) {
-                    type = parentId ? 'carousel_item' : 'video';
-                }
-
-                await supabase.from('content_items').insert({
-                    user_id: session.user.id,
-                    name: file.name,
-                    type,
-                    url: publicUrlData.publicUrl,
-                    path: filePath,
-                    parent_id: parentId
+                newTasks.push({
+                    id: Math.random().toString(36),
+                    file,
+                    progress: 0,
+                    status: 'pending',
+                    targetName: file.name,
+                    size: file.size,
+                    storagePath: fileName,
+                    dbParentId: currentFolderId,
+                    forceType: null
                 });
-            };
-
-            // 1. Process Standalone Files
-            for (const file of standaloneFiles) {
-                await uploadSingleFile(file, currentFolderId);
             }
 
-            // 2. Process Folder Groups
-            // If in root, create new folders. If inside a folder, flatten (simple logic for now)
+            // 2. Prepare Folders (create DB folders immediately)
             if (currentFolderId) {
-                // Flatten into current folder
+                // Flatten
                 for (const groupName in folderGroups) {
                     for (const file of folderGroups[groupName]) {
-                        await uploadSingleFile(file, currentFolderId);
+                        const fileExt = file.name.split('.').pop();
+                        const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+                        newTasks.push({
+                            id: Math.random().toString(36),
+                            file,
+                            progress: 0,
+                            status: 'pending',
+                            targetName: file.name,
+                            size: file.size,
+                            storagePath: fileName,
+                            dbParentId: currentFolderId,
+                            forceType: null
+                        });
                     }
                 }
             } else {
-                // Create folders at root
                 for (const [folderName, groupFiles] of Object.entries(folderGroups)) {
-                    const { data: folderData, error: folderError } = await supabase
-                        .from('content_items')
-                        .insert({
-                            user_id: session.user.id,
-                            name: folderName,
-                            type: 'carousel_folder',
-                            parent_id: null
-                        })
-                        .select()
-                        .single();
+                    // Create folder
+                    const { data: folderData, error } = await supabase.from('content_items').insert({
+                        user_id: session.user.id,
+                        name: folderName,
+                        type: 'carousel_folder',
+                        parent_id: null
+                    }).select().single();
 
-                    if (folderError || !folderData) {
-                        console.error('Failed to create folder:', folderName);
-                        continue;
-                    }
-                    for (const file of groupFiles) {
-                        await uploadSingleFile(file, folderData.id, 'carousel_item');
+                    if (folderData) {
+                        for (const file of groupFiles) {
+                            const fileExt = file.name.split('.').pop();
+                            const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+                            newTasks.push({
+                                id: Math.random().toString(36),
+                                file,
+                                progress: 0,
+                                status: 'pending',
+                                targetName: `${folderName}/${file.name}`,
+                                size: file.size,
+                                storagePath: fileName,
+                                dbParentId: folderData.id,
+                                forceType: 'carousel_item'
+                            });
+                        }
                     }
                 }
             }
 
-            fetchContent(currentFolderId);
+            setUploadQueue(prev => [...prev, ...newTasks]);
+
+            // Kick off queue (timeout to allow state update)
+            setTimeout(processUploadQueue, 100);
+
         } catch (error) {
-            console.error('Upload failed:', error);
-            alert('Upload failed');
-        } finally {
-            setUploading(false);
+            console.error(error);
         }
     }, [currentFolderId]);
 
@@ -615,6 +831,20 @@ export default function ContentLibrary({
                 onClose={() => setIsMoveModalOpen(false)}
                 itemsToMove={moveItems}
                 onMoveComplete={onMoveComplete}
+            />
+
+            <UploadProgressPanel
+                tasks={uploadQueue}
+                isOpen={isUploadPanelOpen}
+                onClose={() => setIsUploadPanelOpen(false)}
+                metrics={uploadMetrics}
+            />
+
+            <IOSToast
+                message={toast.msg}
+                type={toast.type}
+                isVisible={toast.show}
+                onClose={() => setToast(prev => ({ ...prev, show: false }))}
             />
         </div>
     );
