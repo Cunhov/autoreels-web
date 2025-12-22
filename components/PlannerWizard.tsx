@@ -193,20 +193,42 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
             // 2. Prepare Content Array
             let content;
 
-            if (isCarousel) {
-                // If creating a SINGLE carousel post from all items
-                // Note: We need children_urls array.
-                // For library items, we only have ID here. 
-                // Currently assume library items are NOT supported in Carousel mixing yet or resolved by ID later?
-                // Ideally we resolve Library Items URLs here, but we can't easily fetch them all without query.
-                // For simplicity, we'll store them as mixed list and assume backend handles it?
-                // The new backend logic expects children_urls: {url, type}[].
-                // We'll map library_item to type 'library_item' and let backend/scheduler resolve it?
-                // Or I can't resolve it.
-                // Assuming currently user only uses upload for carousel in this flow.
+            if (isCarousel && mediaType === 'IMAGE' && selectedContentIds.length > 0) {
+                // Carousel from folder: Fetch folder children ordered by name
+                const folderId = selectedContentIds[0]; // Only one folder should be selected
+
+                // Fetch children ordered by name (alphabetical/numerical)
+                const { data: folderChildren, error: childrenError } = await supabase
+                    .from('content_items')
+                    .select('id, name, url, type')
+                    .eq('parent_id', folderId)
+                    .order('name', { ascending: true });
+
+                if (childrenError) throw childrenError;
+
+                if (!folderChildren || folderChildren.length < 2) {
+                    throw new Error('Carousel folder must contain at least 2 items');
+                }
+
+                // Build carousel_item_ids array with items in correct order
+                const carouselItems = folderChildren.map(item => ({
+                    url: item.url,
+                    type: item.type === 'video' ? 'video' : 'image'
+                }));
 
                 content = [{
-                    type: 'config', // Special type for fully configured post
+                    type: 'config',
+                    media_type: 'CAROUSEL',
+                    carousel_items: carouselItems,
+                    carousel_item_ids: folderChildren.map(item => item.id),
+                    folder_id: folderId,
+                    caption,
+                    location_id: location
+                }];
+            } else if (isCarousel) {
+                // Legacy carousel from uploads
+                content = [{
+                    type: 'config',
                     media_type: 'CAROUSEL',
                     children_urls: [
                         ...uploadedItems,
@@ -215,10 +237,6 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     caption,
                     location_id: location
                 }];
-
-                if (selectedContentIds.length > 0) {
-                    alert("Note: Selected library items are not yet supported in Carousel creation via Wizard. Only uploaded files included.");
-                }
             } else {
                 // Separate Posts
                 content = [
@@ -232,9 +250,9 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     ...selectedContentIds.map(id => ({
                         type: 'library_item',
                         id,
-                        media_type: mediaType, // Applies preference to library items too
+                        media_type: mediaType,
                         share_to_feed: shareToFeed,
-                        caption, // Applies same caption to all?
+                        caption,
                         location_id: location
                     }))
                 ];
@@ -409,17 +427,26 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                     <MediaUploader files={files} onFilesChange={setFiles} />
                                 ) : (
                                     <div className="h-full border border-ios-separator rounded-xl overflow-hidden min-h-[300px]">
+                                        {isCarousel && mediaType === 'IMAGE' && (
+                                            <div className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs p-2 border-b border-blue-100 dark:border-blue-900/30">
+                                                📂 Select a folder to post as carousel. Images will be posted in alphabetical/numerical order.
+                                            </div>
+                                        )}
                                         <ContentLibrary
                                             mode="select"
                                             initialSelection={selectedContentIds}
                                             onSelectionChange={setSelectedContentIds}
+                                            allowedTypes={isCarousel && mediaType === 'IMAGE' ? ['carousel_folder'] : ['video', 'image', 'carousel_folder']}
                                         />
                                     </div>
                                 )}
                             </div>
 
                             <p className="text-xs text-ios-secondary">
-                                {files.length} new files, {selectedContentIds.length} library items selected.
+                                {isCarousel && mediaType === 'IMAGE'
+                                    ? `${selectedContentIds.length} folder(s) selected for carousel.`
+                                    : `${files.length} new files, ${selectedContentIds.length} library items selected.`
+                                }
                             </p>
 
                             {/* Post Configuration */}

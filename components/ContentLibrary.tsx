@@ -4,7 +4,8 @@ import { supabase } from '@/lib/supabase';
 import {
     Folder, Video, MoreVertical,
     Upload, Plus, ArrowLeft, Check, Trash2, Edit2, Search,
-    ChevronRight, Move, Filter, X, Grid, List as ListIcon
+    ChevronRight, Move, Filter, X, Grid, List as ListIcon,
+    ArrowDownAZ, ArrowUpAZ, ArrowDown01, ArrowUp01, TextCursorInput
 } from 'lucide-react';
 import IOSButton from './IOSButton';
 import { useDropzone } from 'react-dropzone';
@@ -82,6 +83,18 @@ export default function ContentLibrary({
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
     const [sizeFilter, setSizeFilter] = useState<'all' | 'small' | 'medium' | 'large'>('all');
     const [durationFilter, setDurationFilter] = useState<'all' | 'short' | 'medium' | 'long'>('all');
+
+    // Drag-drop items into folders
+    const [draggedItems, setDraggedItems] = useState<string[]>([]);
+    const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
+    // Sorting inside folders
+    const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'created-asc' | 'created-desc'>('name-asc');
+
+    // Bulk rename modal
+    const [isBulkRenameOpen, setIsBulkRenameOpen] = useState(false);
+    const [bulkRenamePrefix, setBulkRenamePrefix] = useState('');
+    const [selectionOrder, setSelectionOrder] = useState<string[]>([]);
 
     // Modal states
     const [isMoveModalOpen, setIsMoveModalOpen] = useState(false);
@@ -487,16 +500,38 @@ export default function ContentLibrary({
                 }
             } else {
                 for (const [folderName, groupFiles] of Object.entries(folderGroups)) {
-                    // Create folder
+                    // Check for .txt file to use as caption
+                    let carouselCaption = '';
+                    const txtFile = groupFiles.find(f => f.name.toLowerCase().endsWith('.txt'));
+                    if (txtFile) {
+                        try {
+                            carouselCaption = await txtFile.text();
+                        } catch (e) {
+                            console.error('Error reading .txt file:', e);
+                        }
+                    }
+
+                    // Filter out .txt files from media
+                    const mediaFiles = groupFiles.filter(f => !f.name.toLowerCase().endsWith('.txt'));
+
+                    if (mediaFiles.length === 0) continue;
+
+                    // Create folder as carousel
                     const { data: folderData, error } = await supabase.from('content_items').insert({
                         user_id: session.user.id,
                         name: folderName,
                         type: 'carousel_folder',
-                        parent_id: null
+                        parent_id: null,
+                        caption: carouselCaption || null // Store caption from .txt
                     }).select().single();
 
                     if (folderData) {
-                        for (const file of groupFiles) {
+                        // Add items with preserved order (by filename)
+                        const sortedMediaFiles = [...mediaFiles].sort((a, b) =>
+                            a.name.localeCompare(b.name, undefined, { numeric: true })
+                        );
+
+                        for (const file of sortedMediaFiles) {
                             const fileExt = file.name.split('.').pop();
                             const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.${fileExt}`;
 
@@ -583,8 +618,91 @@ export default function ContentLibrary({
     const toggleSelection = (id: string) => {
         if (selectedIds.includes(id)) {
             setSelectedIds(selectedIds.filter(sid => sid !== id));
+            setSelectionOrder(selectionOrder.filter(sid => sid !== id));
         } else {
             setSelectedIds([...selectedIds, id]);
+            setSelectionOrder([...selectionOrder, id]);
+        }
+    };
+
+    // Drag-drop handlers for moving items into folders
+    const handleDragStart = (e: React.DragEvent, itemId: string) => {
+        e.stopPropagation();
+        // If item is selected, drag all selected; otherwise just this one
+        const itemsToDrag = selectedIds.includes(itemId) ? selectedIds : [itemId];
+        setDraggedItems(itemsToDrag);
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', itemsToDrag.join(','));
+    };
+
+    const handleDragOver = (e: React.DragEvent, targetId: string | null, targetItem: ContentItem | null) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Only allow dropping on folders
+        if (targetItem && targetItem.type === 'carousel_folder' && !draggedItems.includes(targetItem.id)) {
+            setDropTargetId(targetId);
+            e.dataTransfer.dropEffect = 'move';
+        } else if (targetId === null && currentFolderId) {
+            // Allow dropping to move to root (when dragging over empty area)
+            setDropTargetId('root');
+            e.dataTransfer.dropEffect = 'move';
+        }
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        setDropTargetId(null);
+    };
+
+    const handleDrop = async (e: React.DragEvent, targetId: string | null) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDropTargetId(null);
+
+        if (draggedItems.length === 0) return;
+
+        const newParentId = targetId === 'root' ? null : targetId;
+
+        try {
+            // Move all dragged items to the target folder
+            for (const itemId of draggedItems) {
+                await supabase.from('content_items').update({ parent_id: newParentId }).eq('id', itemId);
+            }
+            setToast({ msg: `Moved ${draggedItems.length} item(s)`, type: 'success', show: true });
+            fetchContent(currentFolderId);
+            setSelectedIds([]);
+            setSelectionOrder([]);
+        } catch (error) {
+            console.error('Move failed:', error);
+            setToast({ msg: 'Failed to move items', type: 'error', show: true });
+        }
+        setDraggedItems([]);
+    };
+
+    const handleDragEnd = () => {
+        setDraggedItems([]);
+        setDropTargetId(null);
+    };
+
+    // Bulk rename in selection order
+    const handleBulkRename = async () => {
+        if (!bulkRenamePrefix.trim() || selectionOrder.length === 0) return;
+
+        try {
+            for (let i = 0; i < selectionOrder.length; i++) {
+                const itemId = selectionOrder[i];
+                const newName = `${bulkRenamePrefix}_${String(i + 1).padStart(3, '0')}`;
+                await supabase.from('content_items').update({ name: newName }).eq('id', itemId);
+            }
+            setToast({ msg: `Renamed ${selectionOrder.length} items`, type: 'success', show: true });
+            setIsBulkRenameOpen(false);
+            setBulkRenamePrefix('');
+            setSelectedIds([]);
+            setSelectionOrder([]);
+            fetchContent(currentFolderId);
+        } catch (error) {
+            console.error('Rename failed:', error);
+            setToast({ msg: 'Failed to rename items', type: 'error', show: true });
         }
     };
 
@@ -715,17 +833,43 @@ export default function ContentLibrary({
         return matchesText && matchesIncludedTags && !matchesExcludedTags && matchesType && matchesSize && matchesDuration;
     });
 
+    // Apply sorting
+    const sortedItems = useMemo(() => {
+        return [...filteredItems].sort((a, b) => {
+            // Folders always come first
+            if (a.type === 'carousel_folder' && b.type !== 'carousel_folder') return -1;
+            if (a.type !== 'carousel_folder' && b.type === 'carousel_folder') return 1;
+
+            switch (sortBy) {
+                case 'name-asc':
+                    return a.name.localeCompare(b.name, undefined, { numeric: true });
+                case 'name-desc':
+                    return b.name.localeCompare(a.name, undefined, { numeric: true });
+                case 'created-asc':
+                    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+                case 'created-desc':
+                    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+                default:
+                    return 0;
+            }
+        });
+    }, [filteredItems, sortBy]);
+
     const handleSelectAll = () => {
-        const allFilteredIds = filteredItems.map(i => i.id);
+        const allFilteredIds = sortedItems.map(i => i.id);
         const allSelected = allFilteredIds.every(id => selectedIds.includes(id));
 
         if (allSelected) {
             // Deselect only the visible ones
             setSelectedIds(selectedIds.filter(id => !allFilteredIds.includes(id)));
+            setSelectionOrder(selectionOrder.filter(id => !allFilteredIds.includes(id)));
         } else {
-            // Select all visible ones
+            // Select all visible ones in order
             const newSet = new Set([...selectedIds, ...allFilteredIds]);
             setSelectedIds(Array.from(newSet));
+            // Add to selection order (only new ones)
+            const newOrder = [...selectionOrder, ...allFilteredIds.filter(id => !selectionOrder.includes(id))];
+            setSelectionOrder(newOrder);
         }
     };
 
@@ -771,26 +915,47 @@ export default function ContentLibrary({
 
                     {/* Selection Actions & Select All */}
                     <div className="flex items-center gap-2">
-                        {/* Select All / Deselect All - Visible always or only when items exist? */}
+                        {/* Sort Dropdown */}
+                        {currentFolderId && (
+                            <select
+                                value={sortBy}
+                                onChange={(e) => setSortBy(e.target.value as any)}
+                                className="text-xs bg-ios-card border border-ios-separator rounded-lg px-2 py-1.5 focus:border-ios-blue outline-none"
+                            >
+                                <option value="name-asc">A-Z / 1-9</option>
+                                <option value="name-desc">Z-A / 9-1</option>
+                                <option value="created-asc">Oldest First</option>
+                                <option value="created-desc">Newest First</option>
+                            </select>
+                        )}
+
                         {/* Select All / Deselect All Toggle */}
-                        {filteredItems.length > 0 && (
-                            <div className="flex items-center gap-1 mr-2">
+                        {sortedItems.length > 0 && (
+                            <div className="flex items-center gap-1">
                                 <button
                                     onClick={handleSelectAll}
-                                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${filteredItems.every(i => selectedIds.includes(i.id))
+                                    className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${sortedItems.every(i => selectedIds.includes(i.id))
                                         ? 'bg-ios-blue text-white border-ios-blue'
                                         : 'bg-ios-card border-ios-separator text-ios-blue hover:bg-ios-blue/5'
                                         }`}
                                 >
-                                    {filteredItems.every(i => selectedIds.includes(i.id)) ? 'Deselect All' : 'Select All'}
+                                    {sortedItems.every(i => selectedIds.includes(i.id)) ? 'Deselect All' : 'Select All'}
                                 </button>
                             </div>
                         )}
 
                         {/* Selection Actions */}
                         {selectedIds.length > 0 && mode === 'manage' && (
-                            <div className="mr-2 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-lg border border-blue-100 dark:border-blue-900/30">
+                            <div className="flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-lg border border-blue-100 dark:border-blue-900/30">
                                 <span className="text-xs font-semibold text-ios-blue mr-1">{selectedIds.length} selected</span>
+                                {/* Bulk Rename Button */}
+                                <button
+                                    onClick={() => setIsBulkRenameOpen(true)}
+                                    className="p-1 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-ios-blue"
+                                    title="Rename in Order"
+                                >
+                                    <TextCursorInput size={14} />
+                                </button>
                                 <button
                                     onClick={() => openMoveModal(items.filter(i => selectedIds.includes(i.id)))}
                                     className="p-1 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-ios-blue"
@@ -807,6 +972,7 @@ export default function ContentLibrary({
                                             if (item) await doDelete(item);
                                         }
                                         setSelectedIds([]);
+                                        setSelectionOrder([]);
                                         fetchContent(currentFolderId);
                                     }}
                                     className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"
@@ -822,7 +988,7 @@ export default function ContentLibrary({
                             <IOSButton
                                 variant="secondary"
                                 onClick={() => openEditModal(items.filter(i => selectedIds.includes(i.id)))}
-                                className="!py-1.5 !px-3 text-sm flex items-center gap-1 mr-2"
+                                className="!py-1.5 !px-3 text-sm flex items-center gap-1"
                             >
                                 <Edit2 size={14} /> Edit
                             </IOSButton>
@@ -866,8 +1032,8 @@ export default function ContentLibrary({
                         <button
                             onClick={handleSelectAll}
                             className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm font-medium transition-all ${filteredItems.every(i => selectedIds.includes(i.id))
-                                    ? 'bg-ios-blue text-white border-ios-blue shadow-sm'
-                                    : 'bg-ios-card border-ios-separator text-ios-secondary hover:text-ios-blue hover:border-ios-blue/30'
+                                ? 'bg-ios-blue text-white border-ios-blue shadow-sm'
+                                : 'bg-ios-card border-ios-separator text-ios-secondary hover:text-ios-blue hover:border-ios-blue/30'
                                 }`}
                             title={filteredItems.every(i => selectedIds.includes(i.id)) ? 'Deselect All' : 'Select All'}
                         >
@@ -990,7 +1156,7 @@ export default function ContentLibrary({
                     <div className="flex justify-center p-12">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ios-blue"></div>
                     </div>
-                ) : filteredItems.length === 0 ? (
+                ) : sortedItems.length === 0 ? (
                     <div className="text-center py-20 text-ios-secondary flex flex-col items-center gap-4">
                         <div className="w-16 h-16 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center">
                             <Folder size={32} className="text-gray-300" />
@@ -1014,7 +1180,7 @@ export default function ContentLibrary({
                                     </tr>
                                 </thead>
                                 <tbody className="bg-ios-card divide-y divide-ios-separator">
-                                    {filteredItems.map((item) => (
+                                    {sortedItems.map((item) => (
                                         <tr
                                             key={item.id}
                                             onClick={() => {
@@ -1086,9 +1252,15 @@ export default function ContentLibrary({
                         </div>
                     ) : (
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                            {filteredItems.map(item => (
+                            {sortedItems.map(item => (
                                 <div
                                     key={item.id}
+                                    draggable={item.type !== 'carousel_folder'}
+                                    onDragStart={(e) => item.type !== 'carousel_folder' && handleDragStart(e, item.id)}
+                                    onDragEnd={handleDragEnd}
+                                    onDragOver={(e) => handleDragOver(e, item.id, item)}
+                                    onDragLeave={handleDragLeave}
+                                    onDrop={(e) => item.type === 'carousel_folder' && handleDrop(e, item.id)}
                                     onClick={() => {
                                         if (item.type === 'carousel_folder') {
                                             // Navigate into folder
@@ -1102,6 +1274,8 @@ export default function ContentLibrary({
                                         ${selectedIds.includes(item.id)
                                             ? 'ring-2 ring-ios-blue border-transparent shadow-lg scale-[1.02]'
                                             : 'border-ios-separator hover:border-ios-blue/50 hover:shadow-md'}
+                                        ${dropTargetId === item.id ? 'ring-2 ring-green-500 scale-105 bg-green-50 dark:bg-green-900/20' : ''}
+                                        ${draggedItems.includes(item.id) ? 'opacity-50' : ''}
                                         bg-ios-card
                                     `}
                                 >
@@ -1202,6 +1376,34 @@ export default function ContentLibrary({
                 onClose={() => setIsUploadPanelOpen(false)}
                 metrics={uploadMetrics}
             />
+
+            {/* Bulk Rename Modal */}
+            {isBulkRenameOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                    <div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl">
+                        <h3 className="text-lg font-semibold text-ios-text mb-4">Rename {selectionOrder.length} Items in Order</h3>
+                        <p className="text-sm text-ios-secondary mb-4">
+                            Items will be renamed as: <code className="bg-ios-background px-2 py-1 rounded">prefix_001</code>, <code className="bg-ios-background px-2 py-1 rounded">prefix_002</code>, etc.
+                        </p>
+                        <input
+                            type="text"
+                            value={bulkRenamePrefix}
+                            onChange={(e) => setBulkRenamePrefix(e.target.value)}
+                            placeholder="Enter prefix (e.g., slide)"
+                            className="w-full bg-ios-background border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue mb-4"
+                            autoFocus
+                        />
+                        <div className="flex justify-end gap-2">
+                            <IOSButton variant="secondary" onClick={() => { setIsBulkRenameOpen(false); setBulkRenamePrefix(''); }}>
+                                Cancel
+                            </IOSButton>
+                            <IOSButton variant="primary" onClick={handleBulkRename} disabled={!bulkRenamePrefix.trim()}>
+                                Rename
+                            </IOSButton>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             <IOSToast
                 message={toast.msg}
