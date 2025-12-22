@@ -830,7 +830,15 @@ export default function ContentLibrary({
             return true;
         })();
 
-        return matchesText && matchesIncludedTags && !matchesExcludedTags && matchesType && matchesSize && matchesDuration;
+        // 7. Allowed Types Filter (from prop)
+        const matchesAllowedType = allowedTypes.some(t => {
+            if (t === 'carousel_folder') return item.type === 'carousel_folder';
+            if (t === 'image') return item.type === 'image' || item.type === 'carousel_item';
+            if (t === 'video') return item.type === 'video';
+            return false;
+        });
+
+        return matchesText && matchesIncludedTags && !matchesExcludedTags && matchesType && matchesSize && matchesDuration && matchesAllowedType;
     });
 
     // Apply sorting
