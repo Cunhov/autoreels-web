@@ -437,6 +437,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                             initialSelection={selectedContentIds}
                                             onSelectionChange={setSelectedContentIds}
                                             allowedTypes={isCarousel && mediaType === 'IMAGE' ? ['carousel_folder'] : ['video', 'image', 'carousel_folder']}
+                                            disableUrlNavigation={true}
                                         />
                                     </div>
                                 )}
