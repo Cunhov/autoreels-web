@@ -7,6 +7,7 @@ import WeekView from '@/components/Calendar/WeekView'
 import { Post } from '@/app/types'
 import { useRouter } from 'next/navigation'
 import { ErrorModal, SuccessModal } from '@/components/Calendar/PostStatusModals';
+import DayDetailsModal from '@/components/Calendar/DayDetailsModal';
 
 export default function CalendarPage() {
   const [posts, setPosts] = useState<Post[]>([]);
@@ -15,6 +16,7 @@ export default function CalendarPage() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewMode, setViewMode] = useState<'month' | 'week'>('month');
   const [selectedPost, setSelectedPost] = useState<Post | null>(null);
+  const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -86,6 +88,7 @@ export default function CalendarPage() {
               currentDate={currentDate}
               posts={posts}
               onPostClick={setSelectedPost}
+              onDayClick={setSelectedDay}
             />
           ) : (
             <WeekView
@@ -107,6 +110,32 @@ export default function CalendarPage() {
           post={selectedPost}
           accessToken={getChannelToken(selectedPost.channel_id)}
           onClose={() => setSelectedPost(null)}
+        />
+      )}
+
+      {selectedDay && (
+        <DayDetailsModal
+          date={selectedDay}
+          posts={posts.filter(p => {
+            if (!p.scheduled_at) return false;
+            const d = new Date(p.scheduled_at);
+            return d.getFullYear() === selectedDay.getFullYear() &&
+              d.getMonth() === selectedDay.getMonth() &&
+              d.getDate() === selectedDay.getDate();
+          })}
+          onClose={() => setSelectedDay(null)}
+          onPostClick={(p) => {
+            setSelectedPost(p);
+            // Optional: keep selectedDay open or close it? 
+            // Usually we might want to close it or stack them.
+            // For now, let's keep it open behind or close it. 
+            // Let's keep it open so back navigation feels natural if implemented, or just close it?
+            // User didn't specify, but stacking modals can be tricky without a manager.
+            // Let's close DayDetails for now to focus on the Post.
+            // Actually, stacking is better for UX "view more -> click post -> back to view more".
+            // But we don't have z-index management. 
+            // Let's try keeping it open.
+          }}
         />
       )}
     </div>

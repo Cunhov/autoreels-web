@@ -7,7 +7,7 @@ interface MonthViewProps {
     onPostClick: (post: Post) => void;
 }
 
-export default function MonthView({ currentDate, posts, onPostClick }: MonthViewProps) {
+export default function MonthView({ currentDate, posts, onPostClick, onDayClick }: MonthViewProps & { onDayClick: (date: Date) => void }) {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
 
@@ -76,7 +76,8 @@ export default function MonthView({ currentDate, posts, onPostClick }: MonthView
                     return (
                         <div
                             key={i}
-                            className={`min-h-[140px] p-2 flex flex-col gap-2 transition-colors relative group
+                            onClick={() => item.date && onDayClick(item.date)}
+                            className={`min-h-[140px] p-2 flex flex-col gap-2 transition-colors relative group cursor-pointer
                 ${item.current ? 'bg-ios-card hover:bg-ios-gray-6/50' : 'bg-ios-background/60 hover:bg-ios-background/80'}
               `}
                         >
@@ -126,7 +127,10 @@ export default function MonthView({ currentDate, posts, onPostClick }: MonthView
                                     </div>
                                 ))}
                                 {dayPosts.length > 3 && (
-                                    <div className="text-[10px] text-center font-bold text-ios-blue bg-ios-blue/10 rounded-full py-0.5 mt-1">
+                                    <div
+                                        onClick={(e) => { e.stopPropagation(); item.date && onDayClick(item.date); }}
+                                        className="text-[10px] text-center font-bold text-ios-blue bg-ios-blue/10 rounded-full py-0.5 mt-1 hover:bg-ios-blue/20 transition-colors"
+                                    >
                                         +{dayPosts.length - 3} more
                                     </div>
                                 )}

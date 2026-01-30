@@ -206,7 +206,8 @@ Deno.serve(async (req) => {
           throw new Error(data.error?.message || "Media Creation Failed");
         }
       } catch (e: any) {
-        await supabase.from('posts').update({ status: 'failed', error_message: e.message }).eq('id', post.id);
+        await log(plannerId, `Phase 1 Error for post ${post.id}: ${e.message}`, 'error', e);
+        await supabase.from('posts').update({ status: 'failed', error_message: e.message, failed_reason: "Initialization Failed" }).eq('id', post.id);
         results.errors++;
       }
     }
@@ -244,9 +245,16 @@ Deno.serve(async (req) => {
           const res = await fetch(`${baseUrl}/${GRAPH_API_VERSION}/${post.instagram_container_id}?fields=status_code&access_token=${accessToken}`);
           const data = await res.json();
           if (data.status_code === 'FINISHED') await supabase.from('posts').update({ status: 'ready_to_publish' }).eq('id', post.id);
-          else if (data.status_code === 'ERROR') await supabase.from('posts').update({ status: 'failed', error_message: "IG Processing Error" }).eq('id', post.id);
+          else if (data.status_code === 'ERROR') {
+            const msg = `IG Processing Error: ${data.status_code}`;
+            await log(post.planner_id, msg, 'error', data);
+            await supabase.from('posts').update({ status: 'failed', error_message: msg, failed_reason: "Processing Failed" }).eq('id', post.id);
+          }
         }
-      } catch (e) { }
+      } catch (e: any) {
+        await log(post.planner_id, `Phase 2 Error for post ${post.id}`, 'error', e);
+        await supabase.from('posts').update({ status: 'failed', error_message: e.message, failed_reason: "Processing Exception" }).eq('id', post.id);
+      }
     }
 
     // 3. Ready -> Published
@@ -267,8 +275,15 @@ Deno.serve(async (req) => {
         if (data.id) {
           await supabase.from('posts').update({ status: 'published', published_at: new Date().toISOString() }).eq('id', post.id);
           results.published++;
+        } else {
+          const msg = data.error?.message || "Publishing Failed";
+          await log(post.planner_id, `Phase 3 Error for post ${post.id}: ${msg}`, 'error', data);
+          await supabase.from('posts').update({ status: 'failed', error_message: msg, failed_reason: "Publishing Failed" }).eq('id', post.id);
         }
-      } catch (e) { }
+      } catch (e: any) {
+        await log(post.planner_id, `Phase 3 Exception for post ${post.id}`, 'error', e);
+        await supabase.from('posts').update({ status: 'failed', error_message: e.message, failed_reason: "Publishing Exception" }).eq('id', post.id);
+      }
     }
 
     return new Response(JSON.stringify(results), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
