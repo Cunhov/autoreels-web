@@ -100,9 +100,9 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                             ${getBorderClass(p.status)}
                                         `}
                                     >
-                                        {p.video_url || p.thumbnail_url ? (
+                                        {p.video_url ? (
                                             <video
-                                                src={p.video_url || p.thumbnail_url}
+                                                src={p.video_url}
                                                 className="w-full h-full object-cover opacity-90 group-hover/item:opacity-100 transition-opacity"
                                                 muted
                                                 playsInline
@@ -111,6 +111,12 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                                     e.currentTarget.pause();
                                                     e.currentTarget.currentTime = 0;
                                                 }}
+                                            />
+                                        ) : p.image_url || p.thumbnail_url ? (
+                                            <img
+                                                src={p.image_url || p.thumbnail_url}
+                                                className="w-full h-full object-cover opacity-90 group-hover/item:opacity-100 transition-opacity"
+                                                alt="Post preview"
                                             />
                                         ) : (
                                             <div className="w-full h-full bg-ios-gray-5 flex items-center justify-center text-[10px] text-ios-secondary">No Media</div>

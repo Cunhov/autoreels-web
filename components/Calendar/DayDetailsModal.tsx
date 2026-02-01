@@ -57,11 +57,17 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick }: D
                             >
                                 {/* Media Preview */}
                                 <div className="w-16 h-20 bg-black/5 rounded-lg overflow-hidden flex-shrink-0 relative border border-black/5">
-                                    {post.video_url || post.thumbnail_url ? (
+                                    {post.video_url ? (
                                         <video
-                                            src={post.video_url || post.thumbnail_url}
+                                            src={post.video_url}
                                             className="w-full h-full object-cover"
                                             muted
+                                        />
+                                    ) : post.image_url || post.thumbnail_url ? (
+                                        <img
+                                            src={post.image_url || post.thumbnail_url}
+                                            className="w-full h-full object-cover"
+                                            alt="Post preview"
                                         />
                                     ) : (
                                         <div className="w-full h-full flex items-center justify-center text-[10px] text-ios-secondary text-center p-1">

@@ -101,18 +101,6 @@ export default function CalendarPage() {
       </div>
 
       {/* Modals */}
-      {selectedPost && selectedPost.status === 'failed' && (
-        <ErrorModal post={selectedPost} onClose={() => setSelectedPost(null)} />
-      )}
-
-      {selectedPost && selectedPost.status === 'published' && (
-        <SuccessModal
-          post={selectedPost}
-          accessToken={getChannelToken(selectedPost.channel_id)}
-          onClose={() => setSelectedPost(null)}
-        />
-      )}
-
       {selectedDay && (
         <DayDetailsModal
           date={selectedDay}
@@ -126,18 +114,22 @@ export default function CalendarPage() {
           onClose={() => setSelectedDay(null)}
           onPostClick={(p) => {
             setSelectedPost(p);
-            // Optional: keep selectedDay open or close it? 
-            // Usually we might want to close it or stack them.
-            // For now, let's keep it open behind or close it. 
-            // Let's keep it open so back navigation feels natural if implemented, or just close it?
-            // User didn't specify, but stacking modals can be tricky without a manager.
-            // Let's close DayDetails for now to focus on the Post.
-            // Actually, stacking is better for UX "view more -> click post -> back to view more".
-            // But we don't have z-index management. 
-            // Let's try keeping it open.
           }}
         />
       )}
+
+      {selectedPost && selectedPost.status === 'failed' && (
+        <ErrorModal post={selectedPost} onClose={() => setSelectedPost(null)} />
+      )}
+
+      {selectedPost && selectedPost.status === 'published' && (
+        <SuccessModal
+          post={selectedPost}
+          accessToken={getChannelToken(selectedPost.channel_id)}
+          onClose={() => setSelectedPost(null)}
+        />
+      )}
+
     </div>
   );
 }

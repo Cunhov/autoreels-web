@@ -10,4 +10,5 @@ export interface Post {
     channel_id: string;
     title?: string;
     thumbnail_url?: string;
+    image_url?: string;
 }
