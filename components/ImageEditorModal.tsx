@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Cropper from 'react-easy-crop';
-import * as fabric from 'fabric'; // Changed to namespace import
+import * as fabric from 'fabric';
 import { X, Check, Type, Pen, Crop, Undo, Redo, ZoomIn, ZoomOut, Move } from 'lucide-react';
-import { getCroppedImg } from '@/lib/utils'; // Keep as is, should be correct relative path
+import { getCroppedImg } from '@/lib/utils';
+import FabricCanvas from './FabricCanvas';
 
 interface ImageEditorModalProps {
     imageUrl: string;
@@ -22,7 +23,6 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
     const [activeTool, setActiveTool] = useState<EditorTool>('crop');
 
     // Fabric state
-    const canvasRef = useRef<HTMLCanvasElement>(null);
     const fabricCanvasRef = useRef<fabric.Canvas | null>(null);
     const [isFabricReady, setIsFabricReady] = useState(false);
 
@@ -49,67 +49,13 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
         setCroppedAreaPixels(croppedAreaPixels);
     }, []);
 
-    // Initialize Fabric when switching to draw/text tools
-    useEffect(() => {
-        const initFabric = async () => {
-            if (activeTool !== 'crop' && !fabricCanvasRef.current && canvasRef.current) {
-                const canvas = new fabric.Canvas(canvasRef.current, {
-                    width: 500,
-                    height: 500,
-                });
-                fabricCanvasRef.current = canvas;
-
-                try {
-                    // Load the current image (which might be the result of a crop) onto the canvas
-                    // Fabric v6 returns a Promise for fromURL
-                    const img = await fabric.Image.fromURL(currentImage);
-                    if (!img) return;
-
-                    // Scale image to fit canvas or adjust canvas to fit image
-                    // For simplicity, let's adjust canvas to match image dimensions
-
-                    const width = img.width || 500;
-                    const height = img.height || 500;
-
-                    canvas.setDimensions({ width, height });
-
-                    canvas.backgroundImage = img;
-                    canvas.renderAll();
-
-                    setIsFabricReady(true);
-                    saveHistory(canvas);
-
-                } catch (err) {
-                    console.error("Error loading image into Fabric:", err);
-                }
-
-                canvas.on('object:added', () => saveHistory(canvas));
-                canvas.on('object:modified', () => saveHistory(canvas));
-            }
-        };
-
-        initFabric();
-
-        return () => {
-            // Cleanup handled in main unmount if needed
-        };
-    }, [activeTool, currentImage]);
-
-    // Handle tool switching effects on Fabric
-    useEffect(() => {
-        if (!fabricCanvasRef.current) return;
-        const canvas = fabricCanvasRef.current;
-
-        canvas.isDrawingMode = activeTool === 'draw';
-        if (activeTool === 'draw') {
-            // Ensure freeDrawingBrush exists
-            const brush = canvas.freeDrawingBrush;
-            if (brush) {
-                brush.width = 5;
-                brush.color = '#FF0000'; // Default red
-            }
-        }
-    }, [activeTool]);
+    // Fabric initialization and tool switching handled in FabricCanvas component
+    // We just need to capture the ref when it's ready
+    const onFabricReady = useCallback((canvas: fabric.Canvas) => {
+        fabricCanvasRef.current = canvas;
+        setIsFabricReady(true);
+        saveHistory(canvas);
+    }, []);
 
     const saveHistory = (canvas: fabric.Canvas) => {
         const json = JSON.stringify(canvas.toJSON());
@@ -263,7 +209,12 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
                         </div>
                     ) : (
                         <div className="w-full h-full flex items-center justify-center p-4">
-                            <canvas ref={canvasRef} />
+                            <FabricCanvas
+                                imageUrl={currentImage}
+                                activeTool={activeTool}
+                                onReady={onFabricReady}
+                                onObjectModified={(canvas) => saveHistory(canvas)}
+                            />
                         </div>
                     )}
                 </div>
