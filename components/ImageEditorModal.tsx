@@ -194,6 +194,7 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
             const dataUrl = fabricCanvasRef.current.toDataURL({
                 format: 'png',
                 quality: 0.9,
+                multiplier: 1,
             });
             onSave(dataUrl);
             onClose();
