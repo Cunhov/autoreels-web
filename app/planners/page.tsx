@@ -257,11 +257,11 @@ export default function PlannersPage() {
                                                 }`}>
                                                 {log.level}
                                             </span>
-                                            <span className="text-[10px] text-ios-secondary">
+                                            <span className="text-[10px] text-gray-500">
                                                 {new Date(log.created_at).toLocaleString()}
                                             </span>
                                         </div>
-                                        <p className="text-ios-text font-medium">{log.message}</p>
+                                        <p className="text-gray-900 font-medium">{log.message}</p>
                                         {log.details && (
                                             <pre className="mt-2 text-[10px] bg-gray-50 p-2 rounded border border-gray-100 overflow-x-auto text-gray-500 max-h-32">
                                                 {JSON.stringify(log.details, null, 2)}

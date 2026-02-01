@@ -482,6 +482,21 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                             <option value="VIDEO">Video</option>
                                         </select>
                                     </div>
+                                    {mediaType === 'IMAGE' && !isCarousel && (
+                                        <div>
+                                            <label className="text-xs font-medium text-ios-text mb-1.5 block">Aspect Ratio</label>
+                                            <select
+                                                className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
+                                                defaultValue="original"
+                                            >
+                                                <option value="original">Original</option>
+                                                <option value="1:1">1:1 (Square)</option>
+                                                <option value="3:4">3:4 (Portrait)</option>
+                                                <option value="16:9">16:9 (Landscape)</option>
+                                                <option value="9:16">9:16 (Vertical)</option>
+                                            </select>
+                                        </div>
+                                    )}
                                     {(mediaType === 'REELS' && !isCarousel) && (
                                         <div className="flex flex-col justify-center">
                                             <label className="text-xs font-medium text-ios-text mb-1.5 block">Options</label>

@@ -16,6 +16,8 @@ import UploadProgressPanel, { UploadTask } from './UploadProgressPanel';
 import IOSToast, { ToastType } from './IOSToast';
 import { useRef } from 'react';
 import EditContentModal from './EditContentModal';
+import ImageEditorModal from './ImageEditorModal';
+import { Palette } from 'lucide-react';
 
 const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B';
@@ -112,6 +114,10 @@ export default function ContentLibrary({
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
     const [itemsToEdit, setItemsToEdit] = useState<ContentItem[]>([]);
     const [editingItem, setEditingItem] = useState<ContentItem | null>(null); // Legacy, kept for logic but unused if we switch full to modal
+
+    // Image Editor State
+    const [imageEditorItem, setImageEditorItem] = useState<ContentItem | null>(null);
+    const [isImageEditorOpen, setIsImageEditorOpen] = useState(false);
 
     // Upload Queue State
     const [uploadQueue, setUploadQueue] = useState<UploadTask[]>([]);
@@ -805,6 +811,66 @@ export default function ContentLibrary({
         setSelectedIds([]);
     };
 
+    const openImageEditor = (item: ContentItem) => {
+        setImageEditorItem(item);
+        setIsImageEditorOpen(true);
+    };
+
+    const handleImageEditorSave = async (dataUrl: string) => {
+        if (!imageEditorItem) return;
+
+        try {
+            setLoading(true); // Show global loading or toast
+            setToast({ msg: 'Saving edited image...', type: 'info', show: true });
+
+            // Convert DataURL to Blob
+            const res = await fetch(dataUrl);
+            const blob = await res.blob();
+            const file = new File([blob], `edited_${imageEditorItem.name}`, { type: 'image/png' });
+
+            // Upload
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session) return;
+
+            const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.png`;
+            const { error: uploadError } = await supabase.storage
+                .from('instagram-videos')
+                .upload(fileName, file);
+
+            if (uploadError) throw uploadError;
+
+            // Get Public URL
+            const { data: publicUrlData } = supabase.storage
+                .from('instagram-videos')
+                .getPublicUrl(fileName);
+
+            // Insert into DB
+            const { error: insertError } = await supabase.from('content_items').insert({
+                user_id: session.user.id,
+                name: `Edited ${imageEditorItem.name}`,
+                type: 'image',
+                url: publicUrlData.publicUrl,
+                path: fileName,
+                parent_id: currentFolderId,
+                size: file.size,
+                duration: 0
+            });
+
+            if (insertError) throw insertError;
+
+            setToast({ msg: 'Image saved successfully', type: 'success', show: true });
+            fetchContent(currentFolderId);
+            setIsImageEditorOpen(false);
+            setImageEditorItem(null);
+
+        } catch (error: any) {
+            console.error('Save failed:', error);
+            setToast({ msg: 'Failed to save image: ' + error.message, type: 'error', show: true });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     // -------------------------------------------------------------------------
     // Renders
     // -------------------------------------------------------------------------
@@ -1413,31 +1479,42 @@ export default function ContentLibrary({
                                     </button>
 
                                     {/* Hover Actions (Context Menu triggers) */}
-                                    {mode === 'manage' && (
-                                        <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 translate-x-2 group-hover:translate-x-0 duration-200">
+                                    <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 translate-x-2 group-hover:translate-x-0 duration-200">
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
+                                            className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
+                                            title="Edit Metadata"
+                                        >
+                                            <Edit2 size={12} />
+                                        </button>
+                                        {(item.type === 'image' || item.type === 'carousel_item') && (
                                             <button
-                                                onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
-                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-                                                title="Edit"
+                                                onClick={(e) => { e.stopPropagation(); openImageEditor(item); }}
+                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-purple-500 transition-colors"
+                                                title="Edit Image"
                                             >
-                                                <Edit2 size={12} />
+                                                <Palette size={12} />
                                             </button>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }}
-                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-                                                title="Move"
-                                            >
-                                                <Move size={12} />
-                                            </button>
-                                            <button
-                                                onClick={(e) => deleteItem(e, item)}
-                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
-                                                title="Delete"
-                                            >
-                                                <Trash2 size={12} />
-                                            </button>
-                                        </div>
-                                    )}
+                                        )}
+                                        {mode === 'manage' && (
+                                            <>
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }}
+                                                    className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
+                                                    title="Move"
+                                                >
+                                                    <Move size={12} />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => deleteItem(e, item)}
+                                                    className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
+                                                    title="Delete"
+                                                >
+                                                    <Trash2 size={12} />
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -1462,6 +1539,15 @@ export default function ContentLibrary({
                 itemsToEdit={itemsToEdit}
                 onEditComplete={onEditComplete}
             />
+
+            {imageEditorItem && (
+                <ImageEditorModal
+                    isOpen={isImageEditorOpen}
+                    onClose={() => setIsImageEditorOpen(false)}
+                    imageUrl={imageEditorItem.url || ''}
+                    onSave={handleImageEditorSave}
+                />
+            )}
 
             <UploadProgressPanel
                 tasks={uploadQueue}
