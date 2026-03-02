@@ -322,7 +322,8 @@ export default function ContentLibrary({
                     path: task.storagePath,
                     parent_id: task.dbParentId,
                     size: task.file.size,
-                    duration: (task as any).duration || 0
+                    duration: (task as any).duration || 0,
+                    caption: (task as any).caption || null
                 }),
             });
 
@@ -500,12 +501,12 @@ export default function ContentLibrary({
                 }
             } else {
                 for (const [folderName, groupFiles] of Object.entries(folderGroups)) {
-                    // Check for .txt file to use as caption
-                    let carouselCaption = '';
+                    // Check for .txt file to use as caption/description
+                    let folderCaption = '';
                     const txtFile = groupFiles.find(f => f.name.toLowerCase().endsWith('.txt'));
                     if (txtFile) {
                         try {
-                            carouselCaption = await txtFile.text();
+                            folderCaption = await txtFile.text();
                         } catch (e) {
                             console.error('Error reading .txt file:', e);
                         }
@@ -516,65 +517,109 @@ export default function ContentLibrary({
 
                     if (mediaFiles.length === 0) continue;
 
-                    // Create folder as carousel
-                    const res = await fetch('/api/content-items', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            name: folderName,
-                            type: 'carousel_folder',
-                            parent_id: null,
-                            caption: carouselCaption || null
-                        })
-                    });
+                    // === SMART DETECTION ===
+                    if (mediaFiles.length === 1) {
+                        // Single file in folder → standalone post (reel, image) with caption
+                        const file = mediaFiles[0];
+                        const fileExt = file.name.split('.').pop();
+                        const fileName = `${sessionUserId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
 
-                    if (!res.ok) throw new Error('Failed to create carousel folder');
-                    const folderData = await res.json();
-
-                    if (folderData) {
-                        // Add items with preserved order (by filename)
-                        const sortedMediaFiles = [...mediaFiles].sort((a, b) =>
-                            a.name.localeCompare(b.name, undefined, { numeric: true })
-                        );
-
-                        for (const file of sortedMediaFiles) {
-                            const fileExt = file.name.split('.').pop();
-                            const fileName = `${sessionUserId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
-
-                            let duration = 0;
-                            if (file.type.startsWith('video/')) {
-                                try {
-                                    const videoEl = document.createElement('video');
-                                    videoEl.preload = 'metadata';
-                                    videoEl.src = URL.createObjectURL(file);
-                                    await new Promise((resolve) => {
-                                        videoEl.onloadedmetadata = () => {
-                                            duration = videoEl.duration;
-                                            URL.revokeObjectURL(videoEl.src);
-                                            resolve(null);
-                                        };
-                                        videoEl.onerror = () => {
-                                            URL.revokeObjectURL(videoEl.src);
-                                            resolve(null);
-                                        }
-                                    });
-                                } catch (e) {
-                                    console.error("Error getting duration", e);
-                                }
+                        let duration = 0;
+                        if (file.type.startsWith('video/')) {
+                            try {
+                                const videoEl = document.createElement('video');
+                                videoEl.preload = 'metadata';
+                                videoEl.src = URL.createObjectURL(file);
+                                await new Promise((resolve) => {
+                                    videoEl.onloadedmetadata = () => {
+                                        duration = videoEl.duration;
+                                        URL.revokeObjectURL(videoEl.src);
+                                        resolve(null);
+                                    };
+                                    videoEl.onerror = () => {
+                                        URL.revokeObjectURL(videoEl.src);
+                                        resolve(null);
+                                    }
+                                });
+                            } catch (e) {
+                                console.error("Error getting duration", e);
                             }
+                        }
 
-                            newTasks.push({
-                                id: Math.random().toString(36),
-                                file,
-                                progress: 0,
-                                status: 'pending',
-                                targetName: `${folderName}/${file.name}`,
-                                size: file.size,
-                                storagePath: fileName,
-                                dbParentId: folderData.id,
-                                forceType: 'carousel_item',
-                                duration
-                            });
+                        newTasks.push({
+                            id: Math.random().toString(36),
+                            file,
+                            progress: 0,
+                            status: 'pending',
+                            targetName: file.name,
+                            size: file.size,
+                            storagePath: fileName,
+                            dbParentId: null,
+                            forceType: null, // auto-detect from MIME (video or image)
+                            duration,
+                            caption: folderCaption || null
+                        });
+                    } else {
+                        // 2+ files → carousel folder with caption
+                        const res = await fetch('/api/content-items', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                name: folderName,
+                                type: 'carousel_folder',
+                                parent_id: null,
+                                caption: folderCaption || null
+                            })
+                        });
+
+                        if (!res.ok) throw new Error('Failed to create carousel folder');
+                        const folderData = await res.json();
+
+                        if (folderData) {
+                            // Add items with preserved order (by filename)
+                            const sortedMediaFiles = [...mediaFiles].sort((a, b) =>
+                                a.name.localeCompare(b.name, undefined, { numeric: true })
+                            );
+
+                            for (const file of sortedMediaFiles) {
+                                const fileExt = file.name.split('.').pop();
+                                const fileName = `${sessionUserId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+
+                                let duration = 0;
+                                if (file.type.startsWith('video/')) {
+                                    try {
+                                        const videoEl = document.createElement('video');
+                                        videoEl.preload = 'metadata';
+                                        videoEl.src = URL.createObjectURL(file);
+                                        await new Promise((resolve) => {
+                                            videoEl.onloadedmetadata = () => {
+                                                duration = videoEl.duration;
+                                                URL.revokeObjectURL(videoEl.src);
+                                                resolve(null);
+                                            };
+                                            videoEl.onerror = () => {
+                                                URL.revokeObjectURL(videoEl.src);
+                                                resolve(null);
+                                            }
+                                        });
+                                    } catch (e) {
+                                        console.error("Error getting duration", e);
+                                    }
+                                }
+
+                                newTasks.push({
+                                    id: Math.random().toString(36),
+                                    file,
+                                    progress: 0,
+                                    status: 'pending',
+                                    targetName: `${folderName}/${file.name}`,
+                                    size: file.size,
+                                    storagePath: fileName,
+                                    dbParentId: folderData.id,
+                                    forceType: 'carousel_item',
+                                    duration
+                                });
+                            }
                         }
                     }
                 }
