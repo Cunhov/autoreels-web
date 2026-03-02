@@ -37,7 +37,7 @@ export default function Login() {
         <div className="flex flex-col items-center justify-center min-h-[80vh] w-full max-w-md mx-auto p-4">
             <div className="w-full mb-10 text-center">
                 <h1 className="text-[34px] font-bold text-ios-text tracking-tight">AutoReels</h1>
-                <p className="text-ios-text-secondary mt-2">Sign in to manage your reels</p>
+                <p className="text-ios-text-secondary mt-2">Sign in with your admin credentials</p>
             </div>
 
             <form onSubmit={handleLogin} className="w-full">
@@ -47,7 +47,7 @@ export default function Login() {
                         type="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder="name@example.com"
+                        placeholder="admin@example.com"
                     />
                     <IOSInputRow
                         label="Password"
@@ -68,10 +68,6 @@ export default function Login() {
                     <IOSButton type="submit" disabled={loading} className='shadow-lg'>
                         {loading ? 'Signing in...' : 'Sign In'}
                     </IOSButton>
-
-                    <Link href="/signup" className="block text-center text-ios-blue text-[15px]">
-                        Create an account
-                    </Link>
                 </div>
             </form>
         </div>

@@ -54,6 +54,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 # Create data directory for SQLite
 RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
 
+# Copy the entrypoint script
+COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
+RUN chmod +x ./docker-entrypoint.sh
+
 USER nextjs
 
 EXPOSE 3000
@@ -63,5 +67,5 @@ ENV HOSTNAME="0.0.0.0"
 # Point SQLite DB to the persistent volume
 ENV DATABASE_URL="file:/app/data/prod.db"
 
-# server.js is created by next build from the standalone output
-CMD ["node", "server.js"]
+# Replace standard CMD with our custom setup script
+CMD ["./docker-entrypoint.sh"]

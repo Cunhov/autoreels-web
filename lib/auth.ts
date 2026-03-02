@@ -5,7 +5,6 @@ import { prisma } from "@/lib/prisma";
 import { compare } from "bcryptjs"; // I need to install bcryptjs if I use it
 
 export const authOptions: NextAuthOptions = {
-    adapter: PrismaAdapter(prisma),
     session: {
         strategy: "jwt",
     },
@@ -24,23 +23,19 @@ export const authOptions: NextAuthOptions = {
                     return null;
                 }
 
-                const user = await prisma.user.findUnique({
-                    where: {
-                        email: credentials.email
-                    }
-                });
+                const adminEmail = process.env.ADMIN_EMAIL;
+                const adminPassword = process.env.ADMIN_PASSWORD;
 
-                if (!user || !(user as any).password) {
+                if (!adminEmail || !adminPassword) {
+                    console.error("ADMIN_EMAIL or ADMIN_PASSWORD is not set in environment variables.");
                     return null;
                 }
 
-                const isPasswordValid = await compare(credentials.password, (user as any).password);
-
-                if (!isPasswordValid) {
-                    return null;
+                if (credentials.email === adminEmail && credentials.password === adminPassword) {
+                    return { id: "admin", email: adminEmail };
                 }
 
-                return user;
+                return null;
             }
         })
     ],
@@ -50,7 +45,7 @@ export const authOptions: NextAuthOptions = {
                 ...session,
                 user: {
                     ...session.user,
-                    id: token.sub,
+                    id: token.sub, // Will be "admin" based on authorize return
                 },
             };
         },
