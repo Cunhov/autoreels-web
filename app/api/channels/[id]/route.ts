@@ -5,8 +5,9 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET(
     req: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -14,7 +15,7 @@ export async function GET(
 
     const channel = await prisma.channel.findUnique({
         where: {
-            id: params.id,
+            id,
             user_id: (session.user as any).id,
         },
     });
@@ -28,8 +29,9 @@ export async function GET(
 
 export async function PATCH(
     req: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -39,7 +41,7 @@ export async function PATCH(
         const data = await req.json();
         const channel = await prisma.channel.update({
             where: {
-                id: params.id,
+                id,
                 user_id: (session.user as any).id,
             },
             data,
@@ -52,8 +54,9 @@ export async function PATCH(
 
 export async function DELETE(
     req: Request,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
+    const { id } = await params;
     const session = await getServerSession(authOptions);
     if (!session?.user) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -62,7 +65,7 @@ export async function DELETE(
     try {
         await prisma.channel.delete({
             where: {
-                id: params.id,
+                id,
                 user_id: (session.user as any).id,
             },
         });

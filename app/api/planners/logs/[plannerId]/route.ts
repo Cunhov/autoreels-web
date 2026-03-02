@@ -5,14 +5,14 @@ import { prisma } from "@/lib/prisma";
 
 export async function GET(
     _req: Request,
-    { params }: { params: { plannerId: string } }
+    { params }: { params: Promise<{ plannerId: string }> }
 ) {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { plannerId } = params;
+    const { plannerId } = await params;
 
     try {
         const logs = await prisma.plannerLog.findMany({

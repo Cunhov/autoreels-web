@@ -40,8 +40,8 @@ async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
 
                 if (!resolved) {
                     try {
-                        const listVal = await redis.lindex<string>(tokenOrKey, 0);
-                        if (listVal) resolved = listVal;
+                        const listVal = await redis.lindex(tokenOrKey, 0);
+                        if (listVal) resolved = listVal as string;
                     } catch { /* ignore */ }
                 }
 
@@ -182,7 +182,7 @@ async function handler(request: Request) {
                                 where: { parent_id: libItem.id },
                                 orderBy: { created_at: 'asc' },
                             });
-                            children = subItems.map(c => ({
+                            children = subItems.map((c: any) => ({
                                 url: c.url || '',
                                 type: c.type === 'video' ? 'video' : 'image',
                             }));

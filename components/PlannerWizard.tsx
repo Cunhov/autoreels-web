@@ -217,16 +217,19 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 }
 
                 // Build carousel_item_ids array with items in correct order
-                const carouselItems = folderChildren.map(item => ({
+                const carouselItems = folderChildren.map((item: any) => ({
                     url: item.url,
                     type: item.type === 'video' ? 'video' : 'image'
                 }));
+
+                // Exclude the children from being created as main posts
+                const childIds = folderChildren.map((item: any) => item.id);
 
                 content = [{
                     type: 'config',
                     media_type: 'CAROUSEL',
                     carousel_items: carouselItems,
-                    carousel_item_ids: folderChildren.map(item => item.id),
+                    carousel_item_ids: folderChildren.map((item: any) => item.id),
                     folder_id: folderId,
                     caption,
                     location_id: location

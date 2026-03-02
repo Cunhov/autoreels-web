@@ -187,7 +187,7 @@ export default function ContentLibrary({
             const data = await res.json();
 
             // Post-process: If item is a folder, fetch its first child for thumbnail
-            const itemsWithThumbnails = await Promise.all((data || []).map(async (item) => {
+            const itemsWithThumbnails = await Promise.all((data || []).map(async (item: any) => {
                 if (item.type === 'carousel_folder') {
                     // Fetch one image child to use as thumbnail
                     const childRes = await fetch(`/api/content-items?parent_id=${item.id}&types=image,video&limit=1`);
