@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { supabaseAdmin } from "@/lib/supabase";
+import { unlink } from "fs/promises";
+import { join } from "path";
 
 export async function DELETE(req: Request) {
     const session = await getServerSession(authOptions);
@@ -12,29 +13,32 @@ export async function DELETE(req: Request) {
     try {
         const url = new URL(req.url);
         const path = url.searchParams.get("path");
-        const bucket = url.searchParams.get("bucket") || 'instagram-videos';
 
         if (!path) {
             return NextResponse.json({ error: "No path provided" }, { status: 400 });
         }
 
-        // Security check: ensure path starts with user_id to prevent deleting others' files.
+        // Security check: ensure path starts with user_id
         const userId = (session.user as any).id;
         if (!path.startsWith(`${userId}/`)) {
             return NextResponse.json({ error: "Permission denied" }, { status: 403 });
         }
 
-        const { error } = await supabaseAdmin.storage
-            .from(bucket)
-            .remove([path]);
+        // Delete from local filesystem
+        const filePath = join(process.cwd(), "public", "uploads", path);
 
-        if (error) {
-            console.error('Supabase delete error:', error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+        try {
+            await unlink(filePath);
+        } catch (err: any) {
+            // If file doesn't exist, we still consider it "deleted" from our perspective
+            if (err.code !== 'ENOENT') {
+                throw err;
+            }
         }
 
         return NextResponse.json({ success: true });
     } catch (error: any) {
+        console.error('Local delete error:', error);
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }

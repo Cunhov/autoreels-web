@@ -268,22 +268,10 @@ export default function ContentLibrary({
 
             if (!session) throw new Error("No session");
 
-            // 1. Get Signed Upload URL
-            const urlRes = await fetch('/api/upload-url', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: task.storagePath, bucket: 'instagram-videos' })
-            });
-
-            if (!urlRes.ok) throw new Error('Failed to get upload URL');
-            const { signedUrl, token } = await urlRes.json();
-
-            // 2. XHR Upload
+            // 1. Upload to local API using FormData
             await new Promise<void>((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
-                xhr.open('PUT', signedUrl);
-
-                xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+                xhr.open('POST', '/api/upload');
 
                 // Track progress
                 xhr.upload.onprogress = (e) => {
@@ -297,13 +285,18 @@ export default function ContentLibrary({
                     if (xhr.status >= 200 && xhr.status < 300) {
                         resolve();
                     } else {
-                        reject(new Error(`Upload failed with status ${xhr.status}`));
+                        const errorData = JSON.parse(xhr.responseText || '{}');
+                        reject(new Error(errorData.error || `Upload failed with status ${xhr.status}`));
                     }
                 };
 
                 xhr.onerror = () => reject(new Error("Network error"));
 
-                xhr.send(task.file);
+                const formData = new FormData();
+                formData.append('file', task.file);
+                formData.append('path', task.storagePath!);
+
+                xhr.send(formData);
             });
 
             // Insert into DB
