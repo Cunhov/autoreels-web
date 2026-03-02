@@ -49,8 +49,8 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 # Copy Prisma schema and migrations for runtime DB operations
+# NOTE: Do NOT copy prisma.config.ts — Prisma CLI auto-loads it and fails without node_modules
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
-COPY --from=builder --chown=nextjs:nodejs /app/prisma.config.ts ./
 
 # Create data directories for SQLite and uploads
 RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
