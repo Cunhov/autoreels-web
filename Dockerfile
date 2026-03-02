@@ -58,6 +58,10 @@ RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
 RUN chmod +x ./docker-entrypoint.sh
 
+# Define native Docker volumes for persistence
+VOLUME ["/app/data"]
+VOLUME ["/app/public/uploads"]
+
 USER nextjs
 
 EXPOSE 3000
