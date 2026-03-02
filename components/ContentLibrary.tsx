@@ -221,59 +221,50 @@ export default function ContentLibrary({
     // Actions (Upload, Drop, Create Folder)
     // -------------------------------------------------------------------------
 
-    // -------------------------------------------------------------------------
-    // Upload Queue Processing
-    // -------------------------------------------------------------------------
-
-    const processUploadQueue = async () => {
+    // ----- Upload Queue -----
+    // uploadingRef: true while a file is actively being processed
+    const processUploadQueue = () => {
+        // Guard: already processing one file
         if (uploadingRef.current) return;
 
-        // Find next pending task
-        // We need to use functional state update pattern carefully or refs
-        // Simplest is to find the first 'pending' in the current queue state
-        // But inside async function, state might be verify stale? 
-        // We will call this function recursively/iteratively using state updater to get fresh queue
-
+        // Read latest queue from a ref so we never use stale closure state
         setUploadQueue(prev => {
-            const nextTaskIndex = prev.findIndex(t => t.status === 'pending');
-            if (nextTaskIndex === -1) {
+            const nextTask = prev.find(t => t.status === 'pending');
+            if (!nextTask) {
+                // Nothing left to do
                 uploadingRef.current = false;
                 setUploading(false);
                 return prev;
             }
 
-            // Start processing
+            // Lock the mutex BEFORE the async work starts
             uploadingRef.current = true;
-            const nextTask = prev[nextTaskIndex];
-
-            // Trigger the upload logic asynchronously
-            executeUpload(nextTask);
-
+            // Kick off the upload outside the setter (no-op state return here, real work is async)
+            setTimeout(() => executeUpload(nextTask), 0);
             return prev;
         });
     };
 
-    // Execute single upload with XHR
+    // Execute single upload with XHR (progress tracking) then move to next
     const executeUpload = async (task: UploadTask) => {
         if (!task.storagePath) {
-            console.error("Missing storage path for task", task);
-            setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'error', error: "Internal Error: Missing path" } : t));
-            processUploadQueue();
+            console.error('Missing storage path for task', task);
+            setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'error', error: 'Internal Error: Missing path' } : t));
+            uploadingRef.current = false; // release lock
+            processUploadQueue();          // try next
             return;
         }
 
         try {
-            // Update status to uploading
             setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'uploading' } : t));
 
-            if (!session) throw new Error("No session");
+            if (!session) throw new Error('No session');
 
-            // 1. Upload to local API using FormData
+            // Upload via XHR so we get progress events
             await new Promise<void>((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
                 xhr.open('POST', '/api/upload');
 
-                // Track progress
                 xhr.upload.onprogress = (e) => {
                     if (e.lengthComputable) {
                         const percent = (e.loaded / e.total) * 100;
@@ -281,7 +272,7 @@ export default function ContentLibrary({
                     }
                 };
 
-                xhr.onload = async () => {
+                xhr.onload = () => {
                     if (xhr.status >= 200 && xhr.status < 300) {
                         resolve();
                     } else {
@@ -290,16 +281,15 @@ export default function ContentLibrary({
                     }
                 };
 
-                xhr.onerror = () => reject(new Error("Network error"));
+                xhr.onerror = () => reject(new Error('Network error'));
 
                 const formData = new FormData();
                 formData.append('file', task.file);
                 formData.append('path', task.storagePath!);
-
                 xhr.send(formData);
             });
 
-            // Insert into DB
+            // Save to DB
             const publicUrl = getPublicUrl(task.storagePath!);
 
             let type = 'video';
@@ -323,32 +313,30 @@ export default function ContentLibrary({
                     parent_id: task.dbParentId,
                     size: task.file.size,
                     duration: (task as any).duration || 0,
-                    caption: (task as any).caption || null
+                    caption: (task as any).caption || null,
                 }),
             });
 
             if (!res.ok) throw new Error('Failed to save in DB');
             const insertedData = await res.json();
 
-            // Mark completed
             setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t));
 
-            // Real-time Update: Optimistically add to list if in current folder
+            // Optimistic UI update
             if (task.dbParentId === currentFolderId || (!task.dbParentId && !currentFolderId)) {
-                // If we got the inserted data back, we can safely add it to state
                 if (insertedData) {
                     setItems(prev => [insertedData as ContentItem, ...prev]);
                 } else {
-                    // Fallback to fetch
                     fetchContent(currentFolderId);
                 }
             }
-
         } catch (error: any) {
             console.error('Task failed:', error);
             setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'error', error: error.message } : t));
         } finally {
-            // Process next
+            // CRITICAL: release the lock BEFORE calling processUploadQueue,
+            // otherwise the guard "if (uploadingRef.current) return" will block the next file
+            uploadingRef.current = false;
             processUploadQueue();
         }
     };
