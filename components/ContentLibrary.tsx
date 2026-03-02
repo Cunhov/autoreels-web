@@ -426,7 +426,10 @@ export default function ContentLibrary({
                 const cleanPath = (file.path || file.name).replace(/^\//, '');
                 const parts = cleanPath.split('/');
                 if (parts.length > 1) {
-                    const folderName = parts[0];
+                    // Group by the immediate parent folder of the file
+                    // e.g. "MeusPosts/Post1/video.mp4" → group = "Post1"
+                    // e.g. "Post1/video.mp4" → group = "Post1"
+                    const folderName = parts[parts.length - 2];
                     if (!folderGroups[folderName]) folderGroups[folderName] = [];
                     folderGroups[folderName].push(file);
                 } else {
