@@ -98,6 +98,7 @@ model Planner {
 
   user        User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
   logs        PlannerLog[]
+  posts       Post[]
   channels    Channel[]    @relation("ChannelToPlanner")
 
   @@map("planners")
@@ -160,8 +161,9 @@ model Post {
   instagram_child_ids    String?   // JSON: array of child container IDs
   created_at             DateTime  @default(now())
 
-  user    User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
-  channel Channel? @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  user    User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  channel Channel?  @relation(fields: [channel_id], references: [id], onDelete: SetNull)
+  planner Planner?  @relation(fields: [planner_id], references: [id], onDelete: SetNull)
 
   @@map("posts")
 }

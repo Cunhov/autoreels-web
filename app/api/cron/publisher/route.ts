@@ -401,10 +401,23 @@ async function handler(request: Request) {
                 });
             }
         }
+        // ═══════════════════════════════════════════════════════════════════════
+        // PHASE 2.5: Timeout posts stuck in processing for > 2 hours
+        // ═══════════════════════════════════════════════════════════════════════
 
-        // ═══════════════════════════════════════════════════════════════════════
-        // PHASE 3: Ready → Published (call media_publish)
-        // ═══════════════════════════════════════════════════════════════════════
+        const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+        await prisma.post.updateMany({
+            where: {
+                status: { in: ['processing_upload', 'processing_children'] },
+                created_at: { lte: twoHoursAgo },
+            },
+            data: {
+                status: 'failed',
+                error_message: 'Timed out: still processing after 2 hours',
+                failed_reason: 'Processing Timeout',
+            },
+        });
+
 
         const readyPosts = await prisma.post.findMany({
             where: { status: 'ready_to_publish' },

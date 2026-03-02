@@ -1,0 +1,21 @@
+# ── Autoreels Publisher Worker ────────────────────────────────────────────────
+# Lightweight container that polls /api/cron/publisher on a fixed interval.
+# No build step needed — just plain Node.js with built-in fetch (Node 18+).
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy only the worker script — no package.json needed (zero dependencies)
+COPY worker/index.js ./index.js
+
+# Non-root user for security
+RUN addgroup --system --gid 1001 worker && \
+    adduser  --system --uid 1001 --ingroup worker worker
+USER worker
+
+# Environment defaults (override via docker-compose / Easypanel)
+ENV APP_URL=http://app:80
+ENV CRON_SECRET=""
+ENV WORKER_INTERVAL=60
+
+CMD ["node", "index.js"]

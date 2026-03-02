@@ -1,17 +1,44 @@
 services:
+
+  # ── Next.js Application ────────────────────────────────────────────────────────
   app:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
-        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        - DATABASE_URL=file:/app/data/prod.db
     ports:
       - "3000:3000"
     env_file:
       - .env
+    environment:
+      - DATABASE_URL=file:/app/data/prod.db
     volumes:
       - autoreels-data:/app/data
+    restart: always
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://localhost:3000/api/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+
+  # ── Publisher Worker ───────────────────────────────────────────────────────────
+  # Calls /api/cron/publisher on a fixed interval — no external cron needed.
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    env_file:
+      - .env
+    environment:
+      # Points to the app service by its Docker Compose service name
+      - APP_URL=http://app:3000
+      # Override interval (seconds) if needed: e.g. WORKER_INTERVAL=30
+      - WORKER_INTERVAL=${WORKER_INTERVAL:-60}
+    depends_on:
+      app:
+        condition: service_healthy
     restart: always
 
 volumes:
