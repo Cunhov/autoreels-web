@@ -69,14 +69,15 @@ model AppConfig {
 }
 
 model Channel {
-  id           String   @id @default(uuid())
-  user_id      String
-  name         String
-  platform     String
-  access_token String?
-  account_id   String?
-  status       String   @default("active")
-  created_at   DateTime @default(now())
+  id                  String   @id @default(uuid())
+  user_id             String
+  name                String
+  platform            String
+  access_token        String?
+  account_id          String?
+  profile_picture_url String?
+  status              String   @default("active")
+  created_at          DateTime @default(now())
 
   user     User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
   posts    Post[]
@@ -84,6 +85,7 @@ model Channel {
 
   @@map("channels")
 }
+
 
 model Planner {
   id          String   @id @default(uuid())

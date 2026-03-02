@@ -24,15 +24,22 @@ export async function DELETE(req: Request) {
             return NextResponse.json({ error: "Permission denied" }, { status: 403 });
         }
 
-        // Delete from local filesystem
-        const filePath = join(process.cwd(), "public", "uploads", path);
+        // Try /data/uploads first (new location), then /public/uploads (legacy)
+        const candidates = [
+            join(process.cwd(), "data", "uploads", path),
+            join(process.cwd(), "public", "uploads", path),
+        ];
 
-        try {
-            await unlink(filePath);
-        } catch (err: any) {
-            // If file doesn't exist, we still consider it "deleted" from our perspective
-            if (err.code !== 'ENOENT') {
-                throw err;
+        for (const filePath of candidates) {
+            try {
+                await unlink(filePath);
+                break; // Deleted successfully, stop
+            } catch (err: any) {
+                if (err.code !== 'ENOENT') {
+                    // Real error — not "file not found"
+                    throw err;
+                }
+                // File not found at this path, try next
             }
         }
 
