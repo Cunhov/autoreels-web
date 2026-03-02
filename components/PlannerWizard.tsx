@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useSession } from 'next-auth/react';
 import { X, ChevronRight, ChevronLeft, Calendar, Clock, Instagram, Layers, ArrowUpDown, Check, Image as ImageIcon, Film } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import MediaUploader from './MediaUploader';
@@ -30,6 +31,7 @@ const STEPS = [
 export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData }: PlannerWizardProps) {
     const [step, setStep] = useState(0);
     const [loading, setLoading] = useState(false);
+    const { data: session } = useSession();
     const [uploading, setUploading] = useState(false);
     const [channels, setChannels] = useState<Channel[]>([]);
 
@@ -130,12 +132,9 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     }, [files]);
 
     async function fetchChannels() {
-        const { data } = await supabase
-            .from('channels')
-            .select('*')
-            .eq('platform', 'instagram')
-            .eq('status', 'active');
-        setChannels(data || []);
+        const res = await fetch('/api/channels');
+        const data = await res.json();
+        setChannels(Array.isArray(data) ? data.filter((c: any) => c.platform === 'instagram' && c.status === 'active') : []);
     }
 
     const handleNext = () => {
@@ -184,8 +183,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
         setLoading(true);
         setUploading(true);
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) throw new Error('Not authenticated');
+            if (!session?.user) throw new Error('Not authenticated');
 
             // 1. Upload New Files
             const uploadedItems = await uploadFiles(session.user.id);
@@ -198,13 +196,9 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 const folderId = selectedContentIds[0]; // Only one folder should be selected
 
                 // Fetch children ordered by name (alphabetical/numerical)
-                const { data: folderChildren, error: childrenError } = await supabase
-                    .from('content_items')
-                    .select('id, name, url, type')
-                    .eq('parent_id', folderId)
-                    .order('name', { ascending: true });
-
-                if (childrenError) throw childrenError;
+                const res = await fetch(`/api/content-items?parent_id=${folderId}`);
+                if (!res.ok) throw new Error('Failed to fetch folder children');
+                const folderChildren = await res.json();
 
                 if (!folderChildren || folderChildren.length < 2) {
                     throw new Error('Carousel folder must contain at least 2 items');
@@ -281,23 +275,19 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
             };
 
             // 4. Update or Insert Planner
-            if (initialData?.id) {
-                const { error } = await supabase.from('planners').update({
+            const plannerId = initialData?.id;
+            const res = await fetch(plannerId ? `/api/planners/${plannerId}` : '/api/planners', {
+                method: plannerId ? 'PATCH' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
                     name,
                     channel_ids: selectedChannels,
                     config: plannerConfig,
-                }).eq('id', initialData.id);
-                if (error) throw error;
-            } else {
-                const { error } = await supabase.from('planners').insert({
-                    user_id: session.user.id,
-                    name,
-                    channel_ids: selectedChannels,
-                    config: plannerConfig,
-                    status: 'active'
-                });
-                if (error) throw error;
-            }
+                    ...(plannerId ? {} : { status: 'active' })
+                }),
+            });
+
+            if (!res.ok) throw new Error('Failed to save planner');
 
             onSuccess();
             onClose();

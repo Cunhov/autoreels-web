@@ -1,0 +1,156 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// NextAuth Models
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  accounts      Account[]
+  sessions      Session[]
+  
+  // App Relations
+  channels      Channel[]
+  planners      Planner[]
+  posts         Post[]
+  contentItems  ContentItem[]
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?
+  access_token       String?
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// App Models
+model AppConfig {
+  key   String  @id
+  value String?
+
+  @@map("app_config")
+}
+
+model Channel {
+  id           String   @id @default(uuid())
+  user_id      String
+  name         String
+  platform     String
+  access_token String?
+  account_id   String?
+  status       String   @default("active")
+  created_at   DateTime @default(now())
+
+  user     User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  posts    Post[]
+  planners Planner[] @relation("ChannelToPlanner")
+
+  @@map("channels")
+}
+
+model Planner {
+  id          String   @id @default(uuid())
+  user_id     String
+  name        String
+  config      String   // JSON stringified
+  status      String   @default("active")
+  last_run    DateTime?
+  created_at  DateTime @default(now())
+
+  user        User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  logs        PlannerLog[]
+  channels    Channel[]    @relation("ChannelToPlanner")
+
+  @@map("planners")
+}
+
+model PlannerLog {
+  id          String   @id @default(uuid())
+  planner_id  String
+  level       String   @default("info")
+  message     String
+  details     String?  // JSON stringified
+  created_at  DateTime @default(now())
+
+  planner     Planner  @relation(fields: [planner_id], references: [id], onDelete: Cascade)
+
+  @@map("planner_logs")
+}
+
+model ContentItem {
+  id          String   @id @default(uuid())
+  user_id     String
+  parent_id   String?
+  type        String
+  url         String?  // Can be null for folders
+  path        String?
+  name        String?
+  size        Int?
+  duration    Float?
+  caption     String?
+  created_at  DateTime @default(now())
+
+  user        User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  parent      ContentItem?  @relation("ParentChild", fields: [parent_id], references: [id], onDelete: Cascade)
+  children    ContentItem[] @relation("ParentChild")
+
+  @@map("content_items")
+  @@index([parent_id])
+}
+
+model Post {
+  id                 String    @id @default(uuid())
+  user_id            String
+  channel_id         String?
+  video_url          String?
+  image_url          String?
+  thumbnail_url      String?
+  caption            String?
+  status             String    @default("scheduled")
+  scheduled_at       DateTime?
+  error_message      String?
+  failed_reason      String?
+  instagram_media_id String?
+  created_at         DateTime  @default(now())
+
+  user    User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  channel Channel? @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+
+  @@map("posts")
+}

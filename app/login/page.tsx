@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { signIn } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import IOSButton from '@/components/IOSButton'
@@ -18,13 +18,14 @@ export default function Login() {
         setLoading(true)
         setError(null)
 
-        const { error } = await supabase.auth.signInWithPassword({
+        const res = await signIn('credentials', {
             email,
             password,
+            redirect: false,
         })
 
-        if (error) {
-            setError(error.message)
+        if (res?.error) {
+            setError('Invalid email or password')
             setLoading(false)
         } else {
             router.push('/')

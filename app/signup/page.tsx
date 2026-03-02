@@ -1,6 +1,6 @@
 'use client'
 import { useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { signIn } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import IOSButton from '@/components/IOSButton'
@@ -19,19 +19,34 @@ export default function Signup() {
         setLoading(true)
         setError(null)
 
-        const { error } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-                emailRedirectTo: `${location.origin}/auth/callback`,
-            },
-        })
+        try {
+            const signupRes = await fetch('/api/signup', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+            })
 
-        if (error) {
-            setError(error.message)
-            setLoading(false)
-        } else {
-            setSuccess(true)
+            const data = await signupRes.json()
+
+            if (!signupRes.ok) {
+                throw new Error(data.message || 'Something went wrong')
+            }
+
+            // After signup, sign in automatically
+            const signinRes = await signIn('credentials', {
+                email,
+                password,
+                redirect: false,
+            })
+
+            if (signinRes?.error) {
+                router.push('/login')
+            } else {
+                router.push('/')
+                router.refresh()
+            }
+        } catch (err: any) {
+            setError(err.message)
             setLoading(false)
         }
     }

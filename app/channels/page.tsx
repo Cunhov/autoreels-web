@@ -30,14 +30,13 @@ export default function ChannelsPage() {
     async function fetchChannels() {
         setLoading(true);
         try {
-            const { data, error } = await supabase
-                .from('channels')
-                .select('*')
-                .eq('platform', 'instagram') // Force filter by Instagram
-                .order('created_at', { ascending: false });
-
-            if (error) throw error;
-            setChannels(data || []);
+            const res = await fetch('/api/channels');
+            if (res.ok) {
+                const data = await res.json();
+                setChannels(data || []);
+            } else {
+                throw new Error('Failed to fetch channels');
+            }
         } catch (error) {
             console.error('Error fetching channels:', error);
         } finally {
@@ -54,12 +53,11 @@ export default function ChannelsPage() {
         if (!confirm('Are you sure you want to delete this channel?')) return;
 
         try {
-            const { error } = await supabase
-                .from('channels')
-                .delete()
-                .eq('id', id);
+            const res = await fetch(`/api/channels/${id}`, {
+                method: 'DELETE'
+            });
 
-            if (error) throw error;
+            if (!res.ok) throw new Error('Delete failed');
             fetchChannels();
         } catch (error) {
             console.error('Error deleting channel:', error);
@@ -97,6 +95,7 @@ export default function ChannelsPage() {
                 <div className="relative mb-4">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                     <input
+                        title="Search channels"
                         type="text"
                         placeholder="Search channels..."
                         value={search}

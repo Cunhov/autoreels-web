@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 import { supabase } from '@/lib/supabase';
 import { Upload, X, Radio, Calendar as CalendarIcon } from 'lucide-react';
 import { IOSInputRow } from '@/components/IOSComponents';
@@ -13,6 +14,7 @@ interface Channel {
 
 export default function NewPost() {
     const router = useRouter();
+    const { data: session } = useSession();
     const [channels, setChannels] = useState<Channel[]>([]);
     const [selectedChannel, setSelectedChannel] = useState('');
     const [scheduledAt, setScheduledAt] = useState('');
@@ -26,8 +28,11 @@ export default function NewPost() {
     }, []);
 
     async function fetchChannels() {
-        const { data } = await supabase.from('channels').select('id, name, platform');
-        if (data) setChannels(data);
+        const res = await fetch('/api/channels');
+        if (res.ok) {
+            const data = await res.json();
+            setChannels(data);
+        }
     }
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -63,21 +68,21 @@ export default function NewPost() {
             const videoUrl = publicUrlData.publicUrl;
 
             // 3. Insert into Database
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) throw new Error('You must be logged in to create a post.');
+            if (!session?.user) throw new Error('You must be logged in to create a post.');
 
-            const { error: insertError } = await supabase
-                .from('posts')
-                .insert({
+            const res = await fetch('/api/posts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
                     video_url: videoUrl,
                     caption: caption,
                     status: 'pending',
-                    user_id: session.user.id,
                     channel_id: selectedChannel || null,
                     scheduled_at: scheduledAt || null
-                });
+                })
+            });
 
-            if (insertError) throw insertError;
+            if (!res.ok) throw new Error('Failed to create post record');
 
             router.push('/');
         } catch (err: any) {
@@ -132,6 +137,7 @@ export default function NewPost() {
                             Channel
                         </label>
                         <select
+                            title="Channel Select"
                             value={selectedChannel}
                             onChange={(e) => setSelectedChannel(e.target.value)}
                             className="bg-transparent text-[17px] text-ios-blue text-right focus:outline-none"
@@ -149,6 +155,7 @@ export default function NewPost() {
                             Schedule
                         </label>
                         <input
+                            title="Schedule At"
                             type="datetime-local"
                             value={scheduledAt}
                             onChange={(e) => setScheduledAt(e.target.value)}

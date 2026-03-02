@@ -1,6 +1,5 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
 import { Sliders, Plus, Play, Pause, Trash2, Calendar, Instagram, Terminal, X, RefreshCw } from 'lucide-react'
 import IOSButton from '@/components/IOSButton'
 import IOSCard from '@/components/IOSComponents'
@@ -32,11 +31,9 @@ export default function PlannersPage() {
     async function fetchPlanners() {
         setLoading(true);
         try {
-            const { data } = await supabase
-                .from('planners')
-                .select('*')
-                .order('created_at', { ascending: false });
-            setPlanners(data || []);
+            const res = await fetch('/api/planners');
+            const data = await res.json();
+            setPlanners(Array.isArray(data) ? data : []);
         } finally {
             setLoading(false);
         }
@@ -45,11 +42,12 @@ export default function PlannersPage() {
     async function toggleStatus(planner: Planner) {
         const newStatus = planner.status === 'active' ? 'inactive' : 'active';
         try {
-            const { error } = await supabase
-                .from('planners')
-                .update({ status: newStatus })
-                .eq('id', planner.id);
-            if (error) throw error;
+            const res = await fetch(`/api/planners/${planner.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: newStatus }),
+            });
+            if (!res.ok) throw new Error('Failed to update status');
             fetchPlanners();
         } catch (error) {
             console.error(error);
@@ -60,8 +58,10 @@ export default function PlannersPage() {
     async function handleDelete(id: string) {
         if (!confirm('Are you sure you want to delete this planner?')) return;
         try {
-            const { error } = await supabase.from('planners').delete().eq('id', id);
-            if (error) throw error;
+            const res = await fetch(`/api/planners/${id}`, {
+                method: 'DELETE',
+            });
+            if (!res.ok) throw new Error('Failed to delete planner');
             fetchPlanners();
         } catch (error) {
             console.error(error);
@@ -82,13 +82,9 @@ export default function PlannersPage() {
     async function fetchLogs(plannerId: string) {
         setLoadingLogs(true);
         try {
-            const { data } = await supabase
-                .from('planner_logs')
-                .select('*')
-                .eq('planner_id', plannerId)
-                .order('created_at', { ascending: false })
-                .limit(50);
-            setLogs(data || []);
+            const res = await fetch(`/api/planners/logs/${plannerId}`);
+            const data = await res.json();
+            setLogs(Array.isArray(data) ? data : []);
         } finally {
             setLoadingLogs(false);
         }

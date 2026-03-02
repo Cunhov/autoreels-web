@@ -20,19 +20,21 @@ export default function AnalyticsPage() {
     async function fetchAnalytics() {
         try {
             const [postsRes, channelsRes] = await Promise.all([
-                supabase.from('posts').select('id, status'),
-                supabase.from('channels').select('id'),
+                fetch('/api/posts'),
+                fetch('/api/channels'),
             ]);
 
-            const posts = postsRes.data || [];
-            const channels = channelsRes.data || [];
+            const posts = await postsRes.json();
+            const channels = await channelsRes.json();
 
-            setStats({
-                totalPosts: posts.length,
-                publishedPosts: posts.filter(p => p.status === 'published').length,
-                scheduledPosts: posts.filter(p => p.status === 'pending').length,
-                totalChannels: channels.length,
-            });
+            if (Array.isArray(posts) && Array.isArray(channels)) {
+                setStats({
+                    totalPosts: posts.length,
+                    publishedPosts: posts.filter((p: any) => p.status === 'published').length,
+                    scheduledPosts: posts.filter((p: any) => p.status === 'pending').length,
+                    totalChannels: channels.length,
+                });
+            }
         } catch (error) {
             console.error('Error fetching analytics:', error);
         } finally {

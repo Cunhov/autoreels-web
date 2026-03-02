@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import Link from 'next/link';
+import Providers from "@/components/Providers";
 import AuthGuard from "@/components/AuthGuard";
 import Sidebar from "@/components/Sidebar";
 import TabBar from "@/components/TabBar";
@@ -21,24 +21,26 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${inter.className} bg-ios-background text-ios-text antialiased`}>
-        <AuthGuard>
-          <div className="flex min-h-screen">
-            {/* Desktop Sidebar */}
-            <Sidebar />
+        <Providers>
+          <AuthGuard>
+            <div className="flex min-h-screen">
+              {/* Desktop Sidebar */}
+              <Sidebar />
 
-            <div className="flex-1 flex flex-col min-h-screen pb-[83px] md:pb-0">
-              {/* Mobile Header (optional, or rely on page Large Titles) 
+              <div className="flex-1 flex flex-col min-h-screen pb-[83px] md:pb-0">
+                {/* Mobile Header (optional, or rely on page Large Titles) 
                    For now, we let pages handle their titles, but this container handles safe areas.
                */}
-              <main className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full">
-                {children}
-              </main>
-            </div>
+                <main className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full">
+                  {children}
+                </main>
+              </div>
 
-            {/* Mobile Tab Bar */}
-            <TabBar />
-          </div>
-        </AuthGuard>
+              {/* Mobile Tab Bar */}
+              <TabBar />
+            </div>
+          </AuthGuard>
+        </Providers>
       </body>
     </html>
   );

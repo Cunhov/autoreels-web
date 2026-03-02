@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { X, Instagram, Link as LinkIcon } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
-import { supabase } from '@/lib/supabase';
+import { useSession } from 'next-auth/react';
 
 interface Channel {
     id: string;
@@ -28,6 +28,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
     const [profilePictureUrl, setProfilePictureUrl] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    const { data: session } = useSession();
 
     useEffect(() => {
         if (isOpen && channel) {
@@ -53,11 +54,9 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
         setError('');
 
         try {
-            const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error('You must be logged in.');
 
             const channelData = {
-                user_id: session.user.id,
                 name: name,
                 platform: 'instagram',
                 account_id: accountId,
@@ -66,24 +65,28 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                 status: 'active'
             };
 
-            let error;
+            let res;
 
             if (channel) {
                 // Update existing
-                const { error: updateError } = await supabase
-                    .from('channels')
-                    .update(channelData)
-                    .eq('id', channel.id);
-                error = updateError;
+                res = await fetch(`/api/channels/${channel.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(channelData)
+                });
             } else {
                 // Create new
-                const { error: insertError } = await supabase
-                    .from('channels')
-                    .insert(channelData);
-                error = insertError;
+                res = await fetch('/api/channels', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(channelData)
+                });
             }
 
-            if (error) throw error;
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.error || 'Failed to save channel');
+            }
 
             onSuccess();
             onClose();

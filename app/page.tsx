@@ -25,14 +25,22 @@ export default function CalendarPage() {
 
   async function fetchData() {
     setLoading(true);
-    const [postsRes, channelsRes] = await Promise.all([
-      supabase.from('posts').select('*'),
-      supabase.from('channels').select('*')
-    ]);
+    try {
+      const [postsRes, channelsRes] = await Promise.all([
+        fetch('/api/posts'),
+        fetch('/api/channels')
+      ]);
 
-    if (postsRes.data) setPosts(postsRes.data as Post[]);
-    if (channelsRes.data) setChannels(channelsRes.data);
-    setLoading(false);
+      const postsData = await postsRes.json();
+      const channelsData = await channelsRes.json();
+
+      if (Array.isArray(postsData)) setPosts(postsData);
+      if (Array.isArray(channelsData)) setChannels(channelsData);
+    } catch (err) {
+      console.error('Error fetching data:', err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   const handlePrev = () => {

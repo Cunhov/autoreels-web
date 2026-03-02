@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useSession } from 'next-auth/react';
 import {
     Folder, Video, MoreVertical,
     Upload, Plus, ArrowLeft, Check, Trash2, Edit2, Search,
@@ -69,6 +70,7 @@ export default function ContentLibrary({
 }: ContentLibraryProps) {
     const router = useRouter();
     const searchParams = useSearchParams();
+    const { data: session } = useSession();
 
     // URL state for navigation
     const urlFolderId = searchParams.get('folderId') || null;
@@ -144,43 +146,23 @@ export default function ContentLibrary({
             }
 
             try {
-                // 1. Get current folder info
-                const { data: folder, error } = await supabase
-                    .from('content_items')
-                    .select('*')
-                    .eq('id', currentFolderId)
-                    .single();
-
-                if (error) throw error;
+                const res = await fetch(`/api/content-items/${currentFolderId}`);
+                if (!res.ok) throw new Error('Folder not found');
+                const folder = await res.json();
                 setCurrentFolder(folder);
-
-                // 2. Build path (Recursive or iterative up-query)
-                // For simplified approach with depth < 5 usually, we can just trace up parents
-                // Or better, we can assume a simplified breadcrumb for now or fetch hierarchy 
-                // Creating a recursive CTE function in Supabase is best, but here let's do simple:
-                // Just fetching the current folder is enough for the title. 
-                // Full breadcrumb path needs recursive fetching.
-
-                // Let's implement a simple "trace up" for breadcrumbs locally
-                // Or rely on a separate recursive fetch if needed.
-                // For now, let's keep it simple: Show "..." > Parent > Current
-                // Or attempting to fetch recursive parents.
 
                 const path: ContentItem[] = [folder];
                 let pid = folder.parent_id;
                 while (pid) {
-                    const { data: parent } = await supabase
-                        .from('content_items')
-                        .select('id, name, parent_id, type') // Minimal select
-                        .eq('id', pid)
-                        .single();
+                    const parentRes = await fetch(`/api/content-items/${pid}`);
+                    if (!parentRes.ok) break;
+                    const parent = await parentRes.json();
                     if (parent) {
                         path.unshift(parent as ContentItem);
                         pid = parent.parent_id;
                     } else {
                         pid = null; // stop if not found
                     }
-                    // Circuit breaker
                     if (path.length > 10) break;
                 }
                 setFolderPath(path);
@@ -200,32 +182,17 @@ export default function ContentLibrary({
     const fetchContent = async (folderId: string | null) => {
         setLoading(true);
         try {
-            // Fetch items
-            let query = supabase
-                .from('content_items')
-                .select('*')
-                .order('created_at', { ascending: false });
-
-            if (folderId) {
-                query = query.eq('parent_id', folderId);
-            } else {
-                query = query.is('parent_id', null);
-            }
-
-            const { data, error } = await query;
-            if (error) throw error;
+            const res = await fetch(`/api/content-items?parent_id=${folderId || ''}`);
+            if (!res.ok) throw new Error('Failed to fetch items');
+            const data = await res.json();
 
             // Post-process: If item is a folder, fetch its first child for thumbnail
             const itemsWithThumbnails = await Promise.all((data || []).map(async (item) => {
                 if (item.type === 'carousel_folder') {
                     // Fetch one image child to use as thumbnail
-                    const { data: firstChild } = await supabase
-                        .from('content_items')
-                        .select('url, type')
-                        .eq('parent_id', item.id)
-                        .in('type', ['image', 'video']) // prioritize visual media
-                        .limit(1)
-                        .single();
+                    const childRes = await fetch(`/api/content-items?parent_id=${item.id}&types=image,video&limit=1`);
+                    const children = await childRes.json();
+                    const firstChild = Array.isArray(children) ? children[0] : null;
 
                     if (firstChild) {
                         return { ...item, thumbnail_url: firstChild.url, thumbnail_type: firstChild.type };
@@ -299,7 +266,6 @@ export default function ContentLibrary({
             // Update status to uploading
             setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'uploading' } : t));
 
-            const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error("No session");
 
             // XHR Upload
@@ -351,18 +317,22 @@ export default function ContentLibrary({
                 type = task.dbParentId ? 'carousel_item' : 'video';
             }
 
-            const { data: insertedData, error: insertError } = await supabase.from('content_items').insert({
-                user_id: session.user.id,
-                name: task.file.name,
-                type,
-                url: publicUrlData.publicUrl,
-                path: task.storagePath,
-                parent_id: task.dbParentId,
-                size: task.file.size,
-                duration: (task as any).duration || 0
-            }).select().single();
+            const res = await fetch('/api/content-items', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: task.file.name,
+                    type,
+                    url: publicUrlData.publicUrl,
+                    path: task.storagePath,
+                    parent_id: task.dbParentId,
+                    size: task.file.size,
+                    duration: (task as any).duration || 0
+                }),
+            });
 
-            if (insertError) throw insertError;
+            if (!res.ok) throw new Error('Failed to save in DB');
+            const insertedData = await res.json();
 
             // Mark completed
             setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t));
@@ -552,13 +522,19 @@ export default function ContentLibrary({
                     if (mediaFiles.length === 0) continue;
 
                     // Create folder as carousel
-                    const { data: folderData, error } = await supabase.from('content_items').insert({
-                        user_id: session.user.id,
-                        name: folderName,
-                        type: 'carousel_folder',
-                        parent_id: null,
-                        caption: carouselCaption || null // Store caption from .txt
-                    }).select().single();
+                    const res = await fetch('/api/content-items', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: folderName,
+                            type: 'carousel_folder',
+                            parent_id: null,
+                            caption: carouselCaption || null
+                        })
+                    });
+
+                    if (!res.ok) throw new Error('Failed to create carousel folder');
+                    const folderData = await res.json();
 
                     if (folderData) {
                         // Add items with preserved order (by filename)
@@ -630,15 +606,16 @@ export default function ContentLibrary({
         if (!name) return;
 
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
-
-            await supabase.from('content_items').insert({
-                user_id: session.user.id,
-                name,
-                type: 'carousel_folder',
-                parent_id: currentFolderId
+            const res = await fetch('/api/content-items', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name,
+                    type: 'carousel_folder',
+                    parent_id: currentFolderId
+                })
             });
+            if (!res.ok) throw new Error('Failed to create folder');
             fetchContent(currentFolderId);
         } catch (error) {
             console.error(error);
@@ -701,7 +678,11 @@ export default function ContentLibrary({
         try {
             // Move all dragged items to the target folder
             for (const itemId of draggedItems) {
-                await supabase.from('content_items').update({ parent_id: newParentId }).eq('id', itemId);
+                await fetch(`/api/content-items/${itemId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ parent_id: newParentId })
+                });
             }
             setToast({ msg: `Moved ${draggedItems.length} item(s)`, type: 'success', show: true });
             fetchContent(currentFolderId);
@@ -727,7 +708,11 @@ export default function ContentLibrary({
             for (let i = 0; i < selectionOrder.length; i++) {
                 const itemId = selectionOrder[i];
                 const newName = `${bulkRenamePrefix}_${String(i + 1).padStart(3, '0')}`;
-                await supabase.from('content_items').update({ name: newName }).eq('id', itemId);
+                await fetch(`/api/content-items/${itemId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: newName })
+                });
             }
             setToast({ msg: `Renamed ${selectionOrder.length} items`, type: 'success', show: true });
             setIsBulkRenameOpen(false);
@@ -780,8 +765,8 @@ export default function ContentLibrary({
             // Let's stick to simple record delete for now, noting that files might remain in bucket.
         }
 
-        const { error } = await supabase.from('content_items').delete().eq('id', item.id);
-        if (error) throw error;
+        const res = await fetch(`/api/content-items/${item.id}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error('Delete failed');
     };
 
     const handleRename = async () => {
@@ -845,18 +830,21 @@ export default function ContentLibrary({
                 .getPublicUrl(fileName);
 
             // Insert into DB
-            const { error: insertError } = await supabase.from('content_items').insert({
-                user_id: session.user.id,
-                name: `Edited ${imageEditorItem.name}`,
-                type: 'image',
-                url: publicUrlData.publicUrl,
-                path: fileName,
-                parent_id: currentFolderId,
-                size: file.size,
-                duration: 0
+            const dbRes = await fetch('/api/content-items', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    name: `Edited ${imageEditorItem.name}`,
+                    type: 'image',
+                    url: publicUrlData.publicUrl,
+                    path: fileName,
+                    parent_id: currentFolderId,
+                    size: file.size,
+                    duration: 0
+                })
             });
 
-            if (insertError) throw insertError;
+            if (!dbRes.ok) throw new Error('Failed to save image metadata in DB');
 
             setToast({ msg: 'Image saved successfully', type: 'success', show: true });
             fetchContent(currentFolderId);
