@@ -28,16 +28,18 @@ export async function POST(req: Request) {
         const bytes = await file.arrayBuffer();
         const buffer = Buffer.from(bytes);
 
-        // Files are stored in public/uploads/[path]
-        const uploadDir = join(process.cwd(), "public", "uploads");
+        // Store in /data/uploads (persistent Docker volume at /app/data)
+        // This works in standalone Docker where /public is not dynamically served
+        const uploadDir = join(process.cwd(), "data", "uploads");
         const filePath = join(uploadDir, path);
 
-        // Ensure subdirectories exist (e.g., [userId]/)
+        // Ensure subdirectories exist
         await mkdir(dirname(filePath), { recursive: true });
 
         // Write file
         await writeFile(filePath, buffer);
 
+        // Return /api/file/... URL so files are served via the API route
         return NextResponse.json({ success: true, path });
     } catch (error: any) {
         console.error('Local upload error:', error);

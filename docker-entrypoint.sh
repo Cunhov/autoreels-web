@@ -3,7 +3,7 @@ set -e
 
 echo "Ensuring persistent directories exist..."
 mkdir -p /app/data
-mkdir -p /app/public/uploads
+mkdir -p /app/data/uploads
 
 echo "Running Prisma db push (SQLite)..."
 npx prisma db push \
@@ -12,7 +12,6 @@ npx prisma db push \
 
 echo "Seeding admin user..."
 # Use better-sqlite3 directly (avoids all Prisma Client constructor issues)
-# The User table name matches the Prisma model name (no @@map on User model)
 node -e "
 const Database = require('better-sqlite3');
 const db = new Database('/app/data/prod.db');
