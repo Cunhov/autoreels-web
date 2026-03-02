@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+
 import { Plus, Search, Instagram, Pencil, Trash2 } from 'lucide-react'
 import IOSButton from '@/components/IOSButton'
 import IOSCard from '@/components/IOSComponents'

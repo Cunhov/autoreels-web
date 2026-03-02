@@ -1,6 +1,5 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
 import { X, Save, Edit2 } from 'lucide-react';
 import IOSButton from './IOSButton';
 
@@ -101,12 +100,19 @@ export default function EditContentModal({
             }
 
             const ids = itemsToEdit.map(i => i.id);
-            const { error } = await supabase
-                .from('content_items')
-                .update(updates)
-                .in('id', ids);
 
-            if (error) throw error;
+            // Serialize tags as JSON string for Prisma
+            const payload: any = { ...updates };
+            if (payload.tags) payload.tags = JSON.stringify(payload.tags);
+
+            for (const id of ids) {
+                const res = await fetch(`/api/content-items/${id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error('Failed to update item');
+            }
 
             onEditComplete();
             onClose();

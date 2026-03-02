@@ -9,5 +9,10 @@ services:
     ports:
       - "3000:3000"
     env_file:
-      - .env.local
+      - .env
+    volumes:
+      - autoreels-data:/app/data
     restart: always
+
+volumes:
+  autoreels-data:

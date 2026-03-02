@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+
 import CalendarHeader from '@/components/Calendar/CalendarHeader'
 import MonthView from '@/components/Calendar/MonthView'
 import WeekView from '@/components/Calendar/WeekView'

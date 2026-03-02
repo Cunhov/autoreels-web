@@ -121,6 +121,8 @@ model ContentItem {
   url         String?  // Can be null for folders
   path        String?
   name        String?
+  title       String?
+  tags        String?  // JSON: array of tag strings
   size        Int?
   duration    Float?
   caption     String?
@@ -135,19 +137,25 @@ model ContentItem {
 }
 
 model Post {
-  id                 String    @id @default(uuid())
-  user_id            String
-  channel_id         String?
-  video_url          String?
-  image_url          String?
-  thumbnail_url      String?
-  caption            String?
-  status             String    @default("scheduled")
-  scheduled_at       DateTime?
-  error_message      String?
-  failed_reason      String?
-  instagram_media_id String?
-  created_at         DateTime  @default(now())
+  id                     String    @id @default(uuid())
+  user_id                String
+  channel_id             String?
+  planner_id             String?
+  video_url              String?
+  image_url              String?
+  thumbnail_url          String?
+  caption                String?
+  media_type             String?   // REELS, IMAGE, CAROUSEL, STORIES, VIDEO
+  children_urls          String?   // JSON: array of {url, type} for carousels
+  status                 String    @default("scheduled")
+  scheduled_at           DateTime?
+  published_at           DateTime?
+  error_message          String?
+  failed_reason          String?
+  instagram_media_id     String?
+  instagram_container_id String?
+  instagram_child_ids    String?   // JSON: array of child container IDs
+  created_at             DateTime  @default(now())
 
   user    User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
   channel Channel? @relation(fields: [channel_id], references: [id], onDelete: Cascade)

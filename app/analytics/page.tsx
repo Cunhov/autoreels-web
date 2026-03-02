@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { supabase } from '@/lib/supabase'
+
 import IOSCard from '@/components/IOSComponents'
 import { BarChart2, TrendingUp, Users, Eye, ArrowUpRight, ArrowDownRight, Video, CheckCircle2, Clock } from 'lucide-react'
 

@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { supabase } from '@/lib/supabase';
+import { getPublicUrl } from '@/lib/storage';
 import { useSession } from 'next-auth/react';
 import {
     Folder, Video, MoreVertical,
@@ -268,18 +268,22 @@ export default function ContentLibrary({
 
             if (!session) throw new Error("No session");
 
-            // XHR Upload
+            // 1. Get Signed Upload URL
+            const urlRes = await fetch('/api/upload-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: task.storagePath, bucket: 'instagram-videos' })
+            });
+
+            if (!urlRes.ok) throw new Error('Failed to get upload URL');
+            const { signedUrl, token } = await urlRes.json();
+
+            // 2. XHR Upload
             await new Promise<void>((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
-                // Construct URL: Project URL + Storage API info
-                const projectId = process.env.NEXT_PUBLIC_SUPABASE_URL?.split('//')[1].split('.')[0];
-                const uploadUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/instagram-videos/${task.storagePath}`;
+                xhr.open('PUT', signedUrl);
 
-                xhr.open('POST', uploadUrl);
-
-                xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`);
-                xhr.setRequestHeader('x-upsert', 'true'); // Optional: overwrite
-                xhr.setRequestHeader('apikey', process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+                xhr.setRequestHeader('Authorization', `Bearer ${token}`);
 
                 // Track progress
                 xhr.upload.onprogress = (e) => {
@@ -303,9 +307,7 @@ export default function ContentLibrary({
             });
 
             // Insert into DB
-            const { data: publicUrlData } = supabase.storage
-                .from('instagram-videos')
-                .getPublicUrl(task.storagePath!);
+            const publicUrl = getPublicUrl(task.storagePath!);
 
             let type = 'video';
             const ft = task.forceType;
@@ -323,7 +325,7 @@ export default function ContentLibrary({
                 body: JSON.stringify({
                     name: task.file.name,
                     type,
-                    url: publicUrlData.publicUrl,
+                    url: publicUrl,
                     path: task.storagePath,
                     parent_id: task.dbParentId,
                     size: task.file.size,
@@ -411,8 +413,8 @@ export default function ContentLibrary({
 
     const onDrop = useCallback(async (acceptedFiles: File[]) => {
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
+            if (!session?.user) return;
+            const sessionUserId = (session.user as any).id;
 
             setIsUploadPanelOpen(true);
             setUploading(true);
@@ -443,7 +445,7 @@ export default function ContentLibrary({
             // 1. Prepare Standalone
             for (const file of standaloneFiles) {
                 const fileExt = file.name.split('.').pop();
-                const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+                const fileName = `${sessionUserId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
 
                 newTasks.push({
                     id: Math.random().toString(36),
@@ -464,7 +466,7 @@ export default function ContentLibrary({
                 for (const groupName in folderGroups) {
                     for (const file of folderGroups[groupName]) {
                         const fileExt = file.name.split('.').pop();
-                        const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+                        const fileName = `${sessionUserId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
 
                         // Calculate duration for video
                         let duration = 0;
@@ -544,7 +546,7 @@ export default function ContentLibrary({
 
                         for (const file of sortedMediaFiles) {
                             const fileExt = file.name.split('.').pop();
-                            const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+                            const fileName = `${sessionUserId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
 
                             let duration = 0;
                             if (file.type.startsWith('video/')) {
@@ -748,7 +750,7 @@ export default function ContentLibrary({
     const doDelete = async (item: ContentItem) => {
         // If file, delete from storage
         if (item.path) {
-            await supabase.storage.from('instagram-videos').remove([item.path]);
+            await fetch(`/api/storage?path=${encodeURIComponent(item.path)}`, { method: 'DELETE' });
         }
 
         // Use RPC or Client-side recursion?
@@ -813,21 +815,31 @@ export default function ContentLibrary({
             const blob = await res.blob();
             const file = new File([blob], `edited_${imageEditorItem.name}`, { type: 'image/png' });
 
-            // Upload
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
+            if (!session?.user) throw new Error("Not authenticated");
 
-            const fileName = `${session.user.id}/${Math.random().toString(36).substring(2)}.png`;
-            const { error: uploadError } = await supabase.storage
-                .from('instagram-videos')
-                .upload(fileName, file);
+            // Upload using Signed URL
+            const userId = (session.user as any).id;
+            const fileName = `${userId}/${Math.random().toString(36).substring(2)}.png`;
 
-            if (uploadError) throw uploadError;
+            const urlRes = await fetch('/api/upload-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: fileName, bucket: 'instagram-videos' })
+            });
+
+            if (!urlRes.ok) throw new Error('Failed to get upload URL');
+            const { signedUrl, token } = await urlRes.json();
+
+            const uploadRes = await fetch(signedUrl, {
+                method: 'PUT',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: file
+            });
+
+            if (!uploadRes.ok) throw new Error('Failed to upload edited image');
 
             // Get Public URL
-            const { data: publicUrlData } = supabase.storage
-                .from('instagram-videos')
-                .getPublicUrl(fileName);
+            const publicUrl = getPublicUrl(fileName);
 
             // Insert into DB
             const dbRes = await fetch('/api/content-items', {
@@ -836,7 +848,7 @@ export default function ContentLibrary({
                 body: JSON.stringify({
                     name: `Edited ${imageEditorItem.name}`,
                     type: 'image',
-                    url: publicUrlData.publicUrl,
+                    url: publicUrl,
                     path: fileName,
                     parent_id: currentFolderId,
                     size: file.size,

@@ -32,3 +32,22 @@ export const supabase = new Proxy({} as SupabaseClient, {
         return value
     },
 })
+
+let supabaseAdminInstance: SupabaseClient | null = null;
+function getSupabaseAdmin(): SupabaseClient {
+    if (supabaseAdminInstance) return supabaseAdminInstance;
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) throw new Error('Missing Supabase Service Role Key');
+    supabaseAdminInstance = createClient(url, key);
+    return supabaseAdminInstance;
+}
+
+export const supabaseAdmin = new Proxy({} as SupabaseClient, {
+    get(_target, prop) {
+        const client = getSupabaseAdmin();
+        const value = client[prop as keyof SupabaseClient];
+        if (typeof value === 'function') return value.bind(client);
+        return value;
+    }
+});

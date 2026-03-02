@@ -50,7 +50,7 @@ export async function PATCH(
             return NextResponse.json({ error: "Item not found or unauthorized" }, { status: 404 });
         }
 
-        const updatedItem = await prisma.contentItem.findUnique({ where: { id } });
+        const updatedItem = await prisma.contentItem.findFirst({ where: { id, user_id: userId } });
         return NextResponse.json(updatedItem);
     } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 400 });

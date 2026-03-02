@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { getPublicUrl } from '@/lib/storage';
 import { useSession } from 'next-auth/react';
 import { X, ChevronRight, ChevronLeft, Calendar, Clock, Instagram, Layers, ArrowUpDown, Check, Image as ImageIcon, Film } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
@@ -157,24 +157,36 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
         const uploadedItems: { url: string, type: string }[] = [];
 
         for (const file of files) {
-            const fileExt = file.name.split('.').pop();
-            const fileName = `${userId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
-            const fileType = file.type.startsWith('image/') ? 'image' : 'video';
+            try {
+                const fileExt = file.name.split('.').pop();
+                const fileName = `${userId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+                const fileType = file.type.startsWith('image/') ? 'image' : 'video';
 
-            const { error: uploadError } = await supabase.storage
-                .from('instagram-videos') // Keeping existing bucket name for now
-                .upload(fileName, file);
+                // Get Signed Upload URL
+                const urlRes = await fetch('/api/upload-url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: fileName, bucket: 'instagram-videos' })
+                });
 
-            if (uploadError) {
-                console.error(`Error uploading ${file.name}:`, uploadError);
-                continue;
+                if (!urlRes.ok) throw new Error('Failed to get upload URL');
+                const { signedUrl, token } = await urlRes.json();
+
+                // Upload file to signed URL
+                const uploadRes = await fetch(signedUrl, {
+                    method: 'PUT',
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    body: file
+                });
+
+                if (!uploadRes.ok) throw new Error(`Failed to upload ${file.name}`);
+
+                const publicUrl = getPublicUrl(fileName);
+
+                uploadedItems.push({ url: publicUrl, type: fileType });
+            } catch (err) {
+                console.error(`Error processing ${file.name}:`, err);
             }
-
-            const { data } = supabase.storage
-                .from('instagram-videos')
-                .getPublicUrl(fileName);
-
-            uploadedItems.push({ url: data.publicUrl, type: fileType });
         }
         return uploadedItems;
     };
@@ -186,7 +198,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
             if (!session?.user) throw new Error('Not authenticated');
 
             // 1. Upload New Files
-            const uploadedItems = await uploadFiles(session.user.id);
+            const uploadedItems = await uploadFiles((session.user as any).id);
 
             // 2. Prepare Content Array
             let content;

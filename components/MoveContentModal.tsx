@@ -1,6 +1,5 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
 import { Folder, X, ChevronRight, Check } from 'lucide-react';
 import IOSButton from './IOSButton';
 
@@ -37,24 +36,17 @@ export default function MoveContentModal({ isOpen, onClose, itemsToMove, onMoveC
     async function fetchFolders(parentId: string | null) {
         setLoading(true);
         try {
-            let query = supabase
-                .from('content_items')
-                .select('id, name, parent_id, type')
-                .eq('type', 'carousel_folder')
-                .order('name');
+            const params = new URLSearchParams({ type: 'carousel_folder' });
+            if (parentId) params.set('parent_id', parentId);
+            else params.set('parent_id', 'null');
 
-            if (parentId) {
-                query = query.eq('parent_id', parentId);
-            } else {
-                query = query.is('parent_id', null);
-            }
-
-            const { data, error } = await query;
-            if (error) throw error;
+            const res = await fetch(`/api/content-items?${params.toString()}`);
+            if (!res.ok) throw new Error('Failed to fetch folders');
+            const data = await res.json();
 
             // Filter out folders that are being moved (can't move a folder into itself)
             const movingIds = itemsToMove.map(i => i.id);
-            const filtered = (data || []).filter(f => !movingIds.includes(f.id));
+            const filtered = (data || []).filter((f: ContentItem) => !movingIds.includes(f.id));
 
             setFolders(filtered as ContentItem[]);
         } catch (error) {
@@ -94,15 +86,13 @@ export default function MoveContentModal({ isOpen, onClose, itemsToMove, onMoveC
                 parent_id: selectedDestination
             }));
 
-            // We can't do bulk update with different IDs easily in one go unless we use upsert with all fields, 
-            // but here we just have ID and parent_id. 
-            // Loop is fine for small batches.
             for (const update of updates) {
-                const { error } = await supabase
-                    .from('content_items')
-                    .update({ parent_id: selectedDestination })
-                    .eq('id', update.id);
-                if (error) throw error;
+                const res = await fetch(`/api/content-items/${update.id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ parent_id: selectedDestination })
+                });
+                if (!res.ok) throw new Error('Failed to move item');
             }
 
             onMoveComplete();

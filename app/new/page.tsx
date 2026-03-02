@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { supabase } from '@/lib/supabase';
+import { getPublicUrl } from '@/lib/storage';
 import { Upload, X, Radio, Calendar as CalendarIcon } from 'lucide-react';
 import { IOSInputRow } from '@/components/IOSComponents';
 
@@ -49,26 +49,41 @@ export default function NewPost() {
         setError('');
 
         try {
-            // 1. Upload to Storage
-            const fileExt = file.name.split('.').pop();
-            const fileName = `${Math.random().toString(36).substring(2)}.${fileExt}`;
-            const filePath = `${fileName}`;
-
-            const { error: uploadError } = await supabase.storage
-                .from('instagram-videos')
-                .upload(filePath, file);
-
-            if (uploadError) throw uploadError;
-
-            // 2. Get Public URL
-            const { data: publicUrlData } = supabase.storage
-                .from('instagram-videos')
-                .getPublicUrl(filePath);
-
-            const videoUrl = publicUrlData.publicUrl;
-
-            // 3. Insert into Database
             if (!session?.user) throw new Error('You must be logged in to create a post.');
+            const userId = (session.user as any).id;
+
+            // 1. Get Signed Upload URL
+            const fileExt = file.name.split('.').pop();
+            const fileName = `${userId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+
+            const urlRes = await fetch('/api/upload-url', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: fileName, bucket: 'instagram-videos' })
+            });
+
+            if (!urlRes.ok) {
+                const urlErr = await urlRes.json();
+                throw new Error(urlErr.error || 'Failed to get upload URL');
+            }
+
+            const { signedUrl, token } = await urlRes.json();
+
+            // 2. Upload file to signed URL
+            const uploadRes = await fetch(signedUrl, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                },
+                body: file
+            });
+
+            if (!uploadRes.ok) throw new Error('Failed to upload video');
+
+            // 3. Get Public URL (doesn't require auth)
+            const videoUrl = getPublicUrl(fileName);
+
+            // 4. Insert into Database
 
             const res = await fetch('/api/posts', {
                 method: 'POST',
