@@ -848,38 +848,30 @@ export default function ContentLibrary({
         if (!imageEditorItem) return;
 
         try {
-            setLoading(true); // Show global loading or toast
+            setLoading(true);
             setToast({ msg: 'Saving edited image...', type: 'info', show: true });
 
-            // Convert DataURL to Blob
+            // Convert DataURL to Blob/File
             const res = await fetch(dataUrl);
             const blob = await res.blob();
             const file = new File([blob], `edited_${imageEditorItem.name}`, { type: 'image/png' });
 
             if (!session?.user) throw new Error("Not authenticated");
 
-            // Upload using Signed URL
             const userId = (session.user as any).id;
             const fileName = `${userId}/${Math.random().toString(36).substring(2)}.png`;
 
-            const urlRes = await fetch('/api/upload-url', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: fileName, bucket: 'instagram-videos' })
-            });
+            // Upload via local API (FormData)
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('path', fileName);
 
-            if (!urlRes.ok) throw new Error('Failed to get upload URL');
-            const { signedUrl, token } = await urlRes.json();
+            const uploadRes = await fetch('/api/upload', { method: 'POST', body: formData });
+            if (!uploadRes.ok) {
+                const err = await uploadRes.json().catch(() => ({}));
+                throw new Error((err as any).error || 'Failed to upload edited image');
+            }
 
-            const uploadRes = await fetch(signedUrl, {
-                method: 'PUT',
-                headers: { 'Authorization': `Bearer ${token}` },
-                body: file
-            });
-
-            if (!uploadRes.ok) throw new Error('Failed to upload edited image');
-
-            // Get Public URL
             const publicUrl = getPublicUrl(fileName);
 
             // Insert into DB

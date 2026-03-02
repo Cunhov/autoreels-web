@@ -162,27 +162,22 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 const fileName = `${userId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
                 const fileType = file.type.startsWith('image/') ? 'image' : 'video';
 
-                // Get Signed Upload URL
-                const urlRes = await fetch('/api/upload-url', {
+                // Upload via local API (FormData) — same as ContentLibrary
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('path', fileName);
+
+                const uploadRes = await fetch('/api/upload', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ path: fileName, bucket: 'instagram-videos' })
+                    body: formData,
                 });
 
-                if (!urlRes.ok) throw new Error('Failed to get upload URL');
-                const { signedUrl, token } = await urlRes.json();
-
-                // Upload file to signed URL
-                const uploadRes = await fetch(signedUrl, {
-                    method: 'PUT',
-                    headers: { 'Authorization': `Bearer ${token}` },
-                    body: file
-                });
-
-                if (!uploadRes.ok) throw new Error(`Failed to upload ${file.name}`);
+                if (!uploadRes.ok) {
+                    const err = await uploadRes.json().catch(() => ({}));
+                    throw new Error((err as any).error || `Failed to upload ${file.name}`);
+                }
 
                 const publicUrl = getPublicUrl(fileName);
-
                 uploadedItems.push({ url: publicUrl, type: fileType });
             } catch (err) {
                 console.error(`Error processing ${file.name}:`, err);

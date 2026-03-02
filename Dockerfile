@@ -52,6 +52,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 
 # Create data directories for SQLite and uploads
 RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
+RUN mkdir -p /app/data/uploads && chown -R nextjs:nodejs /app/data/uploads
 RUN mkdir -p /app/public/uploads && chown -R nextjs:nodejs /app/public/uploads
 
 # Copy the entrypoint script
@@ -60,6 +61,7 @@ RUN chmod +x ./docker-entrypoint.sh
 
 # Define native Docker volumes for persistence
 VOLUME ["/app/data"]
+VOLUME ["/app/data/uploads"]
 VOLUME ["/app/public/uploads"]
 
 USER nextjs
