@@ -51,8 +51,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # Copy Prisma schema and migrations for runtime DB operations
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 
-# Create data directory for SQLite
-RUN mkdir -p /app/data && chown nextjs:nodejs /app/data
+# Create data directories for SQLite and uploads
+RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
+RUN mkdir -p /app/public/uploads && chown -R nextjs:nodejs /app/public/uploads
 
 # Copy the entrypoint script
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
