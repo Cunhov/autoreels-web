@@ -94,7 +94,7 @@ async function handler(request: Request) {
         // ═══════════════════════════════════════════════════════════════════════
 
         const planners = await prisma.planner.findMany({
-            where: { status: 'active' },
+            where: { status: { not: 'paused' } },
             include: { channels: true },
         });
 
