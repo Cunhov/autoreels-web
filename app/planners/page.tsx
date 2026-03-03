@@ -13,7 +13,7 @@ interface Planner {
     name: string;
     config: any;
     status: string;
-    channel_ids: string[];
+    channels: any[];
     last_run?: string;
     created_at: string;
 }
@@ -181,7 +181,16 @@ export default function PlannersPage() {
                 </IOSCard>
             ) : (
                 <div className="space-y-3">
-                    {planners.map(planner => {
+                    {planners.map(p => {
+                        // Ensure config is parsed if it's a string from DB
+                        const planner = { ...p };
+                        if (typeof planner.config === 'string') {
+                            try {
+                                const parsed = JSON.parse(planner.config);
+                                planner.config = typeof parsed === 'string' ? JSON.parse(parsed) : parsed;
+                            } catch { /* ignore */ }
+                        }
+
                         const stats = postStats[planner.id] ?? { total: 0, published: 0, failed: 0 };
                         const isRunning = runningId === planner.id;
                         return (
@@ -220,7 +229,7 @@ export default function PlannersPage() {
                                             </span>
                                             <span className="flex items-center gap-1">
                                                 <Instagram size={11} />
-                                                {(planner.channel_ids || []).length} channels
+                                                {(planner.channels || []).length} channels
                                             </span>
                                         </div>
 

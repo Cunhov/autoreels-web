@@ -103,7 +103,13 @@ export async function POST(
                 caption = (caption || '')
                     .replace(/{post_title}/g, libItem.title || '')
                     .replace(/{post_caption}/g, libItem.caption || '');
+            } else {
+                return NextResponse.json({ error: 'Library item no longer exists' }, { status: 400 });
             }
+        }
+
+        if (!mediaUrl && children.length === 0) {
+            return NextResponse.json({ error: 'Media URL missing for this content item' }, { status: 400 });
         }
 
         // Create posts for each channel

@@ -232,7 +232,7 @@ async function handler(request: Request) {
                 }
 
                 if (!mediaUrl && children.length === 0) {
-                    await logPlanner(planner.id, `[Phase0] No media URL — skipping post creation`, 'error');
+                    await logPlanner(planner.id, `[Phase0] Media missing for content[${selectedIndex}] — skipping post creation`, 'error');
                     await prisma.planner.update({ where: { id: planner.id }, data: { last_run: now, config: JSON.stringify({ ...config, state }) } });
                     continue;
                 }
