@@ -318,7 +318,7 @@ async function handler(request: Request) {
                                 : (mediaType === 'STORIES' && mediaUrl && !mediaUrl.includes('.mp4')) ? mediaUrl
                                     : (mediaType === 'CAROUSEL' && children.length > 0) ? children[0].url // Set first child as thumbnail
                                         : null,
-                            children_urls: children.length > 0 ? JSON.stringify(children) : null,
+                            children_urls: children.length > 0 ? JSON.stringify(children) : JSON.stringify({ share_to_feed: selectedContent.share_to_feed !== false }),
                             caption,
                             scheduled_at: now,
                             planner_id: planner.id,
@@ -436,7 +436,16 @@ async function handler(request: Request) {
                     bodyParams.append('media_type', mediaType === 'STORIES' ? 'STORIES' : 'REELS');
                     bodyParams.append('video_url', makeAbsoluteUrl(systemBaseUrl, post.video_url || post.image_url));
                     bodyParams.append('caption', post.caption || '');
-                    if (mediaType === 'REELS') bodyParams.append('share_to_feed', 'false');
+                    if (mediaType === 'REELS') {
+                        let shareToFeed = 'true';
+                        if (post.children_urls && post.children_urls.startsWith('{')) {
+                            try {
+                                const parsed = JSON.parse(post.children_urls);
+                                if (parsed.share_to_feed === false) shareToFeed = 'false';
+                            } catch (e) { }
+                        }
+                        bodyParams.append('share_to_feed', shareToFeed);
+                    }
                 }
 
                 const apiRes = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, { method: 'POST', headers: igHeaders, body: bodyParams.toString() });

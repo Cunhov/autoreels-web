@@ -95,7 +95,7 @@ export default function PlannersPage() {
     }, [posts]);
 
     async function toggleStatus(planner: Planner) {
-        const newStatus = planner.status === 'active' ? 'inactive' : 'active';
+        const newStatus = planner.status === 'active' ? 'paused' : 'active';
         try {
             const res = await fetch(`/api/planners/${planner.id}`, {
                 method: 'PATCH',
