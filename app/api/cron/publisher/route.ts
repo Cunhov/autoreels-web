@@ -85,7 +85,10 @@ async function handler(request: Request) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const results = { pending: 0, processing: 0, published: 0, errors: 0, cleaned: 0 };
+        const startTime = Date.now();
+        const MAX_EXEC_MS = 45_000; // Leave 10-15s buffer for the 60s worker heartbeat
+
+        const results: any = { pending: 0, processing: 0, published: 0, errors: 0, cleaned: 0 };
         const now = new Date();
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -107,6 +110,7 @@ async function handler(request: Request) {
         });
 
         for (const planner of planners) {
+            if (Date.now() - startTime > MAX_EXEC_MS) { results.timeout = true; break; }
             try {
                 let rawConfig = planner.config || '{}';
                 let config: any;
@@ -131,7 +135,7 @@ async function handler(request: Request) {
                 const isDue = !lastRun || (now.getTime() >= lastRun.getTime() + intervalMs - 15000);
                 if (!isDue) {
                     const secLeft = Math.ceil((lastRun!.getTime() + intervalMs - now.getTime()) / 1000);
-                    await logPlanner(planner.id, `[Phase0] Not due yet — ${secLeft}s remaining`, 'info');
+                    // Avoid logging too frequently on not due to save db writes
                     continue;
                 }
 
@@ -202,7 +206,7 @@ async function handler(request: Request) {
                 let mediaUrl = selectedContent.url;
                 let mediaType = selectedContent.media_type || 'REELS';
                 let caption = selectedContent.caption || '';
-                let children: { url: string; type: string }[] = selectedContent.children_urls || [];
+                let children: { url: string; type: string }[] = selectedContent.children_urls || selectedContent.carousel_items || [];
 
                 if (selectedContent.type === 'library_item') {
                     const libItem = await prisma.contentItem.findUnique({ where: { id: selectedContent.id } });
@@ -281,6 +285,7 @@ async function handler(request: Request) {
         });
 
         for (const post of pendingPosts) {
+            if (Date.now() - startTime > MAX_EXEC_MS) { results.timeout = true; break; }
             const plannerId = post.planner_id || 'unknown';
             try {
                 // Pre-flight: abort immediately with no external calls
@@ -307,12 +312,16 @@ async function handler(request: Request) {
                     const childIds: string[] = [];
                     const childrenData: { url: string; type: string }[] = post.children_urls ? JSON.parse(post.children_urls) : [];
 
-                    for (const child of childrenData) {
+                    // Parallelize carousel child creation
+                    const childPromises = childrenData.map(async (child) => {
                         const childParams = new URLSearchParams({ is_carousel_item: 'true', [child.type === 'video' ? 'video_url' : 'image_url']: child.url });
                         if (child.type === 'video') childParams.append('media_type', 'VIDEO');
-
                         const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, { method: 'POST', headers: igHeaders, body: childParams.toString() });
-                        const data = await res.json();
+                        return await res.json();
+                    });
+
+                    const childResults = await Promise.all(childPromises);
+                    for (const data of childResults) {
                         if (data.id) childIds.push(data.id);
                         else await logPlanner(plannerId, `Carousel child creation failed`, 'error', data);
                     }
@@ -368,6 +377,7 @@ async function handler(request: Request) {
         });
 
         for (const post of processingPosts) {
+            if (Date.now() - startTime > MAX_EXEC_MS) { results.timeout = true; break; }
             try {
                 const accessToken = await resolveAccessToken(post.channel?.access_token || null);
                 const baseUrl = getBaseUrl(accessToken);
@@ -375,13 +385,14 @@ async function handler(request: Request) {
 
                 if (post.status === 'processing_children') {
                     const childIds: string[] = post.instagram_child_ids ? JSON.parse(post.instagram_child_ids) : [];
-                    let allFinished = true;
 
-                    for (const cid of childIds) {
+                    // Parallelize child status checks
+                    const statusPromises = childIds.map(async (cid) => {
                         const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${cid}?fields=status_code&access_token=${accessToken}`);
-                        const data = await res.json();
-                        if (data.status_code !== 'FINISHED') { allFinished = false; break; }
-                    }
+                        return await res.json();
+                    });
+                    const statusResults = await Promise.all(statusPromises);
+                    const allFinished = statusResults.every(data => data.status_code === 'FINISHED');
 
                     if (allFinished) {
                         const body = new URLSearchParams({ media_type: 'CAROUSEL', children: childIds.join(','), caption: post.caption || '' });
@@ -436,6 +447,7 @@ async function handler(request: Request) {
         });
 
         for (const post of readyPosts) {
+            if (Date.now() - startTime > MAX_EXEC_MS) { results.timeout = true; break; }
             try {
                 const accessToken = await resolveAccessToken(post.channel?.access_token || null);
                 const baseUrl = getBaseUrl(accessToken);

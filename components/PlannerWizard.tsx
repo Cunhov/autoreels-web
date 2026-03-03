@@ -227,28 +227,10 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
             if (isCarousel && selectedContentIds.length > 0) {
                 // Carousel from folders: Each folder becomes its own carousel post
                 for (const folderId of selectedContentIds) {
-                    // Fetch children ordered by name (alphabetical/numerical)
-                    const res = await fetch(`/api/content-items?parent_id=${folderId}`);
-                    if (!res.ok) continue;
-                    const folderChildren = await res.json();
-
-                    if (!folderChildren || folderChildren.length < 2) {
-                        // If it's not a folder or has < 2 items, skip or treat as normal?
-                        // For now we skip or alert if it's the only one
-                        continue;
-                    }
-
-                    const carouselItems = folderChildren.map((item: any) => ({
-                        url: item.url,
-                        type: item.type === 'video' ? 'video' : 'image'
-                    }));
-
                     content.push({
-                        type: 'config',
+                        type: 'library_item',
+                        id: folderId,
                         media_type: 'CAROUSEL',
-                        carousel_items: carouselItems,
-                        carousel_item_ids: folderChildren.map((item: any) => item.id),
-                        folder_id: folderId,
                         caption,
                         caption_fallback: captionFallback,
                         title_fallback: titleFallback,
@@ -256,8 +238,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     });
                 }
 
-                // If no folders were valid carousels, but we have uploads
-                if (content.length === 0 && uploadedItems.length > 0) {
+                // If we also have direct uploads that form a carousel
+                if (uploadedItems.length >= 2) {
                     content.push({
                         type: 'config',
                         media_type: 'CAROUSEL',
