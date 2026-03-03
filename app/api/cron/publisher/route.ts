@@ -25,6 +25,13 @@ function getBaseUrl(token: string) {
     return cleaned.startsWith('IG') ? 'https://graph.instagram.com' : 'https://graph.facebook.com';
 }
 
+function makeAbsoluteUrl(baseOut: string, path: string | null | undefined): string {
+    if (!path) return '';
+    if (path.startsWith('http')) return path;
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    return `${baseOut}${cleanPath}`;
+}
+
 /** Resolve access token — supports Redis `token_` prefix if Redis is configured. */
 async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
     if (!tokenOrKey) return '';
@@ -103,6 +110,9 @@ export async function POST(request: Request) {
 
 async function handler(request: Request) {
     try {
+        const reqUrl = new URL(request.url);
+        const systemBaseUrl = (process.env.NEXTAUTH_URL || `${reqUrl.protocol}//${reqUrl.host}`).replace(/\/$/, '');
+
         // Auth check
         const cronSecret = request.headers.get('x-cron-auth') || new URL(request.url).searchParams.get('secret');
         const expectedSecret = process.env.CRON_SECRET;
@@ -357,7 +367,7 @@ async function handler(request: Request) {
                         const childParams = new URLSearchParams({
                             is_carousel_item: 'true',
                             access_token: accessToken,
-                            [child.type === 'video' ? 'video_url' : 'image_url']: child.url
+                            [child.type === 'video' ? 'video_url' : 'image_url']: makeAbsoluteUrl(systemBaseUrl, child.url)
                         });
                         if (child.type === 'video') childParams.append('media_type', 'VIDEO');
 
@@ -403,11 +413,11 @@ async function handler(request: Request) {
                 // SINGLE MEDIA
                 const bodyParams = new URLSearchParams({ access_token: accessToken });
                 if (mediaType === 'IMAGE') {
-                    bodyParams.append('image_url', post.image_url || '');
+                    bodyParams.append('image_url', makeAbsoluteUrl(systemBaseUrl, post.image_url));
                     bodyParams.append('caption', post.caption || '');
                 } else {
                     bodyParams.append('media_type', mediaType === 'STORIES' ? 'STORIES' : 'REELS');
-                    bodyParams.append('video_url', post.video_url || post.image_url || '');
+                    bodyParams.append('video_url', makeAbsoluteUrl(systemBaseUrl, post.video_url || post.image_url));
                     bodyParams.append('caption', post.caption || '');
                     if (mediaType === 'REELS') bodyParams.append('share_to_feed', 'false');
                 }
