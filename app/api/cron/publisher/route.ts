@@ -86,12 +86,29 @@ async function handler(request: Request) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const results = { pending: 0, processing: 0, published: 0, errors: 0 };
+        const results = { pending: 0, processing: 0, published: 0, errors: 0, cleaned: 0 };
         const now = new Date();
 
         // ═══════════════════════════════════════════════════════════════════════
-        // PHASE 0: Planner Processing — create Posts from active Planners
+        // PHASE -1: Cleanup — instantly fail posts that have no media at all
+        // (causes publisher timeouts when Instagram API is called with empty URLs)
         // ═══════════════════════════════════════════════════════════════════════
+        const cleanup = await prisma.post.updateMany({
+            where: {
+                status: 'pending',
+                video_url: null,
+                image_url: null,
+                children_urls: null,
+            },
+            data: {
+                status: 'failed',
+                error_message: 'No media URL — content item missing or deleted from library',
+                failed_reason: 'Missing Media',
+            },
+        });
+        results.cleaned = cleanup.count;
+
+
 
         const planners = await prisma.planner.findMany({
             where: { status: { not: 'paused' } },
@@ -100,7 +117,17 @@ async function handler(request: Request) {
 
         for (const planner of planners) {
             try {
-                const config = JSON.parse(planner.config || '{}');
+                // Handle double-stringified config (a known bug from earlier wizard versions)
+                let rawConfig = planner.config || '{}';
+                let config: any;
+                try {
+                    const first = JSON.parse(rawConfig);
+                    config = typeof first === 'string' ? JSON.parse(first) : first;
+                } catch (e: any) {
+                    await logPlanner(planner.id, `[Phase0] Config parse error: ${e.message}`, 'error', { raw: rawConfig.slice(0, 200) });
+                    continue;
+                }
+
                 const lastRun = planner.last_run ? new Date(planner.last_run) : null;
 
                 // Calculate interval
@@ -112,10 +139,17 @@ async function handler(request: Request) {
                 else if (freqUnit === 'weeks') intervalMs = freqVal * 7 * 24 * 60 * 60 * 1000;
 
                 const isDue = !lastRun || (now.getTime() >= lastRun.getTime() + intervalMs - 15000);
-                if (!isDue) continue;
+                if (!isDue) {
+                    const secLeft = Math.ceil((lastRun!.getTime() + intervalMs - now.getTime()) / 1000);
+                    await logPlanner(planner.id, `[Phase0] Not due yet — ${secLeft}s remaining`, 'info');
+                    continue;
+                }
 
                 // Respect start_time
-                if (config.start_time && now < new Date(config.start_time)) continue;
+                if (config.start_time && now < new Date(config.start_time)) {
+                    await logPlanner(planner.id, `[Phase0] start_time not reached: ${config.start_time}`, 'info');
+                    continue;
+                }
 
                 // Respect sleep schedule
                 if (config.sleep_schedule) {
@@ -124,15 +158,28 @@ async function handler(request: Request) {
                     const hhmm = `${String(nowInTz.getHours()).padStart(2, '0')}:${String(nowInTz.getMinutes()).padStart(2, '0')}`;
                     const sleepStart = config.sleep_schedule.start || '00:00';
                     const sleepEnd = config.sleep_schedule.end || '06:00';
+                    let isSleeping = false;
                     if (sleepStart <= sleepEnd) {
-                        if (hhmm >= sleepStart && hhmm < sleepEnd) continue;
+                        isSleeping = hhmm >= sleepStart && hhmm < sleepEnd;
                     } else {
-                        if (hhmm >= sleepStart || hhmm < sleepEnd) continue;
+                        isSleeping = hhmm >= sleepStart || hhmm < sleepEnd;
+                    }
+                    if (isSleeping) {
+                        await logPlanner(planner.id, `[Phase0] Sleep schedule active — ${hhmm} is between ${sleepStart}-${sleepEnd}`, 'info');
+                        continue;
                     }
                 }
 
                 const contentList = config.content || [];
-                if (contentList.length === 0) continue;
+                if (contentList.length === 0) {
+                    await logPlanner(planner.id, `[Phase0] No content configured`, 'error');
+                    continue;
+                }
+
+                if (!planner.channels || planner.channels.length === 0) {
+                    await logPlanner(planner.id, `[Phase0] No channels connected`, 'error');
+                    continue;
+                }
 
                 // Select content based on sort order
                 let selectedIndex = -1;
@@ -154,14 +201,18 @@ async function handler(request: Request) {
                     selectedIndex = last - 1 < 0 ? contentList.length - 1 : last - 1;
                     state.last_index = selectedIndex;
                 } else {
-                    // old_to_new (default sequential)
                     const last = state.last_index !== undefined ? state.last_index : -1;
                     selectedIndex = (last + 1) % contentList.length;
                     state.last_index = selectedIndex;
                 }
 
                 const selectedContent = contentList[selectedIndex];
-                if (!selectedContent) continue;
+                if (!selectedContent) {
+                    await logPlanner(planner.id, `[Phase0] selectedContent is null at index ${selectedIndex}`, 'error');
+                    continue;
+                }
+
+                await logPlanner(planner.id, `[Phase0] Selected content[${selectedIndex}]: type=${selectedContent.type}, id=${selectedContent.id}, url=${selectedContent.url}`, 'info');
 
                 // Resolve content
                 let mediaUrl = selectedContent.url;
@@ -186,15 +237,29 @@ async function handler(request: Request) {
                                 url: c.url || '',
                                 type: c.type === 'video' ? 'video' : 'image',
                             }));
+                            await logPlanner(planner.id, `[Phase0] Carousel folder resolved: ${children.length} children`, 'info');
                         }
 
                         caption = (caption || '')
                             .replace(/{post_title}/g, libItem.title || '')
                             .replace(/{post_caption}/g, libItem.caption || '');
+
+                        await logPlanner(planner.id, `[Phase0] Library item resolved: type=${libItem.type}, url=${libItem.url?.slice(0, 80)}`, 'info');
+                    } else {
+                        await logPlanner(planner.id, `[Phase0] Library item NOT FOUND in DB: id=${selectedContent.id}`, 'error');
+                        // Don't skip — continue creating with null URLs so the error surfaces in Phase 1
                     }
                 }
 
+                if (!mediaUrl && children.length === 0) {
+                    await logPlanner(planner.id, `[Phase0] No media URL and no carousel children — skipping post creation`, 'error');
+                    // Still update last_run so we don't retry every second
+                    await prisma.planner.update({ where: { id: planner.id }, data: { last_run: now, config: JSON.stringify({ ...config, state }) } });
+                    continue;
+                }
+
                 // Create posts for each linked channel
+                let postsCreated = 0;
                 for (const channel of planner.channels) {
                     await prisma.post.create({
                         data: {
@@ -211,7 +276,10 @@ async function handler(request: Request) {
                             planner_id: planner.id,
                         },
                     });
+                    postsCreated++;
                 }
+
+                await logPlanner(planner.id, `[Phase0] Created ${postsCreated} pending post(s) for mediaType=${mediaType}`, 'info');
 
                 // Update planner state
                 await prisma.planner.update({
@@ -222,13 +290,14 @@ async function handler(request: Request) {
                     },
                 });
             } catch (err: any) {
-                await logPlanner(planner.id, `Planner Error: ${err.message}`, 'error');
+                await logPlanner(planner.id, `[Phase0] Uncaught error: ${err.message}`, 'error', { stack: err.stack });
             }
         }
 
         // ═══════════════════════════════════════════════════════════════════════
         // PHASE 1: Pending → Processing (create IG media containers)
         // ═══════════════════════════════════════════════════════════════════════
+
 
         const pendingPosts = await prisma.post.findMany({
             where: {
@@ -242,12 +311,21 @@ async function handler(request: Request) {
         for (const post of pendingPosts) {
             const plannerId = post.planner_id || 'unknown';
             try {
+                // Pre-flight: skip posts with no media (Phase -1 handles bulk cleanup, this is the safety net)
+                const hasMedia = post.video_url || post.image_url || post.children_urls;
+                if (!hasMedia) {
+                    await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: 'No media URL', failed_reason: 'Missing Media' } });
+                    results.errors++;
+                    continue;
+                }
+
                 const accessToken = await resolveAccessToken(post.channel?.access_token || null);
                 const accountId = (post.channel?.account_id || '').trim();
                 if (!accessToken || !accountId) throw new Error('Missing credentials');
 
                 const baseUrl = getBaseUrl(accessToken);
                 const mediaType = post.media_type || 'REELS';
+
 
                 // CAROUSEL — create child containers first
                 if (mediaType === 'CAROUSEL') {
