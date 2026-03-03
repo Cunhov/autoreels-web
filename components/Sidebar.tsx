@@ -1,9 +1,10 @@
 'use client';
 import Link from 'next/link';
-import { Calendar, BarChart2, Radio, Sliders, PlusSquare, Folder, LogOut, Search } from 'lucide-react';
+import { Calendar, BarChart2, Radio, Sliders, PlusSquare, Folder, LogOut, Search, CloudUpload } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
+import { useUpload } from '@/contexts/UploadContext';
 
 interface NavBadges {
     failedPosts: number;
@@ -18,8 +19,12 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
     const pathname = usePathname();
     const { data: session } = useSession();
     const [badges, setBadges] = useState<NavBadges>({ failedPosts: 0, activePlanners: 0 });
+    const { tasks: uploadTasks } = useUpload(); // Get global upload tasks
 
     const isActive = (path: string) => pathname === path;
+
+    // Number of active uploads currently showing in pending/uploading/retrying states
+    const activeUploads = uploadTasks.filter(t => ['pending', 'uploading', 'frozen'].includes(t.status)).length;
 
     // Fetch badge counts
     useEffect(() => {
@@ -44,6 +49,7 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
         { name: 'Channels', path: '/channels', icon: Radio, badge: 0, badgeColor: '' },
         { name: 'Planners', path: '/planners', icon: Sliders, badge: badges.activePlanners > 0 ? badges.activePlanners : 0, badgeColor: 'bg-ios-green' },
         { name: 'Library', path: '/content', icon: Folder, badge: 0, badgeColor: '' },
+        { name: 'Uploads', path: '/upload', icon: CloudUpload, badge: activeUploads, badgeColor: 'bg-ios-blue' },
     ];
 
     const userEmail = session?.user?.email ?? '';
@@ -77,8 +83,8 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
                             key={item.path}
                             href={item.path}
                             className={`flex items-center gap-3 px-3 py-2.5 text-[15px] font-medium rounded-xl transition-all ${isActive(item.path)
-                                    ? 'bg-ios-blue/10 text-ios-blue'
-                                    : 'text-ios-text-secondary hover:bg-ios-gray-6 hover:text-ios-text'
+                                ? 'bg-ios-blue/10 text-ios-blue'
+                                : 'text-ios-text-secondary hover:bg-ios-gray-6 hover:text-ios-text'
                                 }`}
                         >
                             <item.icon size={20} strokeWidth={isActive(item.path) ? 2.5 : 2} />

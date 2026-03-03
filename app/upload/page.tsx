@@ -1,0 +1,139 @@
+'use client';
+
+import { useUpload, UploadTask } from '@/contexts/UploadContext';
+import { Play, Pause, X, RotateCcw, FileVideo, Image as ImageIcon, AlertCircle, CheckCircle2, CloudUpload } from 'lucide-react';
+
+export default function UploadPage() {
+    const { tasks, cancelTask, retryTask, clearCompleted } = useUpload();
+
+    // Stats
+    const totalTasks = tasks.length;
+    const completedTasks = tasks.filter(t => t.status === 'completed').length;
+    const failedTasks = tasks.filter(t => t.status === 'error' || t.status === 'frozen').length;
+    const activeTasks = tasks.filter(t => t.status === 'pending' || t.status === 'uploading').length;
+
+    const renderTaskStatus = (task: UploadTask) => {
+        switch (task.status) {
+            case 'completed': return <span className="flex items-center gap-1 text-ios-green"><CheckCircle2 size={14} /> Completed</span>;
+            case 'error': return <span className="flex items-center gap-1 text-ios-red"><AlertCircle size={14} /> Failed</span>;
+            case 'frozen': return <span className="flex items-center gap-1 text-ios-orange"><RotateCcw size={14} className="animate-spin" /> Retrying (Frozen)</span>;
+            case 'uploading': return <span className="text-ios-blue animate-pulse">Uploading {task.progress}%</span>;
+            case 'pending': return <span className="text-ios-text-secondary">Queued</span>;
+            case 'canceled': return <span className="text-ios-text-secondary">Canceled</span>;
+        }
+    };
+
+    const formatBytes = (bytes: number) => {
+        if (bytes === 0) return '0 B';
+        const k = 1024, sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    };
+
+    return (
+        <div className="flex-1 overflow-auto bg-ios-background p-6">
+            <div className="max-w-4xl mx-auto space-y-6">
+
+                {/* Header block */}
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h1 className="text-[28px] font-bold tracking-tight text-ios-text">Upload Queue</h1>
+                        <p className="text-[15px] text-ios-text-secondary mt-1">
+                            {activeTasks} active uploads • {failedTasks} frozen • {completedTasks} completed
+                        </p>
+                    </div>
+                    {completedTasks > 0 && (
+                        <button
+                            onClick={clearCompleted}
+                            className="text-[14px] text-ios-blue font-medium hover:opacity-80 transition-opacity"
+                        >
+                            Clear Completed
+                        </button>
+                    )}
+                </div>
+
+                {/* Main Queue List */}
+                <div className="bg-ios-card dark:bg-[#1C1C1E] border border-ios-separator rounded-2xl overflow-hidden shadow-sm">
+                    {totalTasks === 0 ? (
+                        <div className="p-12 text-center flex flex-col items-center justify-center text-ios-text-secondary">
+                            <CloudUpload size={48} className="mb-4 opacity-50" strokeWidth={1.5} />
+                            <h3 className="text-[17px] font-semibold text-ios-text mb-1">Queue is empty</h3>
+                            <p className="text-[14px]">Files you upload in the Library or the setup wizard will appear here natively.</p>
+                        </div>
+                    ) : (
+                        <div className="divide-y divide-ios-separator">
+                            {tasks.map((task) => (
+                                <div key={task.id} className="p-4 hover:bg-ios-gray-6 transition-colors group">
+                                    <div className="flex items-center gap-4">
+
+                                        {/* Icon */}
+                                        <div className="w-12 h-12 rounded-xl bg-ios-gray-5 flex items-center justify-center text-ios-text flex-shrink-0">
+                                            {task.name.match(/\.(mp4|mov|mkv)$/i) ? <FileVideo size={24} className="opacity-70" /> : <ImageIcon size={24} className="opacity-70" />}
+                                        </div>
+
+                                        {/* Info */}
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex justify-between items-start mb-1">
+                                                <h4 className="text-[15px] font-semibold text-ios-text truncate pr-4">{task.name}</h4>
+                                                <div className="text-[13px] font-medium flex-shrink-0">
+                                                    {renderTaskStatus(task)}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex items-center text-[13px] text-ios-text-secondary gap-3 mb-2">
+                                                <span>{formatBytes(task.size)}</span>
+                                                <span className="w-1 h-1 rounded-full bg-ios-separator"></span>
+                                                <span>Dest: {task.folderPath ? task.folderPath : '/'}</span>
+                                            </div>
+
+                                            {/* Progress Bar */}
+                                            {task.status !== 'canceled' && task.status !== 'completed' && (
+                                                <div className="h-1.5 w-full bg-ios-gray-5 rounded-full overflow-hidden">
+                                                    <div
+                                                        className={`h-full rounded-full transition-all duration-300 ${task.status === 'frozen' || task.status === 'error' ? 'bg-ios-orange' : 'bg-ios-blue'
+                                                            }`}
+                                                        style={{ width: `${Math.max(2, task.progress)}%` } as React.CSSProperties} // Give at least 2% width so it's visible
+                                                    />
+                                                </div>
+                                            )}
+
+                                            {/* Error Message */}
+                                            {(task.status === 'error' || task.status === 'frozen') && task.errorMessage && (
+                                                <p className="text-[12px] text-ios-orange mt-1">
+                                                    {task.errorMessage}
+                                                </p>
+                                            )}
+                                        </div>
+
+                                        {/* Controls */}
+                                        <div className="flex items-center gap-2 pl-4">
+                                            {(task.status === 'error' || task.status === 'frozen' || task.status === 'canceled') && (
+                                                <button
+                                                    onClick={() => retryTask(task.id)}
+                                                    className="w-8 h-8 rounded-full bg-ios-gray-6 flex items-center justify-center text-ios-text hover:bg-ios-gray-5 transition-colors"
+                                                    title="Retry Upload"
+                                                >
+                                                    <RotateCcw size={16} />
+                                                </button>
+                                            )}
+
+                                            {(task.status === 'pending' || task.status === 'uploading' || task.status === 'frozen' || task.status === 'error') && (
+                                                <button
+                                                    onClick={() => cancelTask(task.id)}
+                                                    className="w-8 h-8 rounded-full bg-ios-gray-6 flex items-center justify-center text-ios-red hover:bg-ios-red/10 transition-colors"
+                                                    title="Cancel Upload"
+                                                >
+                                                    <X size={16} />
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}

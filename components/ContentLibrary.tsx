@@ -14,7 +14,7 @@ import IOSButton from './IOSButton';
 import { useDropzone } from 'react-dropzone';
 import { useRouter, useSearchParams } from 'next/navigation';
 import MoveContentModal from './MoveContentModal';
-import UploadProgressPanel, { UploadTask } from './UploadProgressPanel';
+import { useUpload } from '@/contexts/UploadContext';
 import IOSToast, { ToastType } from './IOSToast';
 import { useRef } from 'react';
 import EditContentModal from './EditContentModal';
@@ -87,7 +87,6 @@ export default function ContentLibrary({
 
     const [loading, setLoading] = useState(true);
     const [selectedIds, setSelectedIds] = useState<string[]>(initialSelection);
-    const [uploading, setUploading] = useState(false);
     const [search, setSearch] = useState('');
     const [showFilters, setShowFilters] = useState(false);
     const [filterTags, setFilterTags] = useState<string[]>([]);
@@ -122,13 +121,8 @@ export default function ContentLibrary({
     const [imageEditorItem, setImageEditorItem] = useState<ContentItem | null>(null);
     const [isImageEditorOpen, setIsImageEditorOpen] = useState(false);
 
-    // Upload Queue State
-    const [uploadQueue, setUploadQueue] = useState<UploadTask[]>([]);
-    const [isUploadPanelOpen, setIsUploadPanelOpen] = useState(false);
-    const uploadingRef = useRef(false); // Ref to track if queue processing is active
-    const [uploadMetrics, setUploadMetrics] = useState({ speed: '', eta: '' });
-    const startTimeRef = useRef<number>(0);
-    const startBytesRef = useRef<number>(0);
+    // Global Upload Queue
+    const { addFiles } = useUpload();
 
     // Toast State
     const [toast, setToast] = useState<{ msg: string; type: ToastType; show: boolean }>({ msg: '', type: 'success', show: false });
@@ -207,442 +201,15 @@ export default function ContentLibrary({
     // Actions (Upload, Drop, Create Folder)
     // -------------------------------------------------------------------------
 
-    // ----- Upload Queue -----
-    // uploadingRef: true while a file is actively being processed
-    const processUploadQueue = () => {
-        // Guard: already processing one file
-        if (uploadingRef.current) return;
-
-        // Read latest queue from a ref so we never use stale closure state
-        setUploadQueue(prev => {
-            const nextTask = prev.find(t => t.status === 'pending');
-            if (!nextTask) {
-                // Nothing left to do
-                uploadingRef.current = false;
-                setUploading(false);
-                return prev;
-            }
-
-            // Lock the mutex BEFORE the async work starts
-            uploadingRef.current = true;
-            // Kick off the upload outside the setter (no-op state return here, real work is async)
-            setTimeout(() => executeUpload(nextTask), 0);
-            return prev;
-        });
-    };
-
-    // Execute single upload with XHR (progress tracking) then move to next
-    const executeUpload = async (task: UploadTask) => {
-        if (!task.storagePath) {
-            console.error('Missing storage path for task', task);
-            setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'error', error: 'Internal Error: Missing path' } : t));
-            uploadingRef.current = false; // release lock
-            processUploadQueue();          // try next
-            return;
-        }
-
-        try {
-            setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'uploading' } : t));
-
-            if (!session) throw new Error('No session');
-
-            // --- CHUNKED UPLOAD IMPLEMENTATION ---
-            const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB chunks
-            const totalChunks = Math.ceil(task.file.size / CHUNK_SIZE);
-
-            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-                const start = chunkIndex * CHUNK_SIZE;
-                const end = Math.min(start + CHUNK_SIZE, task.file.size);
-                const chunk = task.file.slice(start, end);
-
-                let retries = 0;
-                let chunkSuccess = false;
-
-                while (!chunkSuccess && retries < 3) {
-                    try {
-                        await new Promise<void>((resolve, reject) => {
-                            const xhr = new XMLHttpRequest();
-                            xhr.open('POST', '/api/upload-chunk');
-
-                            // Send chunk metadata via headers
-                            xhr.setRequestHeader("x-chunk-index", chunkIndex.toString());
-                            xhr.setRequestHeader("x-total-chunks", totalChunks.toString());
-                            xhr.setRequestHeader("x-file-name", task.storagePath!);
-
-                            xhr.upload.onprogress = (e) => {
-                                if (e.lengthComputable) {
-                                    // Calculate global progress
-                                    const chunkProgress = e.loaded / CHUNK_SIZE;
-                                    const overallProgress = ((chunkIndex + chunkProgress) / totalChunks) * 100;
-                                    const cappedProgress = Math.min(overallProgress, 100);
-
-                                    setUploadQueue(prev => prev.map(t =>
-                                        t.id === task.id ? { ...t, progress: cappedProgress } : t
-                                    ));
-                                }
-                            };
-
-                            xhr.onload = () => {
-                                if (xhr.status >= 200 && xhr.status < 300) {
-                                    resolve();
-                                } else {
-                                    const errorData = JSON.parse(xhr.responseText || '{}');
-                                    reject(new Error(errorData.error || `Upload failed with status ${xhr.status}`));
-                                }
-                            };
-
-                            xhr.onerror = () => reject(new Error('Network error'));
-                            xhr.send(chunk);
-                        });
-                        chunkSuccess = true;
-                    } catch (err) {
-                        retries++;
-                        console.warn(`Chunk ${chunkIndex} failed, retrying (${retries}/3)...`);
-                        if (retries >= 3) {
-                            throw new Error(`Failed to upload chunk ${chunkIndex} after 3 attempts`);
-                        }
-                        // short backoff before retry
-                        await new Promise(r => setTimeout(r, 1000 * retries));
-                    }
-                }
-            }
-
-            // Save to DB
-            const publicUrl = getPublicUrl(task.storagePath!);
-
-            let type = 'video';
-            const ft = task.forceType;
-            if (ft) {
-                type = ft;
-            } else if (task.file.type.startsWith('image/')) {
-                type = task.dbParentId ? 'carousel_item' : 'image';
-            } else if (task.file.type.startsWith('video/')) {
-                type = task.dbParentId ? 'carousel_item' : 'video';
-            }
-
-            const res = await fetch('/api/content-items', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: task.file.name,
-                    type,
-                    url: publicUrl,
-                    path: task.storagePath,
-                    parent_id: task.dbParentId,
-                    size: task.file.size,
-                    duration: (task as any).duration || 0,
-                    caption: (task as any).caption || null,
-                }),
-            });
-
-            if (!res.ok) throw new Error('Failed to save in DB');
-            const insertedData = await res.json();
-
-            setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t));
-
-            // Optimistic UI update
-            if (task.dbParentId === currentFolderId || (!task.dbParentId && !currentFolderId)) {
-                if (insertedData) {
-                    setItems(prev => [insertedData as ContentItem, ...prev]);
-                } else {
-                    fetchContent(currentFolderId);
-                }
-            }
-        } catch (error: any) {
-            console.error('Task failed:', error);
-            setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, status: 'error', error: error.message } : t));
-        } finally {
-            // CRITICAL: release the lock BEFORE calling processUploadQueue,
-            // otherwise the guard "if (uploadingRef.current) return" will block the next file
-            uploadingRef.current = false;
-            processUploadQueue();
-        }
-    };
-
-    // Global Metrics Calculation
-    useEffect(() => {
-        if (!uploadingRef.current || uploadQueue.length === 0) return;
-
-        const totalSize = uploadQueue.reduce((acc, t) => acc + t.size, 0);
-        const uploadedSize = uploadQueue.reduce((acc, t) => {
-            if (t.status === 'completed') return acc + t.size;
-            if (t.status === 'uploading') return acc + (t.size * (t.progress / 100));
-            return acc;
-        }, 0);
-
-        if (startTimeRef.current > 0) {
-            const now = Date.now();
-            const elapsed = (now - startTimeRef.current) / 1000; // seconds
-            if (elapsed > 1) { // Wait for stable sample
-                const speed = uploadedSize / elapsed; // bytes per second
-                const remaining = totalSize - uploadedSize;
-                const eta = speed > 0 ? remaining / speed : 0;
-
-                setUploadMetrics({
-                    speed: `${formatBytes(speed)}/s`,
-                    eta: formatTime(eta)
-                });
-            }
-        }
-    }, [uploadQueue]); // Updates on every progress tick
-
-    // Monitor for completion
-    useEffect(() => {
-        if (uploadQueue.length === 0) return;
-
-        const allComplete = uploadQueue.every(t => t.status === 'completed' || t.status === 'error');
-        const anyError = uploadQueue.some(t => t.status === 'error');
-        const completedCount = uploadQueue.filter(t => t.status === 'completed').length;
-
-        // Only trigger if we were recently uploading (simple check: queue exists and all done)
-        // We need to ensure we don't spam toasts. 
-        // We can check if isUploadPanelOpen is true to imply user is watching.
-
-        if (allComplete && isUploadPanelOpen) {
-            if (anyError) {
-                setToast({ msg: `Upload finished with ${completedCount} successes and some errors.`, type: 'error', show: true });
-            } else {
-                setToast({ msg: `Successfully uploaded ${completedCount} files.`, type: 'success', show: true });
-                // Optional: Close panel after delay?
-                setTimeout(() => setIsUploadPanelOpen(false), 2000);
-            }
-            // Reset uploading ref just in case
-            uploadingRef.current = false;
-        }
-    }, [uploadQueue, isUploadPanelOpen]);
-
     const onDrop = useCallback(async (acceptedFiles: File[]) => {
         try {
-            if (!session?.user) return;
-            const sessionUserId = (session.user as any).id;
-
-            setIsUploadPanelOpen(true);
-            setUploading(true);
-
-            // Reset metrics start only if new session
-            if (!uploadingRef.current) {
-                startTimeRef.current = Date.now();
-                startBytesRef.current = 0;
-            }
-
-            const folderGroups: Record<string, File[]> = {};
-            const standaloneFiles: File[] = [];
-
-            acceptedFiles.forEach((file: any) => {
-                const cleanPath = (file.path || file.name).replace(/^\//, '');
-                const parts = cleanPath.split('/');
-                if (parts.length > 1) {
-                    // Group by the immediate parent folder of the file
-                    // e.g. "MeusPosts/Post1/video.mp4" → group = "Post1"
-                    // e.g. "Post1/video.mp4" → group = "Post1"
-                    const folderName = parts[parts.length - 2];
-                    if (!folderGroups[folderName]) folderGroups[folderName] = [];
-                    folderGroups[folderName].push(file);
-                } else {
-                    standaloneFiles.push(file);
-                }
-            });
-
-            const newTasks: any[] = [];
-
-            // 1. Prepare Standalone
-            for (const file of standaloneFiles) {
-                const fileExt = file.name.split('.').pop();
-                const fileName = `${sessionUserId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
-
-                newTasks.push({
-                    id: Math.random().toString(36),
-                    file,
-                    progress: 0,
-                    status: 'pending',
-                    targetName: file.name,
-                    size: file.size,
-                    storagePath: fileName,
-                    dbParentId: currentFolderId,
-                    forceType: null
-                });
-            }
-
-            // 2. Prepare Folders (create DB folders immediately)
-            if (currentFolderId) {
-                // Flatten
-                for (const groupName in folderGroups) {
-                    for (const file of folderGroups[groupName]) {
-                        const fileExt = file.name.split('.').pop();
-                        const fileName = `${sessionUserId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
-
-                        // Calculate duration for video
-                        let duration = 0;
-                        if (file.type.startsWith('video/')) {
-                            try {
-                                const videoEl = document.createElement('video');
-                                videoEl.preload = 'metadata';
-                                videoEl.src = URL.createObjectURL(file);
-                                await new Promise((resolve) => {
-                                    videoEl.onloadedmetadata = () => {
-                                        duration = videoEl.duration;
-                                        URL.revokeObjectURL(videoEl.src);
-                                        resolve(null);
-                                    };
-                                    videoEl.onerror = () => {
-                                        URL.revokeObjectURL(videoEl.src);
-                                        resolve(null);
-                                    }
-                                });
-                            } catch (e) {
-                                console.error("Error getting duration", e);
-                            }
-                        }
-
-                        newTasks.push({
-                            id: Math.random().toString(36),
-                            file,
-                            progress: 0,
-                            status: 'pending',
-                            targetName: file.name,
-                            size: file.size,
-                            storagePath: fileName,
-                            dbParentId: currentFolderId,
-                            forceType: null,
-                            duration // Pass duration to task to be inserted
-                        });
-                    }
-                }
-            } else {
-                for (const [folderName, groupFiles] of Object.entries(folderGroups)) {
-                    // Check for .txt file to use as caption/description
-                    let folderCaption = '';
-                    const txtFile = groupFiles.find(f => f.name.toLowerCase().endsWith('.txt'));
-                    if (txtFile) {
-                        try {
-                            folderCaption = await txtFile.text();
-                        } catch (e) {
-                            console.error('Error reading .txt file:', e);
-                        }
-                    }
-
-                    // Filter out .txt files from media
-                    const mediaFiles = groupFiles.filter(f => !f.name.toLowerCase().endsWith('.txt'));
-
-                    if (mediaFiles.length === 0) continue;
-
-                    // === SMART DETECTION ===
-                    if (mediaFiles.length === 1) {
-                        // Single file in folder → standalone post (reel, image) with caption
-                        const file = mediaFiles[0];
-                        const fileExt = file.name.split('.').pop();
-                        const fileName = `${sessionUserId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
-
-                        let duration = 0;
-                        if (file.type.startsWith('video/')) {
-                            try {
-                                const videoEl = document.createElement('video');
-                                videoEl.preload = 'metadata';
-                                videoEl.src = URL.createObjectURL(file);
-                                await new Promise((resolve) => {
-                                    videoEl.onloadedmetadata = () => {
-                                        duration = videoEl.duration;
-                                        URL.revokeObjectURL(videoEl.src);
-                                        resolve(null);
-                                    };
-                                    videoEl.onerror = () => {
-                                        URL.revokeObjectURL(videoEl.src);
-                                        resolve(null);
-                                    }
-                                });
-                            } catch (e) {
-                                console.error("Error getting duration", e);
-                            }
-                        }
-
-                        newTasks.push({
-                            id: Math.random().toString(36),
-                            file,
-                            progress: 0,
-                            status: 'pending',
-                            targetName: file.name,
-                            size: file.size,
-                            storagePath: fileName,
-                            dbParentId: null,
-                            forceType: null, // auto-detect from MIME (video or image)
-                            duration,
-                            caption: folderCaption || null
-                        });
-                    } else {
-                        // 2+ files → carousel folder with caption
-                        const res = await fetch('/api/content-items', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                name: folderName,
-                                type: 'carousel_folder',
-                                parent_id: null,
-                                caption: folderCaption || null
-                            })
-                        });
-
-                        if (!res.ok) throw new Error('Failed to create carousel folder');
-                        const folderData = await res.json();
-
-                        if (folderData) {
-                            // Add items with preserved order (by filename)
-                            const sortedMediaFiles = [...mediaFiles].sort((a, b) =>
-                                a.name.localeCompare(b.name, undefined, { numeric: true })
-                            );
-
-                            for (const file of sortedMediaFiles) {
-                                const fileExt = file.name.split('.').pop();
-                                const fileName = `${sessionUserId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
-
-                                let duration = 0;
-                                if (file.type.startsWith('video/')) {
-                                    try {
-                                        const videoEl = document.createElement('video');
-                                        videoEl.preload = 'metadata';
-                                        videoEl.src = URL.createObjectURL(file);
-                                        await new Promise((resolve) => {
-                                            videoEl.onloadedmetadata = () => {
-                                                duration = videoEl.duration;
-                                                URL.revokeObjectURL(videoEl.src);
-                                                resolve(null);
-                                            };
-                                            videoEl.onerror = () => {
-                                                URL.revokeObjectURL(videoEl.src);
-                                                resolve(null);
-                                            }
-                                        });
-                                    } catch (e) {
-                                        console.error("Error getting duration", e);
-                                    }
-                                }
-
-                                newTasks.push({
-                                    id: Math.random().toString(36),
-                                    file,
-                                    progress: 0,
-                                    status: 'pending',
-                                    targetName: `${folderName}/${file.name}`,
-                                    size: file.size,
-                                    storagePath: fileName,
-                                    dbParentId: folderData.id,
-                                    forceType: 'carousel_item',
-                                    duration
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-
-            setUploadQueue(prev => [...prev, ...newTasks]);
-
-            // Kick off queue (timeout to allow state update)
-            setTimeout(processUploadQueue, 100);
-
+            if (!session?.user || acceptedFiles.length === 0) return;
+            addFiles(acceptedFiles, currentFolderId || undefined);
+            setToast({ msg: 'Uploads queued. Check the Uploads tab for details.', show: true, type: 'info' });
         } catch (error) {
             console.error(error);
         }
-    }, [currentFolderId]);
+    }, [currentFolderId, addFiles, session]);
 
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,
@@ -1164,9 +731,9 @@ export default function ContentLibrary({
                         </IOSButton>
 
                         <div className="relative">
-                            <IOSButton variant="primary" disabled={uploading} className="!py-1.5 !px-3 text-sm flex items-center gap-1">
+                            <IOSButton variant="primary" className="!py-1.5 !px-3 text-sm flex items-center gap-1">
                                 <label htmlFor="file-upload" className="flex items-center gap-1 cursor-pointer">
-                                    <Upload size={16} /> {uploading ? 'Uploading...' : 'Upload'}
+                                    <Upload size={16} /> Upload
                                 </label>
                             </IOSButton>
                             <input
@@ -1646,13 +1213,6 @@ export default function ContentLibrary({
                     />
                 )
             }
-
-            <UploadProgressPanel
-                tasks={uploadQueue}
-                isOpen={isUploadPanelOpen}
-                onClose={() => setIsUploadPanelOpen(false)}
-                metrics={uploadMetrics}
-            />
 
             {/* Bulk Rename Modal */}
             {
