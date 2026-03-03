@@ -16,21 +16,27 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
     }
 }
 
+function cleanToken(token: string): string {
+    return (token || '').trim().replace(/^["']|["']$/g, '').trim();
+}
+
 function getBaseUrl(token: string) {
-    return token.startsWith('IG') ? 'https://graph.instagram.com' : 'https://graph.facebook.com';
+    const cleaned = cleanToken(token);
+    return cleaned.startsWith('IG') ? 'https://graph.instagram.com' : 'https://graph.facebook.com';
 }
 
 /** Resolve access token — supports Redis `token_` prefix if Redis is configured. */
 async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
     if (!tokenOrKey) return '';
 
-    if (tokenOrKey.startsWith('token_')) {
-        try {
-            const redisUrlRow = await prisma.appConfig.findUnique({ where: { key: 'REDIS_URL' } });
-            const redisTokenRow = await prisma.appConfig.findUnique({ where: { key: 'REDIS_TOKEN' } });
+    // Trim early to catch " token_..." cases
+    const input = tokenOrKey.trim().replace(/^["']|["']$/g, '').trim();
+    let resolvedToken = input;
 
-            let redisUrl = process.env.REDIS_URL || redisUrlRow?.value || '';
-            let redisToken = process.env.REDIS_TOKEN || redisTokenRow?.value || '';
+    if (input.startsWith('token_')) {
+        try {
+            let redisUrl = process.env.REDIS_URL || '';
+            let redisToken = process.env.REDIS_TOKEN || '';
 
             if (redisUrl && redisUrl.startsWith('rediss://')) {
                 const match = redisUrl.match(/rediss:\/\/[^:]+:([^@]+)@([^:]+)/);
@@ -41,20 +47,38 @@ async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
                 const { Redis } = await import('@upstash/redis');
                 const redis = new Redis({ url: redisUrl, token: redisToken });
 
-                let resolved: string | null = null;
-                try { const val = await redis.get<string>(tokenOrKey); if (val) resolved = val; } catch { /* ignore */ }
-                if (!resolved) { try { const lv = await redis.lindex(tokenOrKey, 0); if (lv) resolved = lv as string; } catch { /* ignore */ } }
-                if (resolved) return resolved.trim().replace(/^[\"']|[\"']$/g, '');
+                let val: string | null = null;
+                try { val = await redis.get<string>(input); } catch (e: any) { console.error(`[Redis] Get failed for ${input}:`, e.message); }
+
+                if (!val) {
+                    try { const lv = await redis.lindex(input, 0); if (lv) val = lv as string; } catch { /* ignore */ }
+                }
+
+                if (val) {
+                    resolvedToken = val;
+                } else {
+                    const msg = `Token key ${input} yielded no value in Redis`;
+                    console.error(`[resolveAccessToken] ${msg}`);
+                    throw new Error(`${msg}. Please re-connect the channel.`);
+                }
+            } else {
+                const msg = `Redis URL missing, cannot resolve ${input}`;
+                console.error(`[resolveAccessToken] ${msg}`);
+                throw new Error(msg);
             }
-        } catch { /* Redis not available */ }
+        } catch (e: any) {
+            console.error(`[resolveAccessToken] Exception resolving ${input}:`, e.message);
+            throw e;
+        }
     }
 
-    return tokenOrKey;
+    return cleanToken(resolvedToken);
 }
 
 /** Insert a planner log entry. */
 async function logPlanner(plannerId: string, message: string, level: 'info' | 'error' = 'info', details: any = {}) {
     if (!plannerId || plannerId === 'unknown') return;
+    console.log(`[PlannerLog][${level.toUpperCase()}] ${plannerId}: ${message}`, details);
     try {
         await prisma.plannerLog.create({
             data: {
@@ -324,31 +348,60 @@ async function handler(request: Request) {
                     const childIds: string[] = [];
                     const childrenData: { url: string; type: string }[] = post.children_urls ? JSON.parse(post.children_urls) : [];
 
+                    if (childrenData.length === 0) {
+                        throw new Error('Carousel has no media items');
+                    }
+
                     // Parallelize carousel child creation
-                    const childPromises = childrenData.map(async (child) => {
-                        const childParams = new URLSearchParams({ is_carousel_item: 'true', [child.type === 'video' ? 'video_url' : 'image_url']: child.url });
+                    const childPromises = childrenData.map(async (child, idx) => {
+                        const childParams = new URLSearchParams({
+                            is_carousel_item: 'true',
+                            access_token: accessToken,
+                            [child.type === 'video' ? 'video_url' : 'image_url']: child.url
+                        });
                         if (child.type === 'video') childParams.append('media_type', 'VIDEO');
-                        const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, { method: 'POST', headers: igHeaders, body: childParams.toString() });
-                        return await res.json();
+
+                        const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, {
+                            method: 'POST',
+                            headers: igHeaders,
+                            body: childParams.toString()
+                        });
+                        const data = await res.json();
+
+                        if (data.id) {
+                            return { id: data.id };
+                        } else {
+                            const err = `Child[${idx}] failed: ${data.error?.message || JSON.stringify(data)}`;
+                            await logPlanner(plannerId, err, 'error', data);
+                            return { error: err };
+                        }
                     });
 
                     const childResults = await Promise.all(childPromises);
-                    for (const data of childResults) {
-                        if (data.id) childIds.push(data.id);
-                        else await logPlanner(plannerId, `Carousel child creation failed`, 'error', data);
+                    const errors = childResults.filter(r => r.error);
+
+                    if (errors.length > 0) {
+                        throw new Error(`Carousel failed: ${errors.length} children failed to initialize. First error: ${errors[0].error}`);
                     }
 
-                    if (childIds.length > 0) {
-                        await prisma.post.update({ where: { id: post.id }, data: { status: 'processing_children', instagram_child_ids: JSON.stringify(childIds) } });
+                    const successfulIds = childResults.map(r => r.id!).filter(Boolean);
+                    if (successfulIds.length > 0) {
+                        await prisma.post.update({
+                            where: { id: post.id },
+                            data: {
+                                status: 'processing_children',
+                                instagram_child_ids: JSON.stringify(successfulIds)
+                            }
+                        });
                         results.pending++;
                     } else {
-                        throw new Error('No carousel child containers created');
+                        throw new Error('No carousel child containers created (unknown reason)');
                     }
                     continue;
                 }
 
                 // SINGLE MEDIA
-                const bodyParams = new URLSearchParams();
+                const bodyParams = new URLSearchParams({ access_token: accessToken });
                 if (mediaType === 'IMAGE') {
                     bodyParams.append('image_url', post.image_url || '');
                     bodyParams.append('caption', post.caption || '');
@@ -407,7 +460,12 @@ async function handler(request: Request) {
                     const allFinished = statusResults.every(data => data.status_code === 'FINISHED');
 
                     if (allFinished) {
-                        const body = new URLSearchParams({ media_type: 'CAROUSEL', children: childIds.join(','), caption: post.caption || '' });
+                        const body = new URLSearchParams({
+                            media_type: 'CAROUSEL',
+                            children: childIds.join(','),
+                            caption: post.caption || '',
+                            access_token: accessToken
+                        });
                         const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media`, { method: 'POST', headers: igHeaders, body: body.toString() });
                         const data = await res.json();
                         if (data.id) {
@@ -422,7 +480,7 @@ async function handler(request: Request) {
                     if (data.status_code === 'FINISHED') {
                         await prisma.post.update({ where: { id: post.id }, data: { status: 'ready_to_publish' } });
                     } else if (data.status_code === 'ERROR') {
-                        const msg = `IG Processing Error: ${JSON.stringify(data)}`;
+                        const msg = `IG Processing Error: ${data.error?.message || JSON.stringify(data)}`;
                         await logPlanner(post.planner_id || 'unknown', msg, 'error', data);
                         await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: msg, failed_reason: 'Processing Failed' } });
                     }
@@ -467,7 +525,10 @@ async function handler(request: Request) {
                 const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media_publish`, {
                     method: 'POST',
                     headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({ creation_id: post.instagram_container_id || '' }).toString(),
+                    body: new URLSearchParams({
+                        creation_id: post.instagram_container_id || '',
+                        access_token: accessToken
+                    }).toString(),
                 });
                 const data = await res.json();
 
