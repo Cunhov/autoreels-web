@@ -59,10 +59,11 @@ RUN mkdir -p /app/public/uploads && chown -R nextjs:nodejs /app/public/uploads
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
 RUN chmod +x ./docker-entrypoint.sh
 
-# Define native Docker volumes for persistence
+# Define a single named volume — /app/data contains both the SQLite DB and uploads/
+# Do NOT declare sub-paths as separate VOLUMEs; they create anonymous volumes that
+# won't persist across Easypanel deploys.
 VOLUME ["/app/data"]
-VOLUME ["/app/data/uploads"]
-VOLUME ["/app/public/uploads"]
+
 
 USER nextjs
 
