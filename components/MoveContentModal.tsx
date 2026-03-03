@@ -42,7 +42,8 @@ export default function MoveContentModal({ isOpen, onClose, itemsToMove, onMoveC
 
             const res = await fetch(`/api/content-items?${params.toString()}`);
             if (!res.ok) throw new Error('Failed to fetch folders');
-            const data = await res.json();
+            const json = await res.json();
+            const data = json.items || json; // Support both paginated and legacy response
 
             // Filter out folders that are being moved (can't move a folder into itself)
             const movingIds = itemsToMove.map(i => i.id);

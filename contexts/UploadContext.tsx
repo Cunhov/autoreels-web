@@ -12,6 +12,7 @@ export interface UploadTask {
     progress: number;
     status: UploadStatus;
     folderPath: string;
+    tags: string[];
     errorMessage?: string;
     chunkSize: number;
     totalChunks: number;
@@ -20,7 +21,7 @@ export interface UploadTask {
 
 interface UploadContextType {
     tasks: UploadTask[];
-    addFiles: (files: File[], folderPath?: string) => void;
+    addFiles: (files: File[], folderPath?: string, tags?: string[]) => void;
     cancelTask: (taskId: string) => void;
     retryTask: (taskId: string) => void;
     clearCompleted: () => void;
@@ -51,7 +52,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     const lastProgressMs = useRef<Map<string, number>>(new Map());
 
     // Add new files to the queue
-    const addFiles = useCallback((files: File[], folderPath: string = 'admin') => {
+    const addFiles = useCallback((files: File[], folderPath: string = 'admin', tags: string[] = []) => {
         const newTasks: UploadTask[] = files.map(file => ({
             id: crypto.randomUUID(),
             file,
@@ -60,6 +61,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             progress: 0,
             status: 'pending',
             folderPath,
+            tags,
             chunkSize: CHUNK_SIZE,
             totalChunks: Math.ceil(file.size / CHUNK_SIZE),
             currentChunk: 0
@@ -232,6 +234,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             formData.append('path', targetPath);
             formData.append('folderPath', task.folderPath);
             formData.append('type', task.name.toLowerCase().endsWith('.mp4') || task.name.toLowerCase().endsWith('.mov') ? 'video' : 'image');
+            if (task.tags.length > 0) {
+                formData.append('tags', JSON.stringify(task.tags));
+            }
 
             // Send metadata to complete the upload
             const metaRes = await fetch('/api/upload-chunk/complete', {

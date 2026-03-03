@@ -97,6 +97,16 @@ export default function ContentLibrary({
     const [sizeFilter, setSizeFilter] = useState<'all' | 'small' | 'medium' | 'large'>('all');
     const [durationFilter, setDurationFilter] = useState<'all' | 'short' | 'medium' | 'long'>('all');
 
+    // Pagination state
+    const [totalCount, setTotalCount] = useState(0);
+    const [hasMore, setHasMore] = useState(false);
+    const [currentOffset, setCurrentOffset] = useState(0);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [selectAllServer, setSelectAllServer] = useState(false);
+    const [bulkLoading, setBulkLoading] = useState(false);
+    const PAGE_SIZE = 100;
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
+
     // Drag-drop items into folders
     const [draggedItems, setDraggedItems] = useState<string[]>([]);
     const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -180,18 +190,44 @@ export default function ContentLibrary({
 
     const fetchContent = async (folderId: string | null) => {
         setLoading(true);
+        setCurrentOffset(0);
+        setSelectAllServer(false);
         try {
-            const res = await fetch(`/api/content-items?parent_id=${folderId || ''}`);
+            const res = await fetch(`/api/content-items?parent_id=${folderId || ''}&limit=${PAGE_SIZE}&offset=0`);
             if (!res.ok) throw new Error('Failed to fetch items');
-            const data = await res.json();
+            const json = await res.json();
+            const data = json.items || json;
 
             setItems(data as ContentItem[]);
+            setTotalCount(json.totalCount ?? data.length);
+            setHasMore(json.hasMore ?? false);
+            setCurrentOffset(PAGE_SIZE);
         } catch (error) {
             console.error('Error fetching content:', error);
         } finally {
             setLoading(false);
         }
     };
+
+    const loadMore = useCallback(async () => {
+        if (loadingMore || !hasMore) return;
+        setLoadingMore(true);
+        try {
+            const res = await fetch(`/api/content-items?parent_id=${currentFolderId || ''}&limit=${PAGE_SIZE}&offset=${currentOffset}`);
+            if (!res.ok) throw new Error('Failed to fetch more items');
+            const json = await res.json();
+            const data = json.items || json;
+
+            setItems(prev => [...prev, ...(data as ContentItem[])]);
+            setTotalCount(json.totalCount ?? (items.length + data.length));
+            setHasMore(json.hasMore ?? false);
+            setCurrentOffset(prev => prev + PAGE_SIZE);
+        } catch (error) {
+            console.error('Error loading more content:', error);
+        } finally {
+            setLoadingMore(false);
+        }
+    }, [loadingMore, hasMore, currentFolderId, currentOffset, items.length]);
 
     // Update parent selection callback
     useEffect(() => {
@@ -320,29 +356,35 @@ export default function ContentLibrary({
         setDropTargetId(null);
     };
 
-    // Bulk rename in selection order
+    // Bulk rename in selection order — uses server-side bulk endpoint
     const handleBulkRename = async () => {
         if (!bulkRenamePrefix.trim() || selectionOrder.length === 0) return;
 
         try {
-            for (let i = 0; i < selectionOrder.length; i++) {
-                const itemId = selectionOrder[i];
-                const newName = `${bulkRenamePrefix}_${String(i + 1).padStart(3, '0')}`;
-                await fetch(`/api/content-items/${itemId}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name: newName })
-                });
-            }
-            setToast({ msg: `Renamed ${selectionOrder.length} items`, type: 'success', show: true });
+            setBulkLoading(true);
+            const res = await fetch('/api/content-items/bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'rename',
+                    ids: selectionOrder,
+                    data: { prefix: bulkRenamePrefix.trim() }
+                })
+            });
+            if (!res.ok) throw new Error('Bulk rename failed');
+            const result = await res.json();
+            setToast({ msg: `Renamed ${result.affected} items`, type: 'success', show: true });
             setIsBulkRenameOpen(false);
             setBulkRenamePrefix('');
             setSelectedIds([]);
             setSelectionOrder([]);
+            setSelectAllServer(false);
             fetchContent(currentFolderId);
         } catch (error) {
             console.error('Rename failed:', error);
             setToast({ msg: 'Failed to rename items', type: 'error', show: true });
+        } finally {
+            setBulkLoading(false);
         }
     };
 
@@ -414,6 +456,7 @@ export default function ContentLibrary({
     const onMoveComplete = () => {
         fetchContent(currentFolderId);
         setSelectedIds([]);
+        setSelectAllServer(false);
     };
 
     const openImageEditor = (item: ContentItem) => {
@@ -595,19 +638,85 @@ export default function ContentLibrary({
         const allFilteredIds = sortedItems.map(i => i.id);
         const allSelected = allFilteredIds.every(id => selectedIds.includes(id));
 
-        if (allSelected) {
-            // Deselect only the visible ones
-            setSelectedIds(selectedIds.filter(id => !allFilteredIds.includes(id)));
-            setSelectionOrder(selectionOrder.filter(id => !allFilteredIds.includes(id)));
+        if (allSelected || selectAllServer) {
+            // Deselect everything
+            setSelectedIds([]);
+            setSelectionOrder([]);
+            setSelectAllServer(false);
         } else {
             // Select all visible ones in order
             const newSet = new Set([...selectedIds, ...allFilteredIds]);
             setSelectedIds(Array.from(newSet));
-            // Add to selection order (only new ones)
             const newOrder = [...selectionOrder, ...allFilteredIds.filter(id => !selectionOrder.includes(id))];
             setSelectionOrder(newOrder);
         }
     };
+
+    const handleSelectAllServer = () => {
+        if (selectAllServer) {
+            setSelectAllServer(false);
+            setSelectedIds([]);
+            setSelectionOrder([]);
+        } else {
+            // Select all loaded items and set server flag
+            const allFilteredIds = sortedItems.map(i => i.id);
+            setSelectedIds(allFilteredIds);
+            setSelectionOrder(allFilteredIds);
+            setSelectAllServer(true);
+        }
+    };
+
+    // Build filter params for server-side bulk ops
+    const buildFilterParams = useCallback(() => {
+        const params: Record<string, string> = {};
+        if (currentFolderId) params.parent_id = currentFolderId;
+        else params.parent_id = '';
+        if (filterTypes.length > 0) params.types = filterTypes.join(',');
+        if (search.trim()) params.search = search.trim();
+        return params;
+    }, [currentFolderId, filterTypes, search]);
+
+    // Bulk delete handler — uses server-side bulk endpoint
+    const handleBulkDelete = async () => {
+        const count = selectAllServer ? totalCount : selectedIds.length;
+        if (!confirm(`Delete ${count} items? This cannot be undone.`)) return;
+        try {
+            setBulkLoading(true);
+            const body: any = { action: 'delete' };
+            if (selectAllServer) {
+                body.all = true;
+                body.filters = buildFilterParams();
+            } else {
+                body.ids = selectedIds;
+            }
+            const res = await fetch('/api/content-items/bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) throw new Error('Bulk delete failed');
+            const result = await res.json();
+            setToast({ msg: `Deleted ${result.affected} items`, type: 'success', show: true });
+            setSelectedIds([]);
+            setSelectionOrder([]);
+            setSelectAllServer(false);
+            fetchContent(currentFolderId);
+        } catch (error) {
+            console.error('Bulk delete failed:', error);
+            setToast({ msg: 'Failed to delete items', type: 'error', show: true });
+        } finally {
+            setBulkLoading(false);
+        }
+    };
+
+
+    // Handle scroll for infinite loading
+    const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+        const el = e.currentTarget;
+        if (el.scrollHeight - el.scrollTop - el.clientHeight < 300 && hasMore && !loadingMore) {
+            loadMore();
+        }
+    }, [hasMore, loadingMore, loadMore]);
 
     // If we are in 'select' mode (Planner), we generally want to return ID of the item.
     // However, if we select a Folder, we might mean "Use this carousel".
@@ -675,8 +784,16 @@ export default function ContentLibrary({
                                         : 'bg-ios-card border-ios-separator text-ios-blue hover:bg-ios-blue/5'
                                         }`}
                                 >
-                                    {sortedItems.every(i => selectedIds.includes(i.id)) ? 'Deselect All' : 'Select All'}
+                                    {selectAllServer ? `Deselect All` : sortedItems.every(i => selectedIds.includes(i.id)) ? 'Deselect All' : `Select All`}
                                 </button>
+                                {totalCount > items.length && selectedIds.length > 0 && !selectAllServer && (
+                                    <button
+                                        onClick={handleSelectAllServer}
+                                        className="text-xs font-semibold px-3 py-1.5 rounded-lg border bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100 transition-all"
+                                    >
+                                        Select All {totalCount}
+                                    </button>
+                                )}
                             </div>
                         )}
 
@@ -700,21 +817,12 @@ export default function ContentLibrary({
                                     <Move size={14} />
                                 </button>
                                 <button
-                                    onClick={async () => {
-                                        if (!confirm(`Delete ${selectedIds.length} items?`)) return;
-                                        // Bulk delete
-                                        for (const id of selectedIds) {
-                                            const item = items.find(i => i.id === id);
-                                            if (item) await doDelete(item);
-                                        }
-                                        setSelectedIds([]);
-                                        setSelectionOrder([]);
-                                        fetchContent(currentFolderId);
-                                    }}
-                                    className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500"
+                                    onClick={handleBulkDelete}
+                                    disabled={bulkLoading}
+                                    className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500 disabled:opacity-50"
                                     title="Delete Selected"
                                 >
-                                    <Trash2 size={14} />
+                                    {bulkLoading ? <div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-red-500" /> : <Trash2 size={14} />}
                                 </button>
                             </div>
                         )}
@@ -886,7 +994,22 @@ export default function ContentLibrary({
             }
 
             {/* Grid */}
-            <div className="flex-1 overflow-y-auto p-4 scroller">
+            {/* Select All Server Banner */}
+            {selectAllServer && (
+                <div className="mx-4 mt-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl flex items-center justify-between">
+                    <span className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                        All {totalCount} items in this folder are selected
+                    </span>
+                    <button
+                        onClick={() => { setSelectAllServer(false); setSelectedIds([]); setSelectionOrder([]); }}
+                        className="text-xs font-semibold text-amber-700 hover:text-amber-900 underline"
+                    >
+                        Clear selection
+                    </button>
+                </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto p-4 scroller" ref={scrollContainerRef} onScroll={handleScroll}>
                 {loading ? (
                     <div className="flex justify-center p-12">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ios-blue"></div>
@@ -997,6 +1120,16 @@ export default function ContentLibrary({
                                     ))}
                                 </tbody>
                             </table>
+                            {loadingMore && (
+                                <div className="flex justify-center py-4">
+                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-ios-blue" />
+                                </div>
+                            )}
+                            {hasMore && !loadingMore && (
+                                <div className="text-center py-3">
+                                    <button onClick={loadMore} className="text-sm text-ios-blue hover:underline">Load more ({items.length} of {totalCount})</button>
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <AutoSizer
@@ -1171,16 +1304,28 @@ export default function ContentLibrary({
                                 };
 
                                 return (
-                                    <GridComponent
-                                        className="scroller outline-none"
-                                        columnCount={columnCount}
-                                        columnWidth={columnWidth}
-                                        rowCount={rowCount}
-                                        rowHeight={rowHeight}
-                                        style={{ height: h, width: w }}
-                                        cellComponent={Cell as any}
-                                        cellProps={{ items: sortedItems }}
-                                    />
+                                    <>
+                                        <GridComponent
+                                            className="scroller outline-none"
+                                            columnCount={columnCount}
+                                            columnWidth={columnWidth}
+                                            rowCount={rowCount}
+                                            rowHeight={rowHeight}
+                                            style={{ height: h, width: w }}
+                                            cellComponent={Cell as any}
+                                            cellProps={{ items: sortedItems }}
+                                        />
+                                        {loadingMore && (
+                                            <div className="flex justify-center py-4">
+                                                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-ios-blue" />
+                                            </div>
+                                        )}
+                                        {hasMore && !loadingMore && (
+                                            <div className="text-center py-3">
+                                                <button onClick={loadMore} className="text-sm text-ios-blue hover:underline">Load more ({items.length} of {totalCount})</button>
+                                            </div>
+                                        )}
+                                    </>
                                 );
                             }}
                         />

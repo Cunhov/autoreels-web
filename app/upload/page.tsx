@@ -1,16 +1,71 @@
 'use client';
 
 import { useUpload, UploadTask } from '@/contexts/UploadContext';
-import { Play, Pause, X, RotateCcw, FileVideo, Image as ImageIcon, AlertCircle, CheckCircle2, CloudUpload } from 'lucide-react';
+import { useRef, useState, useCallback } from 'react';
+import { Plus, X, RotateCcw, FileVideo, Image as ImageIcon, AlertCircle, CheckCircle2, CloudUpload, Tag } from 'lucide-react';
 
 export default function UploadPage() {
-    const { tasks, cancelTask, retryTask, clearCompleted } = useUpload();
+    const { tasks, addFiles, cancelTask, retryTask, clearCompleted } = useUpload();
+
+    // Tag input state
+    const [tags, setTags] = useState<string[]>([]);
+    const [tagInput, setTagInput] = useState('');
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Drag state
+    const [isDragging, setIsDragging] = useState(false);
 
     // Stats
     const totalTasks = tasks.length;
     const completedTasks = tasks.filter(t => t.status === 'completed').length;
     const failedTasks = tasks.filter(t => t.status === 'error' || t.status === 'frozen').length;
     const activeTasks = tasks.filter(t => t.status === 'pending' || t.status === 'uploading').length;
+
+    const addTag = useCallback(() => {
+        const trimmed = tagInput.trim().toLowerCase();
+        if (trimmed && !tags.includes(trimmed)) {
+            setTags(prev => [...prev, trimmed]);
+        }
+        setTagInput('');
+    }, [tagInput, tags]);
+
+    const removeTag = (tag: string) => {
+        setTags(prev => prev.filter(t => t !== tag));
+    };
+
+    const handleTagKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === 'Enter' || e.key === ',') {
+            e.preventDefault();
+            addTag();
+        }
+    };
+
+    const handleFiles = useCallback((files: FileList | File[]) => {
+        const fileArray = Array.from(files).filter(f =>
+            f.type.startsWith('video/') || f.type.startsWith('image/')
+        );
+        if (fileArray.length > 0) {
+            addFiles(fileArray, 'admin', tags);
+        }
+    }, [addFiles, tags]);
+
+    const handleDrop = useCallback((e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragging(false);
+        if (e.dataTransfer.files.length > 0) {
+            handleFiles(e.dataTransfer.files);
+        }
+    }, [handleFiles]);
+
+    const handleDragOver = useCallback((e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragging(true);
+    }, []);
+
+    const handleDragLeave = useCallback((e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragging(false);
+    }, []);
 
     const renderTaskStatus = (task: UploadTask) => {
         switch (task.status) {
@@ -34,7 +89,7 @@ export default function UploadPage() {
         <div className="flex-1 overflow-auto bg-ios-background p-6">
             <div className="max-w-4xl mx-auto space-y-6">
 
-                {/* Header block */}
+                {/* Header */}
                 <div className="flex items-center justify-between">
                     <div>
                         <h1 className="text-[28px] font-bold tracking-tight text-ios-text">Upload Queue</h1>
@@ -52,13 +107,89 @@ export default function UploadPage() {
                     )}
                 </div>
 
-                {/* Main Queue List */}
+                {/* Upload Area — Drop Zone + Tags */}
+                <div className="bg-ios-card dark:bg-[#1C1C1E] border border-ios-separator rounded-2xl overflow-hidden shadow-sm">
+                    {/* Drop Zone */}
+                    <div
+                        onDrop={handleDrop}
+                        onDragOver={handleDragOver}
+                        onDragLeave={handleDragLeave}
+                        onClick={() => fileInputRef.current?.click()}
+                        className={`p-8 border-b border-ios-separator cursor-pointer transition-all ${isDragging
+                            ? 'bg-ios-blue/10 border-ios-blue'
+                            : 'hover:bg-ios-gray-6'
+                            }`}
+                    >
+                        <div className="flex flex-col items-center justify-center text-center">
+                            <CloudUpload size={40} className={`mb-3 ${isDragging ? 'text-ios-blue' : 'text-ios-text-secondary opacity-50'}`} strokeWidth={1.5} />
+                            <h3 className="text-[17px] font-semibold text-ios-text mb-1">
+                                {isDragging ? 'Drop files here' : 'Drag & drop files to upload'}
+                            </h3>
+                            <p className="text-[14px] text-ios-text-secondary">
+                                or <span className="text-ios-blue font-medium">click to browse</span> — videos and images only
+                            </p>
+                        </div>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            accept="video/*,image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                                if (e.target.files) handleFiles(e.target.files);
+                                e.target.value = '';
+                            }}
+                        />
+                    </div>
+
+                    {/* Tag Input */}
+                    <div className="p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Tag size={14} className="text-ios-text-secondary" />
+                            <span className="text-[13px] font-semibold text-ios-text-secondary uppercase tracking-wider">Tags for next upload</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                            {tags.map(tag => (
+                                <span key={tag} className="inline-flex items-center gap-1 px-2.5 py-1 bg-ios-blue/10 text-ios-blue text-[13px] font-medium rounded-lg">
+                                    {tag}
+                                    <button
+                                        onClick={() => removeTag(tag)}
+                                        className="hover:text-ios-red transition-colors"
+                                        title={`Remove tag "${tag}"`}
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                </span>
+                            ))}
+                        </div>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={tagInput}
+                                onChange={e => setTagInput(e.target.value)}
+                                onKeyDown={handleTagKeyDown}
+                                placeholder="Type a tag and press Enter..."
+                                className="flex-1 px-3 py-2 text-[14px] bg-ios-background border border-ios-separator rounded-xl text-ios-text placeholder:text-ios-text-secondary/50 focus:outline-none focus:ring-2 focus:ring-ios-blue/30 focus:border-ios-blue transition-all"
+                            />
+                            <button
+                                onClick={addTag}
+                                disabled={!tagInput.trim()}
+                                className="px-4 py-2 bg-ios-blue text-white text-[14px] font-medium rounded-xl hover:bg-ios-blue/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1"
+                                title="Add tag"
+                            >
+                                <Plus size={16} /> Add
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Queue List */}
                 <div className="bg-ios-card dark:bg-[#1C1C1E] border border-ios-separator rounded-2xl overflow-hidden shadow-sm">
                     {totalTasks === 0 ? (
                         <div className="p-12 text-center flex flex-col items-center justify-center text-ios-text-secondary">
                             <CloudUpload size={48} className="mb-4 opacity-50" strokeWidth={1.5} />
                             <h3 className="text-[17px] font-semibold text-ios-text mb-1">Queue is empty</h3>
-                            <p className="text-[14px]">Files you upload in the Library or the setup wizard will appear here natively.</p>
+                            <p className="text-[14px]">Drop files above or use the Library to start uploading.</p>
                         </div>
                     ) : (
                         <div className="divide-y divide-ios-separator">
@@ -80,11 +211,22 @@ export default function UploadPage() {
                                                 </div>
                                             </div>
 
-                                            <div className="flex items-center text-[13px] text-ios-text-secondary gap-3 mb-2">
+                                            <div className="flex items-center text-[13px] text-ios-text-secondary gap-3 mb-1">
                                                 <span>{formatBytes(task.size)}</span>
                                                 <span className="w-1 h-1 rounded-full bg-ios-separator"></span>
                                                 <span>Dest: {task.folderPath ? task.folderPath : '/'}</span>
                                             </div>
+
+                                            {/* Tags */}
+                                            {task.tags.length > 0 && (
+                                                <div className="flex flex-wrap gap-1 mb-1.5">
+                                                    {task.tags.map(tag => (
+                                                        <span key={tag} className="px-1.5 py-0.5 bg-ios-blue/10 text-ios-blue text-[11px] font-medium rounded">
+                                                            {tag}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            )}
 
                                             {/* Progress Bar */}
                                             {task.status !== 'canceled' && task.status !== 'completed' && (
@@ -92,7 +234,7 @@ export default function UploadPage() {
                                                     <div
                                                         className={`h-full rounded-full transition-all duration-300 ${task.status === 'frozen' || task.status === 'error' ? 'bg-ios-orange' : 'bg-ios-blue'
                                                             }`}
-                                                        style={{ width: `${Math.max(2, task.progress)}%` } as React.CSSProperties} // Give at least 2% width so it's visible
+                                                        style={{ width: `${Math.max(2, task.progress)}%` } as React.CSSProperties}
                                                     />
                                                 </div>
                                             )}

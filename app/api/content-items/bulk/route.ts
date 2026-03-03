@@ -1,0 +1,154 @@
+import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { buildContentWhere } from "../route";
+
+export async function POST(req: Request) {
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const userId = (session.user as any).id;
+
+    try {
+        const body = await req.json();
+        const { action, ids, all, filters, data } = body;
+        // action: "delete" | "move" | "rename"
+        // ids: string[]           — explicit item IDs
+        // all: boolean            — select all matching items
+        // filters: object         — query-param-like filters when all=true
+        // data: object            — payload for move/rename
+
+        if (!action) {
+            return NextResponse.json({ error: "Missing action" }, { status: 400 });
+        }
+
+        // Resolve the set of target IDs
+        let targetIds: string[] = ids || [];
+
+        if (all) {
+            // Build a where clause from the filters to find all matching IDs
+            const filterParams = new URLSearchParams(filters || {});
+            const where = buildContentWhere(userId, filterParams);
+            const allItems = await prisma.contentItem.findMany({
+                where,
+                select: { id: true },
+            });
+            targetIds = allItems.map((i) => i.id);
+        }
+
+        if (targetIds.length === 0) {
+            return NextResponse.json({ affected: 0 });
+        }
+
+        // Security: ensure all IDs belong to this user
+        const ownershipWhere = { id: { in: targetIds }, user_id: userId };
+
+        switch (action) {
+            case "delete": {
+                // First, collect all storage paths to clean up
+                const itemsWithPaths = await prisma.contentItem.findMany({
+                    where: ownershipWhere,
+                    select: { id: true, path: true, type: true },
+                });
+
+                // Also collect descendant paths (for carousel folders with cascade)
+                const folderIds = itemsWithPaths
+                    .filter((i) => i.type === "carousel_folder")
+                    .map((i) => i.id);
+
+                let descendantPaths: string[] = [];
+                if (folderIds.length > 0) {
+                    const descendants = await prisma.contentItem.findMany({
+                        where: { parent_id: { in: folderIds }, path: { not: null } },
+                        select: { path: true },
+                    });
+                    descendantPaths = descendants
+                        .map((d) => d.path)
+                        .filter(Boolean) as string[];
+                }
+
+                // Delete from DB (cascade handles children records)
+                const result = await prisma.contentItem.deleteMany({
+                    where: ownershipWhere,
+                });
+
+                // Best-effort storage cleanup (don't block on failures)
+                const allPaths = [
+                    ...itemsWithPaths.map((i) => i.path).filter(Boolean),
+                    ...descendantPaths,
+                ] as string[];
+
+                // Fire-and-forget storage cleanup
+                if (allPaths.length > 0) {
+                    Promise.allSettled(
+                        allPaths.map((path) =>
+                            fetch(
+                                `${process.env.NEXTAUTH_URL || ""
+                                }/api/storage?path=${encodeURIComponent(path)}`,
+                                { method: "DELETE" }
+                            ).catch(() => { }) // swallow errors
+                        )
+                    );
+                }
+
+                return NextResponse.json({ affected: result.count });
+            }
+
+            case "move": {
+                if (!data || data.parent_id === undefined) {
+                    return NextResponse.json(
+                        { error: "data.parent_id is required for move" },
+                        { status: 400 }
+                    );
+                }
+                const result = await prisma.contentItem.updateMany({
+                    where: ownershipWhere,
+                    data: { parent_id: data.parent_id || null },
+                });
+                return NextResponse.json({ affected: result.count });
+            }
+
+            case "rename": {
+                if (!data || !data.prefix) {
+                    return NextResponse.json(
+                        { error: "data.prefix is required for rename" },
+                        { status: 400 }
+                    );
+                }
+
+                // For rename, we need ordering, so fetch items in order
+                const itemsToRename = await prisma.contentItem.findMany({
+                    where: ownershipWhere,
+                    orderBy: { name: "asc" },
+                    select: { id: true },
+                });
+
+                // Use a transaction for atomicity
+                await prisma.$transaction(
+                    itemsToRename.map((item, i) =>
+                        prisma.contentItem.update({
+                            where: { id: item.id },
+                            data: {
+                                name: `${data.prefix}_${String(i + 1).padStart(3, "0")}`,
+                            },
+                        })
+                    )
+                );
+
+                return NextResponse.json({ affected: itemsToRename.length });
+            }
+
+            default:
+                return NextResponse.json(
+                    { error: `Unknown action: ${action}` },
+                    { status: 400 }
+                );
+        }
+    } catch (error: any) {
+        console.error("Bulk operation error:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+}
