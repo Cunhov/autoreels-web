@@ -1,7 +1,8 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 const { FixedSizeGrid: GridComponent } = require('react-window');
-const AutoSizer = require('react-virtualized-auto-sizer').default || require('react-virtualized-auto-sizer'); import { getPublicUrl } from '@/lib/storage';
+const AutoSizer = require('react-virtualized-auto-sizer').default || require('react-virtualized-auto-sizer');
+import { getPublicUrl } from '@/lib/storage';
 import { useSession } from 'next-auth/react';
 import {
     Folder, Video, MoreVertical,
@@ -126,6 +127,9 @@ export default function ContentLibrary({
 
     // Toast State
     const [toast, setToast] = useState<{ msg: string; type: ToastType; show: boolean }>({ msg: '', type: 'success', show: false });
+
+    // File Input Ref for Upload Button
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // -------------------------------------------------------------------------
     // Data Fetching & Navigation
@@ -731,12 +735,11 @@ export default function ContentLibrary({
                         </IOSButton>
 
                         <div className="relative">
-                            <IOSButton variant="primary" className="!py-1.5 !px-3 text-sm flex items-center gap-1">
-                                <label htmlFor="file-upload" className="flex items-center gap-1 cursor-pointer">
-                                    <Upload size={16} /> Upload
-                                </label>
+                            <IOSButton variant="primary" onClick={() => fileInputRef.current?.click()} className="!py-1.5 !px-3 text-sm flex items-center gap-1">
+                                <Upload size={16} /> Upload
                             </IOSButton>
                             <input
+                                ref={fileInputRef}
                                 id="file-upload" type="file" multiple className="hidden"
                                 onChange={(e) => {
                                     if (e.target.files?.length) onDrop(Array.from(e.target.files));
