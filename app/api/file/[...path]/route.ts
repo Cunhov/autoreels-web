@@ -1,6 +1,3 @@
-import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { readFile } from "fs/promises";
 import { join, extname } from "path";
 
@@ -23,16 +20,45 @@ const MIME_TYPES: Record<string, string> = {
 
 // Serve uploaded files stored in /app/data/uploads (Docker volume)
 // Also checks /public/uploads for backwards compatibility
+export async function OPTIONS() {
+    return new Response(null, {
+        status: 204,
+        headers: {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        },
+    });
+}
+
+export async function HEAD(
+    req: Request,
+    { params }: { params: Promise<{ path: string[] }> }
+) {
+    return handleFileRequest(req, params, true);
+}
+
 export async function GET(
     req: Request,
     { params }: { params: Promise<{ path: string[] }> }
 ) {
-    const { path } = await params;
+    return handleFileRequest(req, params, false);
+}
+
+async function handleFileRequest(
+    req: Request,
+    paramsPromise: Promise<{ path: string[] }>,
+    isHead: boolean
+) {
+    const { path } = await paramsPromise;
     const filePath = path.join("/");
 
     // Security: ensure path doesn't escape the uploads directory
     if (filePath.includes("..")) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        return new Response(JSON.stringify({ error: "Forbidden" }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' }
+        });
     }
 
     // Try /data/uploads first (new location), then /public/uploads (legacy)
@@ -46,10 +72,15 @@ export async function GET(
             const data = await readFile(candidate);
             const ext = extname(filePath).toLowerCase();
             const mimeType = MIME_TYPES[ext] || "application/octet-stream";
-            return new Response(data, {
+
+            return new Response(isHead ? null : data, {
                 headers: {
                     "Content-Type": mimeType,
-                    "Cache-Control": "private, max-age=86400",
+                    "Content-Length": data.length.toString(),
+                    "Cache-Control": "public, max-age=86400, must-revalidate",
+                    "Access-Control-Allow-Origin": "*",
+                    "Accept-Ranges": "bytes",
+                    "X-Content-Type-Options": "nosniff"
                 },
             });
         } catch {
@@ -57,5 +88,8 @@ export async function GET(
         }
     }
 
-    return NextResponse.json({ error: "File not found" }, { status: 404 });
+    return new Response(JSON.stringify({ error: "File not found" }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+    });
 }

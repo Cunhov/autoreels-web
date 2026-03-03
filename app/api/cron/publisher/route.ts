@@ -111,7 +111,11 @@ export async function POST(request: Request) {
 async function handler(request: Request) {
     try {
         const reqUrl = new URL(request.url);
-        const systemBaseUrl = (process.env.NEXTAUTH_URL || `${reqUrl.protocol}//${reqUrl.host}`).replace(/\/$/, '');
+        const host = request.headers.get('x-forwarded-host') || request.headers.get('host') || reqUrl.host;
+        const proto = request.headers.get('x-forwarded-proto') || (reqUrl.protocol === 'https:' ? 'https' : 'http');
+        const origin = `${proto}://${host}`;
+        const envUrl = (process.env.NEXTAUTH_URL || '').replace(/\/$/, '');
+        const systemBaseUrl = (envUrl && !envUrl.includes('localhost') ? envUrl : origin).replace(/\/$/, '');
 
         // Auth check
         const cronSecret = request.headers.get('x-cron-auth') || new URL(request.url).searchParams.get('secret');
