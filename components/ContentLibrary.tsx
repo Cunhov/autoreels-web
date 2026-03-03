@@ -1,13 +1,13 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-const { FixedSizeGrid: GridComponent } = require('react-window');
-const AutoSizer = require('react-virtualized-auto-sizer').default || require('react-virtualized-auto-sizer');
+import { Grid as GridComponent } from 'react-window';
+import { AutoSizer } from 'react-virtualized-auto-sizer';
 import { getPublicUrl } from '@/lib/storage';
 import { useSession } from 'next-auth/react';
 import {
     Folder, Video, MoreVertical,
     Upload, Plus, ArrowLeft, Check, Trash2, Edit2, Search,
-    ChevronRight, Move, Filter, X, Grid, List as ListIcon,
+    ChevronRight, Move, Filter, X, Grid as GridIcon, List as ListIcon,
     ArrowDownAZ, ArrowUpAZ, ArrowDown01, ArrowUp01, TextCursorInput,
     ExternalLink, Eye, CornerDownRight
 } from 'lucide-react';
@@ -790,7 +790,7 @@ export default function ContentLibrary({
                             className={`p-1.5 rounded-lg transition-colors ${viewMode === 'grid' ? 'bg-ios-blue text-white shadow-sm' : 'text-ios-secondary hover:text-ios-text'}`}
                             title="Grid View"
                         >
-                            <Grid size={16} />
+                            <GridIcon size={16} />
                         </button>
                         <button
                             onClick={() => setViewMode('list')}
@@ -999,16 +999,18 @@ export default function ContentLibrary({
                             </table>
                         </div>
                     ) : (
-                        <AutoSizer>
-                            {({ height, width }: { height: number; width: number }): React.ReactElement => {
+                        <AutoSizer
+                            renderProp={({ height, width }: { height: number | undefined; width: number | undefined }): React.ReactElement => {
                                 // Calculate how many columns fit
                                 // Assuming min item width of ~150px (h-40) + gap
                                 const MIN_ITEM_WIDTH = 160;
-                                const columnCount = Math.max(2, Math.floor(width / MIN_ITEM_WIDTH));
+                                const w = width || 0;
+                                const h = height || 0;
+                                const columnCount = Math.max(2, Math.floor(w / MIN_ITEM_WIDTH));
                                 const rowCount = Math.ceil(sortedItems.length / columnCount);
 
                                 // Width per item is exact to fill the area, height matches to keep purely square
-                                const columnWidth = width / columnCount;
+                                const columnWidth = w / columnCount;
                                 const rowHeight = columnWidth; // aspect-square
 
                                 const Cell = ({ columnIndex, rowIndex, style }: { columnIndex: number, rowIndex: number, style: any }) => {
@@ -1173,17 +1175,15 @@ export default function ContentLibrary({
                                         className="scroller outline-none"
                                         columnCount={columnCount}
                                         columnWidth={columnWidth}
-                                        height={height}
                                         rowCount={rowCount}
                                         rowHeight={rowHeight}
-                                        width={width}
-                                        itemData={sortedItems}
-                                    >
-                                        {Cell}
-                                    </GridComponent>
+                                        style={{ height: h, width: w }}
+                                        cellComponent={Cell as any}
+                                        cellProps={{ items: sortedItems }}
+                                    />
                                 );
                             }}
-                        </AutoSizer>
+                        />
                     )
                 )}
             </div>
@@ -1192,7 +1192,7 @@ export default function ContentLibrary({
                but if we wanted a custom modal we'd render it here. For now window.prompt in handler is enough 
                but we set state just to track intended target if we were to upgrade UI) */}
 
-            <MoveContentModal
+            < MoveContentModal
                 isOpen={isMoveModalOpen}
                 onClose={() => setIsMoveModalOpen(false)}
                 itemsToMove={moveItems}
