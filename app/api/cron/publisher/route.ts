@@ -54,6 +54,7 @@ async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
 
 /** Insert a planner log entry. */
 async function logPlanner(plannerId: string, message: string, level: 'info' | 'error' = 'info', details: any = {}) {
+    if (!plannerId || plannerId === 'unknown') return;
     try {
         await prisma.plannerLog.create({
             data: {
