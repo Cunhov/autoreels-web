@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma';
 
 const GRAPH_API_VERSION = 'v22.0';
 
-/** All external HTTP calls go through this — aborts after 15 s so the worker never hangs. */
+/** All external HTTP calls go through this — aborts after 15 s by default, but allows overrides (e.g., 5 mins for large uploads). */
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 15_000): Promise<Response> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -392,7 +392,7 @@ async function handler(request: Request) {
                             method: 'POST',
                             headers: igHeaders,
                             body: childParams.toString()
-                        });
+                        }, 300_000); // 5 minutes for large videos
                         const data = await res.json();
 
                         if (data.id) {
@@ -448,7 +448,7 @@ async function handler(request: Request) {
                     }
                 }
 
-                const apiRes = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, { method: 'POST', headers: igHeaders, body: bodyParams.toString() });
+                const apiRes = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, { method: 'POST', headers: igHeaders, body: bodyParams.toString() }, 300_000); // 5 minutes for large videos
                 const data = await apiRes.json();
 
                 if (data.id) {
@@ -460,9 +460,9 @@ async function handler(request: Request) {
                 }
             } catch (e: any) {
                 const isAbort = e.name === 'AbortError';
-                const errMsg = isAbort ? 'Instagram API timed out (15s)' : e.message;
+                const errMsg = isAbort ? 'Instagram API timed out (5m)' : e.message;
                 await logPlanner(plannerId, `Phase1 Error post=${post.id}: ${errMsg}`, 'error');
-                await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: isAbort ? 'API Timeout' : 'Initialization Failed' } });
+                await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: isAbort ? 'API Timeout (Video too large or slow)' : 'Initialization Failed' } });
                 results.errors++;
             }
         }
@@ -514,7 +514,16 @@ async function handler(request: Request) {
                     const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${post.instagram_container_id}?fields=status_code&access_token=${accessToken}`);
                     const data = await res.json();
                     if (data.status_code === 'FINISHED') {
-                        await prisma.post.update({ where: { id: post.id }, data: { status: 'ready_to_publish' } });
+                        // Delay publishing for 3 minutes from creation (using scheduled_at as safe baseline, or updated_at. We'll extract creation time if available, otherwise just use a hardcoded 3min check since Phase 1 completion)
+                        // Actually, Phase 1 sets status to `processing_upload`. We don't have a `container_created_at` field, but we can check if 3 minutes have passed since the Cron started processing it.
+                        // To be safe and avoid schema changes, we check if `Date.now() - post.scheduled_at.getTime() > 3 * 60 * 1000`. If they scheduled it immediately, `scheduled_at` perfectly represents creation request time.
+                        const timeSinceScheduled = Date.now() - (post.scheduled_at?.getTime() || 0);
+                        if (timeSinceScheduled > 3 * 60 * 1000) {
+                            await prisma.post.update({ where: { id: post.id }, data: { status: 'ready_to_publish' } });
+                        } else {
+                            // Leave in processing state temporarily
+                            await logPlanner(post.planner_id || 'unknown', `Media ${post.id} is FINISHED but waiting 3 min safety delay.`, 'info');
+                        }
                     } else if (data.status_code === 'ERROR') {
                         const msg = `IG Processing Error: ${data.error?.message || JSON.stringify(data)}`;
                         await logPlanner(post.planner_id || 'unknown', msg, 'error', data);
