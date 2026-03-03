@@ -209,7 +209,8 @@ async function handler(request: Request) {
                 let caption = selectedContent.caption || '';
                 let children: { url: string; type: string }[] = selectedContent.children_urls || selectedContent.carousel_items || [];
 
-                if (selectedContent.type === 'library_item') {
+                // SUPPORT LEGACY { type: 'config' } and new { type: 'library_item' }
+                if (selectedContent.type === 'library_item' || (selectedContent.type === 'config' && selectedContent.id) || (!selectedContent.type && selectedContent.id)) {
                     const libItem = await prisma.contentItem.findUnique({ where: { id: selectedContent.id } });
                     if (libItem) {
                         mediaUrl = libItem.url;
@@ -233,14 +234,22 @@ async function handler(request: Request) {
                             .replace(/{post_title}/g, itemTitle)
                             .replace(/{post_caption}/g, itemCaption);
 
-                        await logPlanner(planner.id, `[Phase0] Library item: type=${libItem.type}, url=${libItem.url?.slice(0, 80)}`, 'info');
+                        await logPlanner(planner.id, `[Phase0] Item matched: type=${libItem.type}, title=${itemTitle}`, 'info');
                     } else {
-                        await logPlanner(planner.id, `[Phase0] Library item NOT FOUND: id=${selectedContent.id}`, 'error');
+                        await logPlanner(planner.id, `[Phase0] Item ID not found: ${selectedContent.id}`, 'error');
+                        // Do not abort, use existing config data as fallback
                     }
                 }
 
+                // Final safety checks before post creation
+                if (mediaType === 'CAROUSEL' && children.length === 0) {
+                    await logPlanner(planner.id, `[Phase0] Carousel item at index ${selectedIndex} has no children — skipping`, 'error');
+                    await prisma.planner.update({ where: { id: planner.id }, data: { last_run: now, config: JSON.stringify({ ...config, state }) } });
+                    continue;
+                }
+
                 if (!mediaUrl && children.length === 0) {
-                    await logPlanner(planner.id, `[Phase0] Media missing for content[${selectedIndex}] — skipping post creation`, 'error');
+                    await logPlanner(planner.id, `[Phase0] Media missing for content[${selectedIndex}] — skipping`, 'error');
                     await prisma.planner.update({ where: { id: planner.id }, data: { last_run: now, config: JSON.stringify({ ...config, state }) } });
                     continue;
                 }
@@ -255,7 +264,9 @@ async function handler(request: Request) {
                             media_type: mediaType,
                             video_url: (mediaType === 'REELS' || mediaType === 'VIDEO') ? mediaUrl : null,
                             image_url: (mediaType === 'IMAGE') ? mediaUrl
-                                : (mediaType === 'STORIES' && mediaUrl && !mediaUrl.includes('.mp4')) ? mediaUrl : null,
+                                : (mediaType === 'STORIES' && mediaUrl && !mediaUrl.includes('.mp4')) ? mediaUrl
+                                    : (mediaType === 'CAROUSEL' && children.length > 0) ? children[0].url // Set first child as thumbnail
+                                        : null,
                             children_urls: children.length > 0 ? JSON.stringify(children) : null,
                             caption,
                             scheduled_at: now,
