@@ -221,9 +221,12 @@ async function handler(request: Request) {
                             await logPlanner(planner.id, `[Phase0] Carousel folder: ${children.length} children`, 'info');
                         }
 
+                        let itemTitle = libItem.title || selectedContent.title_fallback || '';
+                        let itemCaption = libItem.caption || selectedContent.caption_fallback || '';
+
                         caption = (caption || '')
-                            .replace(/{post_title}/g, libItem.title || '')
-                            .replace(/{post_caption}/g, libItem.caption || '');
+                            .replace(/{post_title}/g, itemTitle)
+                            .replace(/{post_caption}/g, itemCaption);
 
                         await logPlanner(planner.id, `[Phase0] Library item: type=${libItem.type}, url=${libItem.url?.slice(0, 80)}`, 'info');
                     } else {

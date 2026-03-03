@@ -56,6 +56,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     const [isCarousel, setIsCarousel] = useState(false);
     const [caption, setCaption] = useState('');
     const [location, setLocation] = useState('');
+    const [captionFallback, setCaptionFallback] = useState('');
+    const [titleFallback, setTitleFallback] = useState('');
 
     useEffect(() => {
         if (isOpen) {
@@ -103,6 +105,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                         setShareToFeed(content[0]?.share_to_feed !== false);
                     }
                     setCaption(content[0]?.caption || '');
+                    setCaptionFallback(content[0]?.caption_fallback || '');
+                    setTitleFallback(content[0]?.title_fallback || '');
                     setLocation(content[0]?.location_id || '');
                 } else {
                     setSelectedContentIds([]);
@@ -218,59 +222,73 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
             const uploadedItems = await uploadFiles((session.user as any).id);
 
             // 2. Prepare Content Array
-            let content;
+            let content = [];
 
-            if (isCarousel && mediaType === 'IMAGE' && selectedContentIds.length > 0) {
-                // Carousel from folder: Fetch folder children ordered by name
-                const folderId = selectedContentIds[0]; // Only one folder should be selected
+            if (isCarousel && selectedContentIds.length > 0) {
+                // Carousel from folders: Each folder becomes its own carousel post
+                for (const folderId of selectedContentIds) {
+                    // Fetch children ordered by name (alphabetical/numerical)
+                    const res = await fetch(`/api/content-items?parent_id=${folderId}`);
+                    if (!res.ok) continue;
+                    const folderChildren = await res.json();
 
-                // Fetch children ordered by name (alphabetical/numerical)
-                const res = await fetch(`/api/content-items?parent_id=${folderId}`);
-                if (!res.ok) throw new Error('Failed to fetch folder children');
-                const folderChildren = await res.json();
+                    if (!folderChildren || folderChildren.length < 2) {
+                        // If it's not a folder or has < 2 items, skip or treat as normal?
+                        // For now we skip or alert if it's the only one
+                        continue;
+                    }
 
-                if (!folderChildren || folderChildren.length < 2) {
-                    throw new Error('Carousel folder must contain at least 2 items');
+                    const carouselItems = folderChildren.map((item: any) => ({
+                        url: item.url,
+                        type: item.type === 'video' ? 'video' : 'image'
+                    }));
+
+                    content.push({
+                        type: 'config',
+                        media_type: 'CAROUSEL',
+                        carousel_items: carouselItems,
+                        carousel_item_ids: folderChildren.map((item: any) => item.id),
+                        folder_id: folderId,
+                        caption,
+                        caption_fallback: captionFallback,
+                        title_fallback: titleFallback,
+                        location_id: location
+                    });
                 }
 
-                // Build carousel_item_ids array with items in correct order
-                const carouselItems = folderChildren.map((item: any) => ({
-                    url: item.url,
-                    type: item.type === 'video' ? 'video' : 'image'
-                }));
-
-                // Exclude the children from being created as main posts
-                const childIds = folderChildren.map((item: any) => item.id);
-
+                // If no folders were valid carousels, but we have uploads
+                if (content.length === 0 && uploadedItems.length > 0) {
+                    content.push({
+                        type: 'config',
+                        media_type: 'CAROUSEL',
+                        children_urls: uploadedItems,
+                        caption,
+                        caption_fallback: captionFallback,
+                        title_fallback: titleFallback,
+                        location_id: location
+                    });
+                }
+            } else if (isCarousel && uploadedItems.length >= 2) {
+                // Carousel from direct uploads
                 content = [{
                     type: 'config',
                     media_type: 'CAROUSEL',
-                    carousel_items: carouselItems,
-                    carousel_item_ids: folderChildren.map((item: any) => item.id),
-                    folder_id: folderId,
+                    children_urls: uploadedItems,
                     caption,
-                    location_id: location
-                }];
-            } else if (isCarousel) {
-                // Legacy carousel from uploads
-                content = [{
-                    type: 'config',
-                    media_type: 'CAROUSEL',
-                    children_urls: [
-                        ...uploadedItems,
-                        ...selectedContentIds.map(id => ({ type: 'library_item', id }))
-                    ],
-                    caption,
+                    caption_fallback: captionFallback,
+                    title_fallback: titleFallback,
                     location_id: location
                 }];
             } else {
-                // Separate Posts
+                // Separate Posts (Reels, Images, etc)
                 content = [
                     ...uploadedItems.map(item => ({
                         ...item,
                         media_type: mediaType,
                         share_to_feed: shareToFeed,
                         caption,
+                        caption_fallback: captionFallback,
+                        title_fallback: titleFallback,
                         location_id: location
                     })),
                     ...selectedContentIds.map(id => ({
@@ -279,6 +297,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                         media_type: mediaType,
                         share_to_feed: shareToFeed,
                         caption,
+                        caption_fallback: captionFallback,
+                        title_fallback: titleFallback,
                         location_id: location
                     }))
                 ];
@@ -567,6 +587,29 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                         className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
                                         placeholder="Write a caption... Use tags for dynamic content."
                                     />
+                                </div>
+
+                                <div className="space-y-4 pt-4 border-t border-ios-separator">
+                                    <div>
+                                        <label className="text-xs font-medium text-ios-text mb-1.5 block">Fallback Title</label>
+                                        <p className="text-[11px] text-gray-400 mb-2">Used if the selected content has an empty title and {"{post_title}"} is used.</p>
+                                        <input
+                                            value={titleFallback}
+                                            onChange={(e) => setTitleFallback(e.target.value)}
+                                            className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
+                                            placeholder="Example: AutoReels Magic"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-medium text-ios-text mb-1.5 block">Fallback Caption</label>
+                                        <p className="text-[11px] text-gray-400 mb-2">Used if the selected content has an empty caption and {"{post_caption}"} is used.</p>
+                                        <textarea
+                                            value={captionFallback}
+                                            onChange={(e) => setCaptionFallback(e.target.value)}
+                                            className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-16 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400"
+                                            placeholder="Example: Check out this amazing content!"
+                                        />
+                                    </div>
                                 </div>
 
                                 <div>

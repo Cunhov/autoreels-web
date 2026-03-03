@@ -100,9 +100,12 @@ export async function POST(
                     }));
                 }
 
+                let itemTitle = libItem.title || selectedContent.title_fallback || '';
+                let itemCaption = libItem.caption || selectedContent.caption_fallback || '';
+
                 caption = (caption || '')
-                    .replace(/{post_title}/g, libItem.title || '')
-                    .replace(/{post_caption}/g, libItem.caption || '');
+                    .replace(/{post_title}/g, itemTitle)
+                    .replace(/{post_caption}/g, itemCaption);
             } else {
                 return NextResponse.json({ error: 'Library item no longer exists' }, { status: 400 });
             }
