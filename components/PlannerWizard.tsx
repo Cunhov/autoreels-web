@@ -188,14 +188,10 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 const fileName = `${userId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
                 const fileType = file.type.startsWith('image/') ? 'image' : 'video';
 
-                // Upload via local API (FormData) — same as ContentLibrary
-                const formData = new FormData();
-                formData.append('file', file);
-                formData.append('path', fileName);
-
-                const uploadRes = await fetch('/api/upload', {
+                // Upload via local API directly as binary stream
+                const uploadRes = await fetch(`/api/upload?path=${encodeURIComponent(fileName)}`, {
                     method: 'POST',
-                    body: formData,
+                    body: file,
                 });
 
                 if (!uploadRes.ok) {

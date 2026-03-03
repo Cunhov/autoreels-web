@@ -263,7 +263,7 @@ export default function ContentLibrary({
             // Upload via XHR so we get progress events
             await new Promise<void>((resolve, reject) => {
                 const xhr = new XMLHttpRequest();
-                xhr.open('POST', '/api/upload');
+                xhr.open('POST', `/api/upload?path=${encodeURIComponent(task.storagePath!)}`);
 
                 xhr.upload.onprogress = (e) => {
                     if (e.lengthComputable) {
@@ -283,10 +283,8 @@ export default function ContentLibrary({
 
                 xhr.onerror = () => reject(new Error('Network error'));
 
-                const formData = new FormData();
-                formData.append('file', task.file);
-                formData.append('path', task.storagePath!);
-                xhr.send(formData);
+                // Send raw file stream directly instead of multipart FormData to prevent buffering limits
+                xhr.send(task.file);
             });
 
             // Save to DB
@@ -849,12 +847,11 @@ export default function ContentLibrary({
             const userId = (session.user as any).id;
             const fileName = `${userId}/${Math.random().toString(36).substring(2)}.png`;
 
-            // Upload via local API (FormData)
-            const formData = new FormData();
-            formData.append('file', file);
-            formData.append('path', fileName);
-
-            const uploadRes = await fetch('/api/upload', { method: 'POST', body: formData });
+            // Upload via local API directly as binary
+            const uploadRes = await fetch(`/api/upload?path=${encodeURIComponent(fileName)}`, {
+                method: 'POST',
+                body: file
+            });
             if (!uploadRes.ok) {
                 const err = await uploadRes.json().catch(() => ({}));
                 throw new Error((err as any).error || 'Failed to upload edited image');
