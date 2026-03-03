@@ -5,6 +5,17 @@ import { prisma } from '@/lib/prisma';
 
 const GRAPH_API_VERSION = 'v22.0';
 
+/** All external HTTP calls go through this — aborts after 15 s so the worker never hangs. */
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 15_000): Promise<Response> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 function getBaseUrl(token: string) {
     return token.startsWith('IG') ? 'https://graph.instagram.com' : 'https://graph.facebook.com';
 }
@@ -13,7 +24,6 @@ function getBaseUrl(token: string) {
 async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
     if (!tokenOrKey) return '';
 
-    // If the token starts with "token_", try to resolve from Redis via app_config
     if (tokenOrKey.startsWith('token_')) {
         try {
             const redisUrlRow = await prisma.appConfig.findUnique({ where: { key: 'REDIS_URL' } });
@@ -28,26 +38,15 @@ async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
             }
 
             if (redisUrl) {
-                // Dynamic import only if Redis is available
                 const { Redis } = await import('@upstash/redis');
                 const redis = new Redis({ url: redisUrl, token: redisToken });
 
                 let resolved: string | null = null;
-                try {
-                    const val = await redis.get<string>(tokenOrKey);
-                    if (val) resolved = val;
-                } catch { /* ignore */ }
-
-                if (!resolved) {
-                    try {
-                        const listVal = await redis.lindex(tokenOrKey, 0);
-                        if (listVal) resolved = listVal as string;
-                    } catch { /* ignore */ }
-                }
-
-                if (resolved) return resolved.trim().replace(/^["']|["']$/g, '');
+                try { const val = await redis.get<string>(tokenOrKey); if (val) resolved = val; } catch { /* ignore */ }
+                if (!resolved) { try { const lv = await redis.lindex(tokenOrKey, 0); if (lv) resolved = lv as string; } catch { /* ignore */ } }
+                if (resolved) return resolved.trim().replace(/^[\"']|[\"']$/g, '');
             }
-        } catch { /* Redis not available, fall through */ }
+        } catch { /* Redis not available */ }
     }
 
     return tokenOrKey;
@@ -90,25 +89,17 @@ async function handler(request: Request) {
         const now = new Date();
 
         // ═══════════════════════════════════════════════════════════════════════
-        // PHASE -1: Cleanup — instantly fail posts that have no media at all
-        // (causes publisher timeouts when Instagram API is called with empty URLs)
+        // PHASE -1: Cleanup — instantly fail posts with no media
         // ═══════════════════════════════════════════════════════════════════════
         const cleanup = await prisma.post.updateMany({
-            where: {
-                status: 'pending',
-                video_url: null,
-                image_url: null,
-                children_urls: null,
-            },
-            data: {
-                status: 'failed',
-                error_message: 'No media URL — content item missing or deleted from library',
-                failed_reason: 'Missing Media',
-            },
+            where: { status: 'pending', video_url: null, image_url: null, children_urls: null },
+            data: { status: 'failed', error_message: 'No media URL — content item missing', failed_reason: 'Missing Media' },
         });
         results.cleaned = cleanup.count;
 
-
+        // ═══════════════════════════════════════════════════════════════════════
+        // PHASE 0: Planner Processing — create Posts from active Planners
+        // ═══════════════════════════════════════════════════════════════════════
 
         const planners = await prisma.planner.findMany({
             where: { status: { not: 'paused' } },
@@ -117,7 +108,6 @@ async function handler(request: Request) {
 
         for (const planner of planners) {
             try {
-                // Handle double-stringified config (a known bug from earlier wizard versions)
                 let rawConfig = planner.config || '{}';
                 let config: any;
                 try {
@@ -145,27 +135,22 @@ async function handler(request: Request) {
                     continue;
                 }
 
-                // Respect start_time
                 if (config.start_time && now < new Date(config.start_time)) {
-                    await logPlanner(planner.id, `[Phase0] start_time not reached: ${config.start_time}`, 'info');
+                    await logPlanner(planner.id, `[Phase0] start_time not reached`, 'info');
                     continue;
                 }
 
-                // Respect sleep schedule
                 if (config.sleep_schedule) {
                     const tz = config.timezone || 'America/Sao_Paulo';
                     const nowInTz = new Date(now.toLocaleString('en-US', { timeZone: tz }));
                     const hhmm = `${String(nowInTz.getHours()).padStart(2, '0')}:${String(nowInTz.getMinutes()).padStart(2, '0')}`;
                     const sleepStart = config.sleep_schedule.start || '00:00';
                     const sleepEnd = config.sleep_schedule.end || '06:00';
-                    let isSleeping = false;
-                    if (sleepStart <= sleepEnd) {
-                        isSleeping = hhmm >= sleepStart && hhmm < sleepEnd;
-                    } else {
-                        isSleeping = hhmm >= sleepStart || hhmm < sleepEnd;
-                    }
+                    const isSleeping = sleepStart <= sleepEnd
+                        ? (hhmm >= sleepStart && hhmm < sleepEnd)
+                        : (hhmm >= sleepStart || hhmm < sleepEnd);
                     if (isSleeping) {
-                        await logPlanner(planner.id, `[Phase0] Sleep schedule active — ${hhmm} is between ${sleepStart}-${sleepEnd}`, 'info');
+                        await logPlanner(planner.id, `[Phase0] Sleep schedule active`, 'info');
                         continue;
                     }
                 }
@@ -181,7 +166,7 @@ async function handler(request: Request) {
                     continue;
                 }
 
-                // Select content based on sort order
+                // Select content
                 let selectedIndex = -1;
                 const sortOrder = config.sort_order || 'random_loop';
                 const state = config.state || {};
@@ -214,7 +199,6 @@ async function handler(request: Request) {
 
                 await logPlanner(planner.id, `[Phase0] Selected content[${selectedIndex}]: type=${selectedContent.type}, id=${selectedContent.id}, url=${selectedContent.url}`, 'info');
 
-                // Resolve content
                 let mediaUrl = selectedContent.url;
                 let mediaType = selectedContent.media_type || 'REELS';
                 let caption = selectedContent.caption || '';
@@ -233,32 +217,26 @@ async function handler(request: Request) {
                                 where: { parent_id: libItem.id },
                                 orderBy: { created_at: 'asc' },
                             });
-                            children = subItems.map((c: any) => ({
-                                url: c.url || '',
-                                type: c.type === 'video' ? 'video' : 'image',
-                            }));
-                            await logPlanner(planner.id, `[Phase0] Carousel folder resolved: ${children.length} children`, 'info');
+                            children = subItems.map((c: any) => ({ url: c.url || '', type: c.type === 'video' ? 'video' : 'image' }));
+                            await logPlanner(planner.id, `[Phase0] Carousel folder: ${children.length} children`, 'info');
                         }
 
                         caption = (caption || '')
                             .replace(/{post_title}/g, libItem.title || '')
                             .replace(/{post_caption}/g, libItem.caption || '');
 
-                        await logPlanner(planner.id, `[Phase0] Library item resolved: type=${libItem.type}, url=${libItem.url?.slice(0, 80)}`, 'info');
+                        await logPlanner(planner.id, `[Phase0] Library item: type=${libItem.type}, url=${libItem.url?.slice(0, 80)}`, 'info');
                     } else {
-                        await logPlanner(planner.id, `[Phase0] Library item NOT FOUND in DB: id=${selectedContent.id}`, 'error');
-                        // Don't skip — continue creating with null URLs so the error surfaces in Phase 1
+                        await logPlanner(planner.id, `[Phase0] Library item NOT FOUND: id=${selectedContent.id}`, 'error');
                     }
                 }
 
                 if (!mediaUrl && children.length === 0) {
-                    await logPlanner(planner.id, `[Phase0] No media URL and no carousel children — skipping post creation`, 'error');
-                    // Still update last_run so we don't retry every second
+                    await logPlanner(planner.id, `[Phase0] No media URL — skipping post creation`, 'error');
                     await prisma.planner.update({ where: { id: planner.id }, data: { last_run: now, config: JSON.stringify({ ...config, state }) } });
                     continue;
                 }
 
-                // Create posts for each linked channel
                 let postsCreated = 0;
                 for (const channel of planner.channels) {
                     await prisma.post.create({
@@ -279,15 +257,10 @@ async function handler(request: Request) {
                     postsCreated++;
                 }
 
-                await logPlanner(planner.id, `[Phase0] Created ${postsCreated} pending post(s) for mediaType=${mediaType}`, 'info');
-
-                // Update planner state
+                await logPlanner(planner.id, `[Phase0] Created ${postsCreated} post(s) for mediaType=${mediaType}`, 'info');
                 await prisma.planner.update({
                     where: { id: planner.id },
-                    data: {
-                        last_run: now,
-                        config: JSON.stringify({ ...config, state }),
-                    },
+                    data: { last_run: now, config: JSON.stringify({ ...config, state }) },
                 });
             } catch (err: any) {
                 await logPlanner(planner.id, `[Phase0] Uncaught error: ${err.message}`, 'error', { stack: err.stack });
@@ -298,12 +271,8 @@ async function handler(request: Request) {
         // PHASE 1: Pending → Processing (create IG media containers)
         // ═══════════════════════════════════════════════════════════════════════
 
-
         const pendingPosts = await prisma.post.findMany({
-            where: {
-                status: 'pending',
-                scheduled_at: { lte: now },
-            },
+            where: { status: 'pending', scheduled_at: { lte: now } },
             include: { channel: true },
             take: 5,
         });
@@ -311,7 +280,7 @@ async function handler(request: Request) {
         for (const post of pendingPosts) {
             const plannerId = post.planner_id || 'unknown';
             try {
-                // Pre-flight: skip posts with no media (Phase -1 handles bulk cleanup, this is the safety net)
+                // Pre-flight: abort immediately with no external calls
                 const hasMedia = post.video_url || post.image_url || post.children_urls;
                 if (!hasMedia) {
                     await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: 'No media URL', failed_reason: 'Missing Media' } });
@@ -325,43 +294,36 @@ async function handler(request: Request) {
 
                 const baseUrl = getBaseUrl(accessToken);
                 const mediaType = post.media_type || 'REELS';
+                const igHeaders = {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                };
 
-
-                // CAROUSEL — create child containers first
+                // CAROUSEL
                 if (mediaType === 'CAROUSEL') {
                     const childIds: string[] = [];
                     const childrenData: { url: string; type: string }[] = post.children_urls ? JSON.parse(post.children_urls) : [];
 
                     for (const child of childrenData) {
-                        const childParams = new URLSearchParams({
-                            is_carousel_item: 'true',
-                            [child.type === 'video' ? 'video_url' : 'image_url']: child.url,
-                        });
+                        const childParams = new URLSearchParams({ is_carousel_item: 'true', [child.type === 'video' ? 'video_url' : 'image_url']: child.url });
                         if (child.type === 'video') childParams.append('media_type', 'VIDEO');
 
-                        const res = await fetch(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, {
-                            method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${accessToken}`,
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                            },
-                            body: childParams.toString(),
-                        });
+                        const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, { method: 'POST', headers: igHeaders, body: childParams.toString() });
                         const data = await res.json();
                         if (data.id) childIds.push(data.id);
+                        else await logPlanner(plannerId, `Carousel child creation failed`, 'error', data);
                     }
 
                     if (childIds.length > 0) {
-                        await prisma.post.update({
-                            where: { id: post.id },
-                            data: { status: 'processing_children', instagram_child_ids: JSON.stringify(childIds) },
-                        });
+                        await prisma.post.update({ where: { id: post.id }, data: { status: 'processing_children', instagram_child_ids: JSON.stringify(childIds) } });
                         results.pending++;
+                    } else {
+                        throw new Error('No carousel child containers created');
                     }
                     continue;
                 }
 
-                // SINGLE MEDIA — create container
+                // SINGLE MEDIA
                 const bodyParams = new URLSearchParams();
                 if (mediaType === 'IMAGE') {
                     bodyParams.append('image_url', post.image_url || '');
@@ -370,37 +332,24 @@ async function handler(request: Request) {
                     bodyParams.append('media_type', mediaType === 'STORIES' ? 'STORIES' : 'REELS');
                     bodyParams.append('video_url', post.video_url || post.image_url || '');
                     bodyParams.append('caption', post.caption || '');
-                    if (mediaType === 'REELS') {
-                        bodyParams.append('share_to_feed', 'false');
-                    }
+                    if (mediaType === 'REELS') bodyParams.append('share_to_feed', 'false');
                 }
 
-                const apiRes = await fetch(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    body: bodyParams.toString(),
-                });
-
+                const apiRes = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, { method: 'POST', headers: igHeaders, body: bodyParams.toString() });
                 const data = await apiRes.json();
+
                 if (data.id) {
-                    await prisma.post.update({
-                        where: { id: post.id },
-                        data: { status: 'processing_upload', instagram_container_id: data.id },
-                    });
+                    await prisma.post.update({ where: { id: post.id }, data: { status: 'processing_upload', instagram_container_id: data.id } });
                     results.pending++;
                 } else {
-                    await logPlanner(plannerId, `Media Creation Failed for post ${post.id}`, 'error', data);
-                    throw new Error(data.error?.message || 'Media Creation Failed');
+                    await logPlanner(plannerId, `Media creation failed for post ${post.id}`, 'error', data);
+                    throw new Error(data.error?.message || 'Media creation failed');
                 }
             } catch (e: any) {
-                await logPlanner(plannerId, `Phase 1 Error for post ${post.id}: ${e.message}`, 'error', e);
-                await prisma.post.update({
-                    where: { id: post.id },
-                    data: { status: 'failed', error_message: e.message, failed_reason: 'Initialization Failed' },
-                });
+                const isAbort = e.name === 'AbortError';
+                const errMsg = isAbort ? 'Instagram API timed out (15s)' : e.message;
+                await logPlanner(plannerId, `Phase1 Error post=${post.id}: ${errMsg}`, 'error');
+                await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: isAbort ? 'API Timeout' : 'Initialization Failed' } });
                 results.errors++;
             }
         }
@@ -419,83 +368,63 @@ async function handler(request: Request) {
             try {
                 const accessToken = await resolveAccessToken(post.channel?.access_token || null);
                 const baseUrl = getBaseUrl(accessToken);
+                const igHeaders = { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' };
 
                 if (post.status === 'processing_children') {
                     const childIds: string[] = post.instagram_child_ids ? JSON.parse(post.instagram_child_ids) : [];
                     let allFinished = true;
 
                     for (const cid of childIds) {
-                        const res = await fetch(`${baseUrl}/${GRAPH_API_VERSION}/${cid}?fields=status_code&access_token=${accessToken}`);
+                        const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${cid}?fields=status_code&access_token=${accessToken}`);
                         const data = await res.json();
                         if (data.status_code !== 'FINISHED') { allFinished = false; break; }
                     }
 
                     if (allFinished) {
-                        const body = new URLSearchParams({
-                            media_type: 'CAROUSEL',
-                            children: childIds.join(','),
-                            caption: post.caption || '',
-                        });
-                        const res = await fetch(`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media`, {
-                            method: 'POST',
-                            headers: {
-                                'Authorization': `Bearer ${accessToken}`,
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                            },
-                            body: body.toString(),
-                        });
+                        const body = new URLSearchParams({ media_type: 'CAROUSEL', children: childIds.join(','), caption: post.caption || '' });
+                        const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media`, { method: 'POST', headers: igHeaders, body: body.toString() });
                         const data = await res.json();
                         if (data.id) {
-                            await prisma.post.update({
-                                where: { id: post.id },
-                                data: { status: 'processing_upload', instagram_container_id: data.id },
-                            });
+                            await prisma.post.update({ where: { id: post.id }, data: { status: 'processing_upload', instagram_container_id: data.id } });
+                        } else {
+                            throw new Error(data.error?.message || 'Carousel container creation failed');
                         }
                     }
                 } else {
-                    // Single media — check status
-                    const res = await fetch(`${baseUrl}/${GRAPH_API_VERSION}/${post.instagram_container_id}?fields=status_code&access_token=${accessToken}`);
+                    const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${post.instagram_container_id}?fields=status_code&access_token=${accessToken}`);
                     const data = await res.json();
                     if (data.status_code === 'FINISHED') {
-                        await prisma.post.update({
-                            where: { id: post.id },
-                            data: { status: 'ready_to_publish' },
-                        });
+                        await prisma.post.update({ where: { id: post.id }, data: { status: 'ready_to_publish' } });
                     } else if (data.status_code === 'ERROR') {
-                        const msg = `IG Processing Error: ${data.status_code}`;
+                        const msg = `IG Processing Error: ${JSON.stringify(data)}`;
                         await logPlanner(post.planner_id || 'unknown', msg, 'error', data);
-                        await prisma.post.update({
-                            where: { id: post.id },
-                            data: { status: 'failed', error_message: msg, failed_reason: 'Processing Failed' },
-                        });
+                        await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: msg, failed_reason: 'Processing Failed' } });
                     }
-                    // else: still processing, do nothing
+                    // else: still processing — will retry next tick
                 }
+                results.processing++;
             } catch (e: any) {
-                await logPlanner(post.planner_id || 'unknown', `Phase 2 Error for post ${post.id}`, 'error', e);
-                await prisma.post.update({
-                    where: { id: post.id },
-                    data: { status: 'failed', error_message: e.message, failed_reason: 'Processing Exception' },
-                });
+                const isAbort = e.name === 'AbortError';
+                const errMsg = isAbort ? 'Instagram API timed out (15s)' : e.message;
+                await logPlanner(post.planner_id || 'unknown', `Phase2 Error post=${post.id}: ${errMsg}`, 'error');
+                await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: isAbort ? 'API Timeout' : 'Processing Exception' } });
+                results.errors++;
             }
         }
+
         // ═══════════════════════════════════════════════════════════════════════
         // PHASE 2.5: Timeout posts stuck in processing for > 2 hours
         // ═══════════════════════════════════════════════════════════════════════
 
         const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
         await prisma.post.updateMany({
-            where: {
-                status: { in: ['processing_upload', 'processing_children'] },
-                created_at: { lte: twoHoursAgo },
-            },
-            data: {
-                status: 'failed',
-                error_message: 'Timed out: still processing after 2 hours',
-                failed_reason: 'Processing Timeout',
-            },
+            where: { status: { in: ['processing_upload', 'processing_children'] }, created_at: { lte: twoHoursAgo } },
+            data: { status: 'failed', error_message: 'Timed out: still processing after 2 hours', failed_reason: 'Processing Timeout' },
         });
 
+        // ═══════════════════════════════════════════════════════════════════════
+        // PHASE 3: Ready → Published
+        // ═══════════════════════════════════════════════════════════════════════
 
         const readyPosts = await prisma.post.findMany({
             where: { status: 'ready_to_publish' },
@@ -508,46 +437,32 @@ async function handler(request: Request) {
                 const accessToken = await resolveAccessToken(post.channel?.access_token || null);
                 const baseUrl = getBaseUrl(accessToken);
 
-                const res = await fetch(`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media_publish`, {
+                const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media_publish`, {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${accessToken}`,
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
+                    headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' },
                     body: new URLSearchParams({ creation_id: post.instagram_container_id || '' }).toString(),
                 });
                 const data = await res.json();
 
                 if (data.id) {
-                    await prisma.post.update({
-                        where: { id: post.id },
-                        data: { status: 'published', published_at: new Date(), instagram_media_id: data.id },
-                    });
+                    await prisma.post.update({ where: { id: post.id }, data: { status: 'published', published_at: new Date(), instagram_media_id: data.id } });
                     results.published++;
                 } else {
                     const msg = data.error?.message || 'Publishing Failed';
                     if (msg.toLowerCase().includes('already published')) {
-                        await prisma.post.update({
-                            where: { id: post.id },
-                            data: { status: 'published', published_at: new Date() },
-                        });
-                        await logPlanner(post.planner_id || 'unknown', `Post ${post.id} was already published. Status updated.`, 'info');
+                        await prisma.post.update({ where: { id: post.id }, data: { status: 'published', published_at: new Date() } });
                         results.published++;
                     } else {
-                        await logPlanner(post.planner_id || 'unknown', `Phase 3 Error for post ${post.id}: ${msg}`, 'error', data);
-                        await prisma.post.update({
-                            where: { id: post.id },
-                            data: { status: 'failed', error_message: msg, failed_reason: 'Publishing Failed' },
-                        });
+                        await logPlanner(post.planner_id || 'unknown', `Phase3 Error post=${post.id}: ${msg}`, 'error', data);
+                        await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: msg, failed_reason: 'Publishing Failed' } });
                         results.errors++;
                     }
                 }
             } catch (e: any) {
-                await logPlanner(post.planner_id || 'unknown', `Phase 3 Exception for post ${post.id}`, 'error', e);
-                await prisma.post.update({
-                    where: { id: post.id },
-                    data: { status: 'failed', error_message: e.message, failed_reason: 'Publishing Exception' },
-                });
+                const isAbort = e.name === 'AbortError';
+                const errMsg = isAbort ? 'Instagram API timed out (15s)' : e.message;
+                await logPlanner(post.planner_id || 'unknown', `Phase3 Error post=${post.id}: ${errMsg}`, 'error');
+                await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: isAbort ? 'API Timeout' : 'Publishing Exception' } });
                 results.errors++;
             }
         }
