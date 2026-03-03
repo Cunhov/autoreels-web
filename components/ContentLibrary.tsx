@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { getPublicUrl } from '@/lib/storage';
+const { FixedSizeGrid: GridComponent } = require('react-window');
+const AutoSizer = require('react-virtualized-auto-sizer').default || require('react-virtualized-auto-sizer'); import { getPublicUrl } from '@/lib/storage';
 import { useSession } from 'next-auth/react';
 import {
     Folder, Video, MoreVertical,
@@ -186,22 +187,7 @@ export default function ContentLibrary({
             if (!res.ok) throw new Error('Failed to fetch items');
             const data = await res.json();
 
-            // Post-process: If item is a folder, fetch its first child for thumbnail
-            const itemsWithThumbnails = await Promise.all((data || []).map(async (item: any) => {
-                if (item.type === 'carousel_folder') {
-                    // Fetch one image child to use as thumbnail
-                    const childRes = await fetch(`/api/content-items?parent_id=${item.id}&types=image,video&limit=1`);
-                    const children = await childRes.json();
-                    const firstChild = Array.isArray(children) ? children[0] : null;
-
-                    if (firstChild) {
-                        return { ...item, thumbnail_url: firstChild.url, thumbnail_type: firstChild.type };
-                    }
-                }
-                return item;
-            }));
-
-            setItems(itemsWithThumbnails as ContentItem[]);
+            setItems(data as ContentItem[]);
         } catch (error) {
             console.error('Error fetching content:', error);
         } finally {
@@ -260,32 +246,66 @@ export default function ContentLibrary({
 
             if (!session) throw new Error('No session');
 
-            // Upload via XHR so we get progress events
-            await new Promise<void>((resolve, reject) => {
-                const xhr = new XMLHttpRequest();
-                xhr.open('POST', `/api/upload?path=${encodeURIComponent(task.storagePath!)}`);
+            // --- CHUNKED UPLOAD IMPLEMENTATION ---
+            const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB chunks
+            const totalChunks = Math.ceil(task.file.size / CHUNK_SIZE);
 
-                xhr.upload.onprogress = (e) => {
-                    if (e.lengthComputable) {
-                        const percent = (e.loaded / e.total) * 100;
-                        setUploadQueue(prev => prev.map(t => t.id === task.id ? { ...t, progress: percent } : t));
+            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+                const start = chunkIndex * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, task.file.size);
+                const chunk = task.file.slice(start, end);
+
+                let retries = 0;
+                let chunkSuccess = false;
+
+                while (!chunkSuccess && retries < 3) {
+                    try {
+                        await new Promise<void>((resolve, reject) => {
+                            const xhr = new XMLHttpRequest();
+                            xhr.open('POST', '/api/upload-chunk');
+
+                            // Send chunk metadata via headers
+                            xhr.setRequestHeader("x-chunk-index", chunkIndex.toString());
+                            xhr.setRequestHeader("x-total-chunks", totalChunks.toString());
+                            xhr.setRequestHeader("x-file-name", task.storagePath!);
+
+                            xhr.upload.onprogress = (e) => {
+                                if (e.lengthComputable) {
+                                    // Calculate global progress
+                                    const chunkProgress = e.loaded / CHUNK_SIZE;
+                                    const overallProgress = ((chunkIndex + chunkProgress) / totalChunks) * 100;
+                                    const cappedProgress = Math.min(overallProgress, 100);
+
+                                    setUploadQueue(prev => prev.map(t =>
+                                        t.id === task.id ? { ...t, progress: cappedProgress } : t
+                                    ));
+                                }
+                            };
+
+                            xhr.onload = () => {
+                                if (xhr.status >= 200 && xhr.status < 300) {
+                                    resolve();
+                                } else {
+                                    const errorData = JSON.parse(xhr.responseText || '{}');
+                                    reject(new Error(errorData.error || `Upload failed with status ${xhr.status}`));
+                                }
+                            };
+
+                            xhr.onerror = () => reject(new Error('Network error'));
+                            xhr.send(chunk);
+                        });
+                        chunkSuccess = true;
+                    } catch (err) {
+                        retries++;
+                        console.warn(`Chunk ${chunkIndex} failed, retrying (${retries}/3)...`);
+                        if (retries >= 3) {
+                            throw new Error(`Failed to upload chunk ${chunkIndex} after 3 attempts`);
+                        }
+                        // short backoff before retry
+                        await new Promise(r => setTimeout(r, 1000 * retries));
                     }
-                };
-
-                xhr.onload = () => {
-                    if (xhr.status >= 200 && xhr.status < 300) {
-                        resolve();
-                    } else {
-                        const errorData = JSON.parse(xhr.responseText || '{}');
-                        reject(new Error(errorData.error || `Upload failed with status ${xhr.status}`));
-                    }
-                };
-
-                xhr.onerror = () => reject(new Error('Network error'));
-
-                // Send raw file stream directly instead of multipart FormData to prevent buffering limits
-                xhr.send(task.file);
-            });
+                }
+            }
 
             // Save to DB
             const publicUrl = getPublicUrl(task.storagePath!);
@@ -847,14 +867,38 @@ export default function ContentLibrary({
             const userId = (session.user as any).id;
             const fileName = `${userId}/${Math.random().toString(36).substring(2)}.png`;
 
-            // Upload via local API directly as binary
-            const uploadRes = await fetch(`/api/upload?path=${encodeURIComponent(fileName)}`, {
-                method: 'POST',
-                body: file
-            });
-            if (!uploadRes.ok) {
-                const err = await uploadRes.json().catch(() => ({}));
-                throw new Error((err as any).error || 'Failed to upload edited image');
+            // Upload via chunked local API
+            const CHUNK_SIZE = 5 * 1024 * 1024;
+            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+                const start = chunkIndex * CHUNK_SIZE;
+                const end = Math.min(start + CHUNK_SIZE, file.size);
+                const chunk = file.slice(start, end);
+
+                let retries = 0;
+                let success = false;
+                while (!success && retries < 3) {
+                    try {
+                        const uploadRes = await fetch('/api/upload-chunk', {
+                            method: 'POST',
+                            headers: {
+                                'x-chunk-index': chunkIndex.toString(),
+                                'x-total-chunks': totalChunks.toString(),
+                                'x-file-name': fileName
+                            },
+                            body: chunk
+                        });
+                        if (!uploadRes.ok) {
+                            const err = await uploadRes.json().catch(() => ({}));
+                            throw new Error((err as any).error || 'Failed to upload edited image chunk');
+                        }
+                        success = true;
+                    } catch (err) {
+                        retries++;
+                        if (retries >= 3) throw err;
+                        await new Promise(r => setTimeout(r, 1000 * retries));
+                    }
+                }
             }
 
             const publicUrl = getPublicUrl(fileName);
@@ -1385,157 +1429,191 @@ export default function ContentLibrary({
                             </table>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                            {sortedItems.map(item => (
-                                <div
-                                    key={item.id}
-                                    draggable={item.type !== 'carousel_folder'}
-                                    onDragStart={(e) => item.type !== 'carousel_folder' && handleDragStart(e, item.id)}
-                                    onDragEnd={handleDragEnd}
-                                    onDragOver={(e) => handleDragOver(e, item.id, item)}
-                                    onDragLeave={handleDragLeave}
-                                    onDrop={(e) => item.type === 'carousel_folder' && handleDrop(e, item.id)}
-                                    onClick={() => {
-                                        if (item.type === 'carousel_folder') {
-                                            if (mode === 'select' && disableUrlNavigation) {
-                                                toggleSelection(item.id);
-                                            } else {
-                                                // Navigate into folder
-                                                disableUrlNavigation ? setInternalFolderId(item.id) : router.push(`/content?folderId=${item.id}`);
-                                            }
-                                        } else {
-                                            toggleSelection(item.id);
-                                        }
-                                    }}
-                                    className={`
-                                        group relative aspect-square rounded-2xl border overflow-hidden cursor-pointer transition-all duration-200
-                                        ${selectedIds.includes(item.id)
-                                            ? 'ring-2 ring-ios-blue border-transparent shadow-lg scale-[1.02]'
-                                            : 'border-ios-separator hover:border-ios-blue/50 hover:shadow-md'}
-                                        ${dropTargetId === item.id ? 'ring-2 ring-green-500 scale-105 bg-green-50 dark:bg-green-900/20' : ''}
-                                        ${draggedItems.includes(item.id) ? 'opacity-50' : ''}
-                                        bg-ios-card
-                                    `}
-                                >
-                                    {/* Thumbnail Content */}
-                                    {item.type === 'carousel_folder' ? (
-                                        <div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors relative overflow-hidden">
-                                            {item.thumbnail_url ? (
-                                                <>
-                                                    <img src={item.thumbnail_url} className="absolute inset-0 w-full h-full object-cover opacity-60 blur-[1px] group-hover:blur-0 transition-all duration-300" />
-                                                    <div className="absolute inset-0 bg-white/30 dark:bg-black/30 group-hover:bg-transparent transition-colors" />
-                                                    <div className="relative z-10 flex flex-col items-center">
-                                                        <Folder size={48} strokeWidth={1.5} className="text-white drop-shadow-lg fill-white/20" />
-                                                    </div>
-                                                </>
-                                            ) : (
-                                                <Folder size={48} strokeWidth={1} className="text-blue-400 fill-blue-400/20" />
-                                            )}
+                        <AutoSizer>
+                            {({ height, width }: { height: number; width: number }): React.ReactElement => {
+                                // Calculate how many columns fit
+                                // Assuming min item width of ~150px (h-40) + gap
+                                const MIN_ITEM_WIDTH = 160;
+                                const columnCount = Math.max(2, Math.floor(width / MIN_ITEM_WIDTH));
+                                const rowCount = Math.ceil(sortedItems.length / columnCount);
 
-                                            <span className={`text-xs font-medium mt-3 px-3 text-center truncate w-full relative z-10 ${item.thumbnail_url ? 'text-white drop-shadow-md' : 'text-ios-secondary'}`}>
-                                                {item.name}
-                                            </span>
-                                        </div>
-                                    ) : (
-                                        <>
-                                            {item.type === 'video' ? (
-                                                <div className="w-full h-full bg-black flex items-center justify-center relative">
-                                                    <video src={item.url} className="w-full h-full object-cover opacity-80" />
-                                                    <div className="absolute inset-0 flex items-center justify-center">
-                                                        <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center">
-                                                            <Video className="text-white fill-white" size={18} />
+                                // Width per item is exact to fill the area, height matches to keep purely square
+                                const columnWidth = width / columnCount;
+                                const rowHeight = columnWidth; // aspect-square
+
+                                const Cell = ({ columnIndex, rowIndex, style }: { columnIndex: number, rowIndex: number, style: any }) => {
+                                    const index = rowIndex * columnCount + columnIndex;
+                                    if (index >= sortedItems.length) return null; // Empty slots at end of last row
+                                    const item = sortedItems[index];
+
+                                    return (
+                                        <div style={{ ...style, padding: '0.5rem' }}>
+                                            <div
+                                                key={item.id}
+                                                draggable={item.type !== 'carousel_folder'}
+                                                onDragStart={(e) => item.type !== 'carousel_folder' && handleDragStart(e, item.id)}
+                                                onDragEnd={handleDragEnd}
+                                                onDragOver={(e) => handleDragOver(e, item.id, item)}
+                                                onDragLeave={handleDragLeave}
+                                                onDrop={(e) => item.type === 'carousel_folder' && handleDrop(e, item.id)}
+                                                onClick={() => {
+                                                    if (item.type === 'carousel_folder') {
+                                                        if (mode === 'select' && disableUrlNavigation) {
+                                                            toggleSelection(item.id);
+                                                        } else {
+                                                            disableUrlNavigation ? setInternalFolderId(item.id) : router.push(`/content?folderId=${item.id}`);
+                                                        }
+                                                    } else {
+                                                        toggleSelection(item.id);
+                                                    }
+                                                }}
+                                                className={`
+                                                    w-full h-full group relative aspect-square rounded-2xl border overflow-hidden cursor-pointer transition-all duration-200
+                                                    ${selectedIds.includes(item.id)
+                                                        ? 'ring-2 ring-ios-blue border-transparent shadow-lg scale-[1.02]'
+                                                        : 'border-ios-separator hover:border-ios-blue/50 hover:shadow-md'}
+                                                    ${dropTargetId === item.id ? 'ring-2 ring-green-500 scale-105 bg-green-50 dark:bg-green-900/20' : ''}
+                                                    ${draggedItems.includes(item.id) ? 'opacity-50' : ''}
+                                                    bg-ios-card
+                                                `}
+                                            >
+                                                {/* Thumbnail Content */}
+                                                {item.type === 'carousel_folder' ? (
+                                                    <div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors relative overflow-hidden">
+                                                        {item.thumbnail_url ? (
+                                                            <>
+                                                                <img src={item.thumbnail_url} className="absolute inset-0 w-full h-full object-cover opacity-60 blur-[1px] group-hover:blur-0 transition-all duration-300" />
+                                                                <div className="absolute inset-0 bg-white/30 dark:bg-black/30 group-hover:bg-transparent transition-colors" />
+                                                                <div className="relative z-10 flex flex-col items-center">
+                                                                    <Folder size={48} strokeWidth={1.5} className="text-white drop-shadow-lg fill-white/20" />
+                                                                </div>
+                                                            </>
+                                                        ) : (
+                                                            <Folder size={48} strokeWidth={1} className="text-blue-400 fill-blue-400/20" />
+                                                        )}
+
+                                                        <span className={`text-xs font-medium mt-3 px-3 text-center truncate w-full relative z-10 flex-shrink-0 ${item.thumbnail_url ? 'text-white drop-shadow-md' : 'text-ios-secondary'}`}>
+                                                            {item.name}
+                                                        </span>
+                                                    </div>
+                                                ) : (
+                                                    <div className="w-full h-full relative">
+                                                        {item.type === 'video' ? (
+                                                            <div className="w-full h-full bg-black flex items-center justify-center relative">
+                                                                <video src={item.url} className="w-full h-full object-cover opacity-80" />
+                                                                <div className="absolute inset-0 flex items-center justify-center">
+                                                                    <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center">
+                                                                        <Video className="text-white fill-white" size={18} />
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
+                                                        )}
+
+                                                        {/* Overlay Info (Gradient) */}
+                                                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 pt-8 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end">
+                                                            <p className="text-white text-xs font-medium truncate drop-shadow-sm">{item.name}</p>
+                                                            {/* Size / Duration Badge */}
+                                                            <div className="flex items-center gap-2 mt-1 text-[10px] text-gray-200">
+                                                                {item.size && <span>{formatBytes(item.size)}</span>}
+                                                                {item.duration ? <span>• {formatTime(item.duration)}</span> : null}
+                                                            </div>
                                                         </div>
                                                     </div>
-                                                </div>
-                                            ) : (
-                                                <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
-                                            )}
+                                                )}
 
-                                            {/* Overlay Info (Gradient) */}
-                                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 pt-8 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end">
-                                                <p className="text-white text-xs font-medium truncate drop-shadow-sm">{item.name}</p>
-                                                {/* Size / Duration Badge */}
-                                                <div className="flex items-center gap-2 mt-1 text-[10px] text-gray-200">
-                                                    {item.size && <span>{formatBytes(item.size)}</span>}
-                                                    {item.duration ? <span>• {formatTime(item.duration)}</span> : null}
+                                                {/* Selection Checkbox */}
+                                                {selectedIds.includes(item.id) && (
+                                                    <div className="absolute top-2 right-2 bg-ios-blue text-white rounded-full p-1 shadow-sm z-20 animate-in zoom-in duration-200">
+                                                        <Check size={12} strokeWidth={3} />
+                                                    </div>
+                                                )}
+
+                                                {/* Bottom Left: Enter Folder Button */}
+                                                {item.type === 'carousel_folder' && (
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            disableUrlNavigation ? setInternalFolderId(item.id) : router.push(`/content?folderId=${item.id}`);
+                                                        }}
+                                                        className="absolute bottom-2 left-2 p-1.5 bg-black/50 hover:bg-black/70 backdrop-blur text-white rounded-full shadow-sm transition-all z-20 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                                                        title="Open Folder"
+                                                    >
+                                                        <CornerDownRight size={14} />
+                                                    </button>
+                                                )}
+
+                                                {/* Bottom Right: Preview Button */}
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        window.open(item.url, '_blank');
+                                                    }}
+                                                    className="absolute bottom-2 right-2 p-1.5 bg-black/50 hover:bg-black/70 backdrop-blur text-white rounded-full shadow-sm transition-all z-20 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                                                    title="Preview"
+                                                >
+                                                    <Eye size={14} />
+                                                </button>
+
+                                                {/* Hover Actions (Context Menu triggers) */}
+                                                <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 translate-x-2 group-hover:translate-x-0 duration-200">
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
+                                                        className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
+                                                        title="Edit Metadata"
+                                                    >
+                                                        <Edit2 size={12} />
+                                                    </button>
+                                                    {(item.type === 'image' || item.type === 'carousel_item') && (
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); openImageEditor(item); }}
+                                                            className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-purple-500 transition-colors"
+                                                            title="Edit Image"
+                                                        >
+                                                            <Palette size={12} />
+                                                        </button>
+                                                    )}
+                                                    {mode === 'manage' && (
+                                                        <>
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }}
+                                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
+                                                                title="Move"
+                                                            >
+                                                                <Move size={12} />
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => deleteItem(e, item)}
+                                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
+                                                                title="Delete"
+                                                            >
+                                                                <Trash2 size={12} />
+                                                            </button>
+                                                        </>
+                                                    )}
                                                 </div>
                                             </div>
-                                        </>
-                                    )}
-
-                                    {/* Selection Checkbox */}
-                                    {selectedIds.includes(item.id) && (
-                                        <div className="absolute top-2 right-2 bg-ios-blue text-white rounded-full p-1 shadow-sm z-20 animate-in zoom-in duration-200">
-                                            <Check size={12} strokeWidth={3} />
                                         </div>
-                                    )}
+                                    );
+                                };
 
-                                    {/* Bottom Left: Enter Folder Button */}
-                                    {item.type === 'carousel_folder' && (
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                disableUrlNavigation ? setInternalFolderId(item.id) : router.push(`/content?folderId=${item.id}`);
-                                            }}
-                                            className="absolute bottom-2 left-2 p-1.5 bg-black/50 hover:bg-black/70 backdrop-blur text-white rounded-full shadow-sm transition-all z-20 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
-                                            title="Open Folder"
-                                        >
-                                            <CornerDownRight size={14} />
-                                        </button>
-                                    )}
-
-                                    {/* Bottom Right: Preview Button */}
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            window.open(item.url, '_blank');
-                                        }}
-                                        className="absolute bottom-2 right-2 p-1.5 bg-black/50 hover:bg-black/70 backdrop-blur text-white rounded-full shadow-sm transition-all z-20 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
-                                        title="Preview"
+                                return (
+                                    <GridComponent
+                                        className="scroller outline-none"
+                                        columnCount={columnCount}
+                                        columnWidth={columnWidth}
+                                        height={height}
+                                        rowCount={rowCount}
+                                        rowHeight={rowHeight}
+                                        width={width}
+                                        itemData={sortedItems}
                                     >
-                                        <Eye size={14} />
-                                    </button>
-
-                                    {/* Hover Actions (Context Menu triggers) */}
-                                    <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 translate-x-2 group-hover:translate-x-0 duration-200">
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
-                                            className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-                                            title="Edit Metadata"
-                                        >
-                                            <Edit2 size={12} />
-                                        </button>
-                                        {(item.type === 'image' || item.type === 'carousel_item') && (
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); openImageEditor(item); }}
-                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-purple-500 transition-colors"
-                                                title="Edit Image"
-                                            >
-                                                <Palette size={12} />
-                                            </button>
-                                        )}
-                                        {mode === 'manage' && (
-                                            <>
-                                                <button
-                                                    onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }}
-                                                    className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-                                                    title="Move"
-                                                >
-                                                    <Move size={12} />
-                                                </button>
-                                                <button
-                                                    onClick={(e) => deleteItem(e, item)}
-                                                    className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
-                                                    title="Delete"
-                                                >
-                                                    <Trash2 size={12} />
-                                                </button>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                                        {Cell}
+                                    </GridComponent>
+                                );
+                            }}
+                        </AutoSizer>
                     )
                 )}
             </div>
@@ -1558,14 +1636,16 @@ export default function ContentLibrary({
                 onEditComplete={onEditComplete}
             />
 
-            {imageEditorItem && (
-                <ImageEditorModal
-                    isOpen={isImageEditorOpen}
-                    onClose={() => setIsImageEditorOpen(false)}
-                    imageUrl={imageEditorItem.url || ''}
-                    onSave={handleImageEditorSave}
-                />
-            )}
+            {
+                imageEditorItem && (
+                    <ImageEditorModal
+                        isOpen={isImageEditorOpen}
+                        onClose={() => setIsImageEditorOpen(false)}
+                        imageUrl={imageEditorItem.url || ''}
+                        onSave={handleImageEditorSave}
+                    />
+                )
+            }
 
             <UploadProgressPanel
                 tasks={uploadQueue}
@@ -1575,32 +1655,34 @@ export default function ContentLibrary({
             />
 
             {/* Bulk Rename Modal */}
-            {isBulkRenameOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl">
-                        <h3 className="text-lg font-semibold text-ios-text mb-4">Rename {selectionOrder.length} Items in Order</h3>
-                        <p className="text-sm text-ios-secondary mb-4">
-                            Items will be renamed as: <code className="bg-ios-background px-2 py-1 rounded">prefix_001</code>, <code className="bg-ios-background px-2 py-1 rounded">prefix_002</code>, etc.
-                        </p>
-                        <input
-                            type="text"
-                            value={bulkRenamePrefix}
-                            onChange={(e) => setBulkRenamePrefix(e.target.value)}
-                            placeholder="Enter prefix (e.g., slide)"
-                            className="w-full bg-ios-background border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue mb-4"
-                            autoFocus
-                        />
-                        <div className="flex justify-end gap-2">
-                            <IOSButton variant="secondary" onClick={() => { setIsBulkRenameOpen(false); setBulkRenamePrefix(''); }}>
-                                Cancel
-                            </IOSButton>
-                            <IOSButton variant="primary" onClick={handleBulkRename} disabled={!bulkRenamePrefix.trim()}>
-                                Rename
-                            </IOSButton>
+            {
+                isBulkRenameOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                        <div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl">
+                            <h3 className="text-lg font-semibold text-ios-text mb-4">Rename {selectionOrder.length} Items in Order</h3>
+                            <p className="text-sm text-ios-secondary mb-4">
+                                Items will be renamed as: <code className="bg-ios-background px-2 py-1 rounded">prefix_001</code>, <code className="bg-ios-background px-2 py-1 rounded">prefix_002</code>, etc.
+                            </p>
+                            <input
+                                type="text"
+                                value={bulkRenamePrefix}
+                                onChange={(e) => setBulkRenamePrefix(e.target.value)}
+                                placeholder="Enter prefix (e.g., slide)"
+                                className="w-full bg-ios-background border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue mb-4"
+                                autoFocus
+                            />
+                            <div className="flex justify-end gap-2">
+                                <IOSButton variant="secondary" onClick={() => { setIsBulkRenameOpen(false); setBulkRenamePrefix(''); }}>
+                                    Cancel
+                                </IOSButton>
+                                <IOSButton variant="primary" onClick={handleBulkRename} disabled={!bulkRenamePrefix.trim()}>
+                                    Rename
+                                </IOSButton>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             <IOSToast
                 message={toast.msg}

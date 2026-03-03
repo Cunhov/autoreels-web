@@ -188,15 +188,41 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 const fileName = `${userId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
                 const fileType = file.type.startsWith('image/') ? 'image' : 'video';
 
-                // Upload via local API directly as binary stream
-                const uploadRes = await fetch(`/api/upload?path=${encodeURIComponent(fileName)}`, {
-                    method: 'POST',
-                    body: file,
-                });
+                // Upload via chunked local API
+                const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB chunks
+                const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
 
-                if (!uploadRes.ok) {
-                    const err = await uploadRes.json().catch(() => ({}));
-                    throw new Error((err as any).error || `Failed to upload ${file.name}`);
+                for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+                    const start = chunkIndex * CHUNK_SIZE;
+                    const end = Math.min(start + CHUNK_SIZE, file.size);
+                    const chunk = file.slice(start, end);
+
+                    let retries = 0;
+                    let success = false;
+
+                    while (!success && retries < 3) {
+                        try {
+                            const uploadRes = await fetch('/api/upload-chunk', {
+                                method: 'POST',
+                                headers: {
+                                    'x-chunk-index': chunkIndex.toString(),
+                                    'x-total-chunks': totalChunks.toString(),
+                                    'x-file-name': fileName
+                                },
+                                body: chunk,
+                            });
+
+                            if (!uploadRes.ok) {
+                                const err = await uploadRes.json().catch(() => ({}));
+                                throw new Error((err as any).error || `Failed to upload chunk ${chunkIndex} for ${file.name}`);
+                            }
+                            success = true;
+                        } catch (err) {
+                            retries++;
+                            if (retries >= 3) throw err;
+                            await new Promise(r => setTimeout(r, 1000 * retries));
+                        }
+                    }
                 }
 
                 const publicUrl = getPublicUrl(fileName);
