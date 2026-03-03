@@ -31,10 +31,11 @@ export async function POST(req: Request) {
     }
 
     try {
-        const { name, config, channel_ids } = await req.json();
+        const { name, config, channel_ids, status } = await req.json();
         const planner = await prisma.planner.create({
             data: {
                 name,
+                status: status || 'active',
                 config: typeof config === 'string' ? config : JSON.stringify(config),
                 user_id: (session.user as any).id,
                 channels: {

@@ -110,16 +110,18 @@ export default function PlannersPage() {
     async function runNow(planner: Planner) {
         setRunningId(planner.id);
         try {
-            const res = await fetch('/api/cron/publisher', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ planner_id: planner.id }),
-            });
-            if (!res.ok) throw new Error();
-            showToast(`${planner.name} triggered successfully!`);
-        } catch { showToast('Failed to trigger planner', 'err'); }
+            const res = await fetch(`/api/planners/${planner.id}/run`, { method: 'POST' });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error((err as any).error || 'Request failed');
+            }
+            const data = await res.json();
+            showToast(`${planner.name} — ${data.posts_created ?? 'N'} post(s) queued ✓`);
+            fetchData();
+        } catch (e: any) { showToast(`Run failed: ${e.message}`, 'err'); }
         finally { setRunningId(null); }
     }
+
 
     async function confirmDelete() {
         if (!deletingId) return;
