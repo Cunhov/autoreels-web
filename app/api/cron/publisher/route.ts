@@ -261,8 +261,15 @@ async function handler(request: Request) {
                                 where: { parent_id: libItem.id },
                                 orderBy: { created_at: 'asc' },
                             });
-                            children = subItems.map((c: any) => ({ url: c.url || '', type: c.type === 'video' ? 'video' : 'image' }));
-                            await logPlanner(planner.id, `[Phase0] Carousel folder: ${children.length} children`, 'info');
+                            children = subItems.map((c: any) => {
+                                const urlStr = c.url || '';
+                                const isVideo = c.type === 'video' || (urlStr && /\.(mp4|mov)(\?.*)?$/i.test(urlStr));
+                                return {
+                                    url: urlStr,
+                                    type: isVideo ? 'video' : 'image'
+                                };
+                            }).slice(0, 10);
+                            await logPlanner(planner.id, `[Phase0] Carousel folder: ${children.length} children (limited to max 10)`, 'info');
                         }
 
                         let itemTitle = libItem.title || selectedContent.title_fallback || '';
@@ -280,10 +287,16 @@ async function handler(request: Request) {
                 }
 
                 // Final safety checks before post creation
-                if (mediaType === 'CAROUSEL' && children.length === 0) {
-                    await logPlanner(planner.id, `[Phase0] Carousel item at index ${selectedIndex} has no children — skipping`, 'error');
-                    await prisma.planner.update({ where: { id: planner.id }, data: { last_run: now, config: JSON.stringify({ ...config, state }) } });
-                    continue;
+                if (mediaType === 'CAROUSEL') {
+                    if (children.length === 0) {
+                        await logPlanner(planner.id, `[Phase0] Carousel item at index ${selectedIndex} has no children — skipping`, 'error');
+                        await prisma.planner.update({ where: { id: planner.id }, data: { last_run: now, config: JSON.stringify({ ...config, state }) } });
+                        continue;
+                    }
+                    if (children.length > 10) {
+                        await logPlanner(planner.id, `[Phase0] Carousel has ${children.length} items, limiting to 10 (Instagram API limit)`, 'info');
+                        children = children.slice(0, 10);
+                    }
                 }
 
                 if (!mediaUrl && children.length === 0) {
