@@ -79,39 +79,61 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     setSleepEnd(config.sleep_schedule.end || '06:00');
                 } else {
                     setSleepEnabled(false);
+                    setSleepStart('00:00');
+                    setSleepEnd('06:00');
                 }
 
-                // Load existing content (we only show IDs for library items if possible)
+                // Load existing content
                 const content = config.content || [];
                 if (content.length > 0) {
-                    const libIds = content.filter((c: any) => c.type === 'library_item').map((c: any) => c.id);
+                    const libIds = content
+                        .filter((c: any) => c.type === 'library_item')
+                        .map((c: any) => c.id);
                     setSelectedContentIds(libIds);
-                    setContentTab('library');
+                    setFiles([]);
+                    setContentTab(libIds.length > 0 ? 'library' : 'upload');
 
-                    // Detect if it was a carousel
                     if (content[0]?.media_type === 'CAROUSEL') {
                         setIsCarousel(true);
                         setMediaType('CAROUSEL');
-                        setCaption(content[0].caption || '');
-                        setLocation(content[0].location_id || '');
+                        setShareToFeed(true);
                     } else {
+                        setIsCarousel(false);
                         setMediaType(content[0]?.media_type || 'REELS');
                         setShareToFeed(content[0]?.share_to_feed !== false);
-                        setCaption(content[0]?.caption || '');
-                        setLocation(content[0]?.location_id || '');
                     }
+                    setCaption(content[0]?.caption || '');
+                    setLocation(content[0]?.location_id || '');
+                } else {
+                    setSelectedContentIds([]);
+                    setFiles([]);
+                    setContentTab('upload');
+                    setIsCarousel(false);
+                    setMediaType('REELS');
+                    setShareToFeed(true);
+                    setCaption('');
+                    setLocation('');
                 }
             } else {
-                // Reset for new
+                // Full reset for new planner
                 setName('');
                 setSelectedChannels([]);
                 setSelectedContentIds([]);
                 setFiles([]);
                 setFrequencyValue(1);
                 setFrequencyUnit('hours');
+                setTimezone('America/Sao_Paulo');
                 setStartTime('');
+                setSleepEnabled(false);
+                setSleepStart('00:00');
+                setSleepEnd('06:00');
+                setSortOrder('random_loop');
                 setCaption('');
                 setIsCarousel(false);
+                setMediaType('REELS');
+                setShareToFeed(true);
+                setLocation('');
+                setContentTab('upload');
             }
         }
     }, [isOpen, initialData]);
@@ -456,7 +478,11 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                     <h3 className="text-[13px] font-bold text-ios-secondary uppercase tracking-wide">Post Configuration</h3>
                                     {(files.length + selectedContentIds.length > 1) && (
                                         <div
-                                            onClick={() => setIsCarousel(!isCarousel)}
+                                            onClick={() => {
+                                                const next = !isCarousel;
+                                                setIsCarousel(next);
+                                                setMediaType(next ? 'CAROUSEL' : 'REELS');
+                                            }}
                                             className="flex items-center gap-2 cursor-pointer"
                                         >
                                             <div className={`w-8 h-5 rounded-full relative transition-colors ${isCarousel ? 'bg-ios-blue' : 'bg-gray-300'}`}>
@@ -472,12 +498,16 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                         <label className="text-xs font-medium text-ios-text mb-1.5 block">Media Type</label>
                                         <select
                                             value={mediaType}
-                                            onChange={(e) => setMediaType(e.target.value as any)}
+                                            onChange={(e) => {
+                                                const v = e.target.value as typeof mediaType;
+                                                setMediaType(v);
+                                                setIsCarousel(v === 'CAROUSEL');
+                                            }}
                                             className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
-                                            disabled={isCarousel} // Forced to CAROUSEL if isCarousel
                                         >
                                             <option value="REELS">Reels</option>
                                             <option value="IMAGE">Post / Image</option>
+                                            <option value="CAROUSEL">Carousel</option>
                                             <option value="STORIES">Story</option>
                                             <option value="VIDEO">Video</option>
                                         </select>

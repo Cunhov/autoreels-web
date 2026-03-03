@@ -2,15 +2,18 @@
 
 :root {
   /* iOS System Colors - Light Mode */
-  --ios-background: #F2F2F7; /* systemGroupedBackground */
-  --ios-card: #FFFFFF; /* systemBackground */
-  --ios-text: #000000; /* label */
-  --ios-text-secondary: #8E8E93; /* secondaryLabel */
-  --ios-blue: #007AFF; /* systemBlue */
-  --ios-indigo: #5856D6; /* systemIndigo */
-  --ios-red: #FF3B30; /* systemRed */
-  --ios-green: #34C759; /* systemGreen */
-  --ios-separator: #C6C6C8; /* separator */
+  --ios-background: #F2F2F7;
+  --ios-card: #FFFFFF;
+  --ios-text: #000000;
+  --ios-text-secondary: #8E8E93;
+  --ios-blue: #007AFF;
+  --ios-indigo: #5856D6;
+  --ios-red: #FF3B30;
+  --ios-green: #34C759;
+  --ios-orange: #FF9500;
+  --ios-yellow: #FFCC00;
+  --ios-teal: #5AC8FA;
+  --ios-separator: #C6C6C8;
   --ios-gray-2: #AEAeb2;
   --ios-gray-3: #C7C7CC;
   --ios-gray-4: #D1D1D6;
@@ -20,9 +23,8 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    /* iOS System Colors - Dark Mode */
-    --ios-background: #000000; /* systemGroupedBackground is pure black in some contexts or very dark gray */
-    --ios-card: #1C1C1E; /* secondarySystemGroupedBackground */
+    --ios-background: #000000;
+    --ios-card: #1C1C1E;
     --ios-text: #FFFFFF;
     --ios-text-secondary: #8E8E93;
     --ios-separator: #38383A;
@@ -43,9 +45,18 @@
   --color-ios-indigo: var(--ios-indigo);
   --color-ios-red: var(--ios-red);
   --color-ios-green: var(--ios-green);
+  --color-ios-orange: var(--ios-orange);
+  --color-ios-yellow: var(--ios-yellow);
+  --color-ios-teal: var(--ios-teal);
   --color-ios-separator: var(--ios-separator);
-  
+
   --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* Animations */
+  --animate-fade-in: fade-in 0.2s ease forwards;
+  --animate-zoom-in-95: zoom-in-95 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-slide-up: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  --animate-slide-in-from-top-2: slide-in-from-top-2 0.2s ease forwards;
 }
 
 body {
@@ -56,35 +67,77 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* iOS Utilities */
+/* ─── Animations ─────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes zoom-in-95 {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-from-top-2 {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%       { transform: scale(1.3); opacity: 0.7; }
+}
+
+/* Utility classes */
+.animate-in { animation-fill-mode: both; }
+.fade-in { animation: fade-in 0.2s ease both; }
+.zoom-in-95 { animation: zoom-in-95 0.2s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.slide-up { animation: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.slide-in-from-top-2 { animation: slide-in-from-top-2 0.2s ease both; }
+.duration-200 { animation-duration: 0.2s; }
+.duration-300 { animation-duration: 0.3s; }
+
+/* ─── Scrollbars ─────────────────────────────── */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--ios-separator);
+  border-radius: 99px;
+}
+
+/* ─── iOS Utilities ──────────────────────────── */
 .ios-blur {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  background-color: rgba(255, 255, 255, 0.7);
+  background-color: rgba(255, 255, 255, 0.75);
 }
 
 @media (prefers-color-scheme: dark) {
-  .ios-blur {
-    background-color: rgba(30, 30, 30, 0.7);
-  }
+  .ios-blur { background-color: rgba(28, 28, 30, 0.8); }
 }
 
 .ios-card {
   background-color: var(--ios-card);
-  border-radius: 10px; /* Reduced radius for grouped inset look, updated to 10-12px usually */
+  border-radius: 12px;
   overflow: hidden;
 }
 
 .ios-inset-grouped {
   margin: 0 16px;
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
 }
 
-.ios-btn {
-  transition: opacity 0.2s ease;
-}
+.ios-btn { transition: opacity 0.2s ease; }
+.ios-btn:active { opacity: 0.5; }
 
-.ios-btn:active {
-  opacity: 0.5;
-}
+/* ─── Badge pulse ────────────────────────────── */
+.badge-pulse { animation: pulse-dot 2s ease-in-out infinite; }

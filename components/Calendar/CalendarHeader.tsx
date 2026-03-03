@@ -10,6 +10,8 @@ interface CalendarHeaderProps {
     onNext: () => void;
     onToday: () => void;
     onNewPost: () => void;
+    onFilterToggle?: () => void;
+    filterActive?: boolean;
 }
 
 export default function CalendarHeader({
@@ -19,7 +21,9 @@ export default function CalendarHeader({
     onPrev,
     onNext,
     onToday,
-    onNewPost
+    onNewPost,
+    onFilterToggle,
+    filterActive,
 }: CalendarHeaderProps) {
     const monthName = currentDate.toLocaleString('default', { month: 'long' });
     const year = currentDate.getFullYear();
@@ -29,9 +33,14 @@ export default function CalendarHeader({
             <div className="flex items-center justify-between mb-4">
                 <h1 className="text-[34px] font-bold text-ios-text tracking-tight">Calendar</h1>
                 <div className="flex gap-3">
-                    <IOSButton variant="secondary" className="!p-2.5 bg-ios-card/80 hover:bg-ios-card shadow-sm">
-                        <Filter size={20} className="text-ios-blue" />
-                    </IOSButton>
+                    <button
+                        aria-label="Toggle filters"
+                        title="Filter"
+                        onClick={onFilterToggle}
+                        className={`p-2.5 rounded-xl shadow-sm transition-colors ${filterActive ? 'bg-ios-blue/15 ring-1 ring-ios-blue/30 text-ios-blue' : 'bg-ios-card/80 hover:bg-ios-card text-ios-blue'}`}
+                    >
+                        <Filter size={20} />
+                    </button>
                     <IOSButton
                         variant="primary"
                         className="!py-2.5 !px-5 shadow-md shadow-ios-blue/20 transition-transform active:scale-95"
@@ -48,8 +57,8 @@ export default function CalendarHeader({
                     <button
                         onClick={() => onViewChange('week')}
                         className={`px-4 py-1.5 text-[13px] font-medium rounded-md transition-all duration-300 ${viewMode === 'week'
-                                ? 'bg-ios-card text-ios-text shadow-sm'
-                                : 'text-ios-text-secondary hover:text-ios-text'
+                            ? 'bg-ios-card text-ios-text shadow-sm'
+                            : 'text-ios-text-secondary hover:text-ios-text'
                             }`}
                     >
                         Week
@@ -57,8 +66,8 @@ export default function CalendarHeader({
                     <button
                         onClick={() => onViewChange('month')}
                         className={`px-4 py-1.5 text-[13px] font-medium rounded-md transition-all duration-300 ${viewMode === 'month'
-                                ? 'bg-ios-card text-ios-text shadow-sm'
-                                : 'text-ios-text-secondary hover:text-ios-text'
+                            ? 'bg-ios-card text-ios-text shadow-sm'
+                            : 'text-ios-text-secondary hover:text-ios-text'
                             }`}
                     >
                         Month
