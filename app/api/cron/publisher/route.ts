@@ -32,12 +32,13 @@ function makeAbsoluteUrl(baseOut: string, path: string | null | undefined): stri
     return `${baseOut}${cleanPath}`;
 }
 
-/** Resolve access token — supports Redis `token_` prefix if Redis is configured. */
+/** Resolve access token — supports Redis `token_` prefix if Redis is configured.
+ *  Handles String, List, *and* Hash key types (n8n may store tokens as Hashes). */
 async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
     if (!tokenOrKey) return '';
 
     // Trim early to catch " token_..." cases
-    const input = tokenOrKey.trim().replace(/^["']|["']$/g, '').trim();
+    const input = tokenOrKey.trim().replace(/^[\"']|[\"']$/g, '').trim();
     let resolvedToken = input;
 
     if (input.startsWith('token_')) {
@@ -55,16 +56,36 @@ async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
                 const redis = new Redis({ url: redisUrl, token: redisToken });
 
                 let val: string | null = null;
-                try { val = await redis.get<string>(input); } catch (e: any) { console.error(`[Redis] Get failed for ${input}:`, e.message); }
 
+                // 1️⃣ Try String (most common)
+                try { val = await redis.get<string>(input); } catch (e: any) {
+                    console.warn(`[Redis] GET failed for ${input} (may be wrong type): ${e.message}`);
+                }
+
+                // 2️⃣ Fallback: List (LINDEX 0)
                 if (!val) {
                     try { const lv = await redis.lindex(input, 0); if (lv) val = lv as string; } catch { /* ignore */ }
+                }
+
+                // 3️⃣ Fallback: Hash (HGETALL – n8n stores tokens this way)
+                if (!val) {
+                    try {
+                        const hashData = await redis.hgetall(input);
+                        if (hashData && typeof hashData === 'object') {
+                            // Pick the first value that looks like a token
+                            const firstVal = Object.values(hashData).find(v => v && typeof v === 'string' && (v as string).length > 10);
+                            if (firstVal) {
+                                val = firstVal as string;
+                                console.log(`[Redis] Resolved ${input} via HGETALL (Hash key)`);
+                            }
+                        }
+                    } catch { /* ignore */ }
                 }
 
                 if (val) {
                     resolvedToken = val;
                 } else {
-                    const msg = `Token key ${input} yielded no value in Redis`;
+                    const msg = `Token key ${input} yielded no value in Redis (tried String, List, Hash)`;
                     console.error(`[resolveAccessToken] ${msg}`);
                     throw new Error(`${msg}. Please re-connect the channel.`);
                 }
@@ -81,6 +102,7 @@ async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
 
     return cleanToken(resolvedToken);
 }
+
 
 /** Insert a planner log entry. */
 async function logPlanner(plannerId: string, message: string, level: 'info' | 'error' = 'info', details: any = {}) {
