@@ -55,6 +55,20 @@ interface ContentItem {
     thumbnail_url?: string; // Add thumbnail URL for carousel preview
 }
 
+/** Tags are stored as JSON string in DB. Normalize to array safely. */
+function normalizeTags(raw: unknown): string[] {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw as string[];
+    if (typeof raw === 'string') {
+        try { return JSON.parse(raw); } catch { return []; }
+    }
+    return [];
+}
+
+function normalizeItem(item: any): ContentItem {
+    return { ...item, tags: normalizeTags(item.tags) };
+}
+
 interface ContentLibraryProps {
     mode?: 'manage' | 'select';
     onSelectionChange?: (selectedIds: string[]) => void;
@@ -198,7 +212,7 @@ export default function ContentLibrary({
             const json = await res.json();
             const data = json.items || json;
 
-            setItems(data as ContentItem[]);
+            setItems((data as any[]).map(normalizeItem));
             setTotalCount(json.totalCount ?? data.length);
             setHasMore(json.hasMore ?? false);
             setCurrentOffset(PAGE_SIZE);
@@ -218,7 +232,7 @@ export default function ContentLibrary({
             const json = await res.json();
             const data = json.items || json;
 
-            setItems(prev => [...prev, ...(data as ContentItem[])]);
+            setItems(prev => [...prev, ...(data as any[]).map(normalizeItem)]);
             setTotalCount(json.totalCount ?? (items.length + data.length));
             setHasMore(json.hasMore ?? false);
             setCurrentOffset(prev => prev + PAGE_SIZE);
