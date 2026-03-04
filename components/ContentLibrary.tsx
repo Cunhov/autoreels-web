@@ -133,7 +133,7 @@ export default function ContentLibrary({
     const [isImageEditorOpen, setIsImageEditorOpen] = useState(false);
 
     // Global Upload Queue
-    const { addFiles } = useUpload();
+    const { addFiles, addFolderFiles } = useUpload();
 
     // Toast State
     const [toast, setToast] = useState<{ msg: string; type: ToastType; show: boolean }>({ msg: '', type: 'success', show: false });
@@ -244,12 +244,21 @@ export default function ContentLibrary({
     const onDrop = useCallback(async (acceptedFiles: File[]) => {
         try {
             if (!session?.user || acceptedFiles.length === 0) return;
-            addFiles(acceptedFiles, currentFolderId || undefined);
+
+            // Detect if any files have webkitRelativePath (folder upload)
+            const hasFolderStructure = acceptedFiles.some(f => (f as any).webkitRelativePath && (f as any).webkitRelativePath.includes('/'));
+
+            if (hasFolderStructure) {
+                await addFolderFiles(acceptedFiles);
+            } else {
+                addFiles(acceptedFiles, currentFolderId || undefined);
+            }
+
             setToast({ msg: 'Uploads queued. Check the Uploads tab for details.', show: true, type: 'info' });
         } catch (error) {
             console.error(error);
         }
-    }, [currentFolderId, addFiles, session]);
+    }, [currentFolderId, addFiles, addFolderFiles, session]);
 
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,

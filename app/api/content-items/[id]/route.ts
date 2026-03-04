@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { deleteFileFromDisk, buildDiskPath } from "@/lib/deleteFiles";
 
 export async function GET(
     _req: Request,
@@ -70,13 +71,46 @@ export async function DELETE(
     const userId = (session.user as any).id;
 
     try {
-        const result = await prisma.contentItem.deleteMany({
+        // Fetch the item first so we can clean up its file
+        const item = await prisma.contentItem.findFirst({
+            where: { id, user_id: userId },
+            select: { id: true, name: true, path: true, type: true },
+        });
+
+        if (!item) {
+            return NextResponse.json({ error: "Item not found or unauthorized" }, { status: 404 });
+        }
+
+        // Collect all files to delete
+        const filesToDelete: string[] = [];
+
+        // If the item itself has a file (non-folder types)
+        if (item.type !== "carousel_folder" && item.name) {
+            filesToDelete.push(buildDiskPath(userId, item.path, item.name));
+        }
+
+        // If it's a carousel folder, also collect children's files
+        if (item.type === "carousel_folder") {
+            const children = await prisma.contentItem.findMany({
+                where: { parent_id: item.id },
+                select: { name: true, path: true },
+            });
+            for (const child of children) {
+                if (child.name) {
+                    filesToDelete.push(buildDiskPath(userId, child.path, child.name));
+                }
+            }
+        }
+
+        // Delete from DB (cascade handles children records)
+        await prisma.contentItem.deleteMany({
             where: { id, user_id: userId },
         });
 
-        if (result.count === 0) {
-            return NextResponse.json({ error: "Item not found or unauthorized" }, { status: 404 });
-        }
+        // Best-effort file cleanup
+        await Promise.allSettled(
+            filesToDelete.map((p) => deleteFileFromDisk(p))
+        );
 
         return NextResponse.json({ success: true });
     } catch (error: any) {

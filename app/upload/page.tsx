@@ -2,15 +2,16 @@
 
 import { useUpload, UploadTask } from '@/contexts/UploadContext';
 import { useRef, useState, useCallback } from 'react';
-import { Plus, X, RotateCcw, FileVideo, Image as ImageIcon, AlertCircle, CheckCircle2, CloudUpload, Tag } from 'lucide-react';
+import { Plus, X, RotateCcw, FileVideo, Image as ImageIcon, AlertCircle, CheckCircle2, CloudUpload, Tag, FolderOpen } from 'lucide-react';
 
 export default function UploadPage() {
-    const { tasks, addFiles, cancelTask, retryTask, clearCompleted } = useUpload();
+    const { tasks, addFiles, addFolderFiles, cancelTask, retryTask, clearCompleted } = useUpload();
 
     // Tag input state
     const [tags, setTags] = useState<string[]>([]);
     const [tagInput, setTagInput] = useState('');
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const folderInputRef = useRef<HTMLInputElement>(null);
 
     // Drag state
     const [isDragging, setIsDragging] = useState(false);
@@ -49,13 +50,30 @@ export default function UploadPage() {
         }
     }, [addFiles, tags]);
 
+    const handleFolderFiles = useCallback(async (files: FileList | File[]) => {
+        const fileArray = Array.from(files);
+        if (fileArray.length > 0) {
+            await addFolderFiles(fileArray, tags);
+        }
+    }, [addFolderFiles, tags]);
+
     const handleDrop = useCallback((e: React.DragEvent) => {
         e.preventDefault();
         setIsDragging(false);
-        if (e.dataTransfer.files.length > 0) {
-            handleFiles(e.dataTransfer.files);
+
+        const items = e.dataTransfer.items;
+        const files = e.dataTransfer.files;
+
+        // Check if any item is a folder by checking webkitRelativePath
+        const fileArray = Array.from(files);
+        const hasFolderStructure = fileArray.some(f => f.webkitRelativePath && f.webkitRelativePath.includes('/'));
+
+        if (hasFolderStructure) {
+            handleFolderFiles(fileArray);
+        } else if (fileArray.length > 0) {
+            handleFiles(fileArray);
         }
-    }, [handleFiles]);
+    }, [handleFiles, handleFolderFiles]);
 
     const handleDragOver = useCallback((e: React.DragEvent) => {
         e.preventDefault();
@@ -71,7 +89,7 @@ export default function UploadPage() {
         switch (task.status) {
             case 'completed': return <span className="flex items-center gap-1 text-ios-green"><CheckCircle2 size={14} /> Completed</span>;
             case 'error': return <span className="flex items-center gap-1 text-ios-red"><AlertCircle size={14} /> Failed</span>;
-            case 'frozen': return <span className="flex items-center gap-1 text-ios-orange"><RotateCcw size={14} className="animate-spin" /> Retrying (Frozen)</span>;
+            case 'frozen': return <span className="flex items-center gap-1 text-ios-orange"><RotateCcw size={14} className="animate-spin" /> Retrying</span>;
             case 'uploading': return <span className="text-ios-blue animate-pulse">Uploading {task.progress}%</span>;
             case 'pending': return <span className="text-ios-text-secondary">Queued</span>;
             case 'canceled': return <span className="text-ios-text-secondary">Canceled</span>;
@@ -84,6 +102,8 @@ export default function UploadPage() {
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     };
+
+    const getProgressWidth = (progress: number) => `${Math.max(2, progress)}%`;
 
     return (
         <div className="flex-1 overflow-auto bg-ios-background p-6">
@@ -139,6 +159,33 @@ export default function UploadPage() {
                                 if (e.target.files) handleFiles(e.target.files);
                                 e.target.value = '';
                             }}
+                        />
+                    </div>
+
+                    {/* Folder Upload Button */}
+                    <div className="px-4 py-3 border-b border-ios-separator flex items-center gap-3">
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                folderInputRef.current?.click();
+                            }}
+                            className="flex items-center gap-2 px-4 py-2 bg-ios-gray-5 text-ios-text text-[14px] font-medium rounded-xl hover:bg-ios-gray-4 transition-all"
+                        >
+                            <FolderOpen size={16} />
+                            Upload Folder (Carousel)
+                        </button>
+                        <span className="text-[13px] text-ios-text-secondary">
+                            Folders with 2+ files become carousels. Include a .txt for caption.
+                        </span>
+                        <input
+                            ref={folderInputRef}
+                            type="file"
+                            className="hidden"
+                            onChange={async (e) => {
+                                if (e.target.files) await handleFolderFiles(e.target.files);
+                                e.target.value = '';
+                            }}
+                            {...({ webkitdirectory: '', directory: '' } as any)}
                         />
                     </div>
 
@@ -215,6 +262,12 @@ export default function UploadPage() {
                                                 <span>{formatBytes(task.size)}</span>
                                                 <span className="w-1 h-1 rounded-full bg-ios-separator"></span>
                                                 <span>Dest: {task.folderPath ? task.folderPath : '/'}</span>
+                                                {task.forceType === 'carousel_item' && (
+                                                    <>
+                                                        <span className="w-1 h-1 rounded-full bg-ios-separator"></span>
+                                                        <span className="text-ios-blue font-medium">Carousel Item</span>
+                                                    </>
+                                                )}
                                             </div>
 
                                             {/* Tags */}
@@ -234,7 +287,7 @@ export default function UploadPage() {
                                                     <div
                                                         className={`h-full rounded-full transition-all duration-300 ${task.status === 'frozen' || task.status === 'error' ? 'bg-ios-orange' : 'bg-ios-blue'
                                                             }`}
-                                                        style={{ width: `${Math.max(2, task.progress)}%` } as React.CSSProperties}
+                                                        style={{ width: getProgressWidth(task.progress) }}
                                                     />
                                                 </div>
                                             )}

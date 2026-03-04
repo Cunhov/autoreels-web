@@ -17,6 +17,8 @@ export async function POST(req: Request) {
         const type = formData.get("type") as string;
         const tagsRaw = formData.get("tags") as string | null;
         const tags = tagsRaw || null; // JSON string or null
+        const parentId = formData.get("parentId") as string | null;
+        const caption = formData.get("caption") as string | null;
 
         if (!filename || isNaN(size)) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -41,7 +43,14 @@ export async function POST(req: Request) {
             // Update size/url if re-uploaded
             savedItem = await prisma.contentItem.update({
                 where: { id: existingItem.id },
-                data: { size, url: finalUrl, type, ...(tags ? { tags } : {}) }
+                data: {
+                    size,
+                    url: finalUrl,
+                    type,
+                    ...(tags ? { tags } : {}),
+                    ...(parentId ? { parent_id: parentId } : {}),
+                    ...(caption ? { caption } : {}),
+                }
             });
         } else {
             savedItem = await prisma.contentItem.create({
@@ -53,6 +62,8 @@ export async function POST(req: Request) {
                     path: folderPath,
                     type: type,
                     ...(tags ? { tags } : {}),
+                    ...(parentId ? { parent_id: parentId } : {}),
+                    ...(caption ? { caption } : {}),
                 }
             });
         }

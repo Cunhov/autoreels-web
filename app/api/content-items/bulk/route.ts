@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { buildContentWhere } from "../route";
+import { deleteFileFromDisk, buildDiskPath } from "@/lib/deleteFiles";
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
@@ -48,26 +49,37 @@ export async function POST(req: Request) {
 
         switch (action) {
             case "delete": {
-                // First, collect all storage paths to clean up
-                const itemsWithPaths = await prisma.contentItem.findMany({
+                // Fetch items with their file info
+                const itemsToDelete = await prisma.contentItem.findMany({
                     where: ownershipWhere,
-                    select: { id: true, path: true, type: true },
+                    select: { id: true, name: true, path: true, type: true },
                 });
 
-                // Also collect descendant paths (for carousel folders with cascade)
-                const folderIds = itemsWithPaths
+                // Collect all disk paths to delete
+                const diskPaths: string[] = [];
+
+                // Add direct item files (non-folder types)
+                for (const item of itemsToDelete) {
+                    if (item.type !== "carousel_folder" && item.name) {
+                        diskPaths.push(buildDiskPath(userId, item.path, item.name));
+                    }
+                }
+
+                // Collect children of carousel folders
+                const folderIds = itemsToDelete
                     .filter((i) => i.type === "carousel_folder")
                     .map((i) => i.id);
 
-                let descendantPaths: string[] = [];
                 if (folderIds.length > 0) {
                     const descendants = await prisma.contentItem.findMany({
-                        where: { parent_id: { in: folderIds }, path: { not: null } },
-                        select: { path: true },
+                        where: { parent_id: { in: folderIds } },
+                        select: { name: true, path: true },
                     });
-                    descendantPaths = descendants
-                        .map((d) => d.path)
-                        .filter(Boolean) as string[];
+                    for (const d of descendants) {
+                        if (d.name) {
+                            diskPaths.push(buildDiskPath(userId, d.path, d.name));
+                        }
+                    }
                 }
 
                 // Delete from DB (cascade handles children records)
@@ -75,22 +87,10 @@ export async function POST(req: Request) {
                     where: ownershipWhere,
                 });
 
-                // Best-effort storage cleanup (don't block on failures)
-                const allPaths = [
-                    ...itemsWithPaths.map((i) => i.path).filter(Boolean),
-                    ...descendantPaths,
-                ] as string[];
-
-                // Fire-and-forget storage cleanup
-                if (allPaths.length > 0) {
-                    Promise.allSettled(
-                        allPaths.map((path) =>
-                            fetch(
-                                `${process.env.NEXTAUTH_URL || ""
-                                }/api/storage?path=${encodeURIComponent(path)}`,
-                                { method: "DELETE" }
-                            ).catch(() => { }) // swallow errors
-                        )
+                // Best-effort direct file cleanup
+                if (diskPaths.length > 0) {
+                    await Promise.allSettled(
+                        diskPaths.map((p) => deleteFileFromDisk(p))
                     );
                 }
 

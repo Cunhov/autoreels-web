@@ -13,6 +13,9 @@ export interface UploadTask {
     status: UploadStatus;
     folderPath: string;
     tags: string[];
+    parentId?: string | null;   // DB parent_id for carousel_item
+    forceType?: string | null;  // e.g. 'carousel_item'
+    caption?: string | null;    // caption from .txt file
     errorMessage?: string;
     chunkSize: number;
     totalChunks: number;
@@ -22,6 +25,7 @@ export interface UploadTask {
 interface UploadContextType {
     tasks: UploadTask[];
     addFiles: (files: File[], folderPath?: string, tags?: string[]) => void;
+    addFolderFiles: (files: File[], tags?: string[]) => Promise<void>;
     cancelTask: (taskId: string) => void;
     retryTask: (taskId: string) => void;
     clearCompleted: () => void;
@@ -51,7 +55,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     // Track byte progress timestamps to detect freezes
     const lastProgressMs = useRef<Map<string, number>>(new Map());
 
-    // Add new files to the queue
+    // Add new files to the queue (individual / loose files)
     const addFiles = useCallback((files: File[], folderPath: string = 'admin', tags: string[] = []) => {
         const newTasks: UploadTask[] = files.map(file => ({
             id: crypto.randomUUID(),
@@ -62,12 +66,166 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             status: 'pending',
             folderPath,
             tags,
+            parentId: null,
+            forceType: null,
+            caption: null,
             chunkSize: CHUNK_SIZE,
             totalChunks: Math.ceil(file.size / CHUNK_SIZE),
             currentChunk: 0
         }));
 
         setTasks(prev => [...prev, ...newTasks]);
+    }, []);
+
+    // Add files from a folder upload with carousel detection
+    const addFolderFiles = useCallback(async (files: File[], tags: string[] = []) => {
+        const newTasks: UploadTask[] = [];
+
+        // Group files by their folder using webkitRelativePath
+        const folderGroups = new Map<string, File[]>();
+        const looseFiles: File[] = [];
+
+        for (const file of files) {
+            const relPath = (file as any).webkitRelativePath as string;
+            if (relPath && relPath.includes('/')) {
+                // Extract the first-level folder name
+                const parts = relPath.split('/');
+                // parts[0] is the root folder selected by the user
+                // parts[1] is either a subfolder or the filename
+                if (parts.length >= 3) {
+                    // File is inside a subfolder: rootFolder/subFolder/file.mp4
+                    const subFolder = parts[1];
+                    if (!folderGroups.has(subFolder)) {
+                        folderGroups.set(subFolder, []);
+                    }
+                    folderGroups.get(subFolder)!.push(file);
+                } else {
+                    // File is directly in the root folder: rootFolder/file.mp4
+                    looseFiles.push(file);
+                }
+            } else {
+                // No relative path — treat as loose file
+                looseFiles.push(file);
+            }
+        }
+
+        // If all files are in the root with no subfolders, treat the root folder itself as a group
+        if (folderGroups.size === 0 && looseFiles.length > 0) {
+            const firstRelPath = (files[0] as any).webkitRelativePath as string;
+            if (firstRelPath) {
+                const rootName = firstRelPath.split('/')[0];
+                folderGroups.set(rootName, looseFiles);
+                looseFiles.length = 0; // clear
+            }
+        }
+
+        // Process folder groups — carousel detection
+        for (const [folderName, groupFiles] of folderGroups) {
+            // Read .txt caption if present
+            let folderCaption = '';
+            const txtFile = groupFiles.find(f => f.name.toLowerCase().endsWith('.txt'));
+            if (txtFile) {
+                try {
+                    folderCaption = await txtFile.text();
+                } catch (e) {
+                    console.error('Error reading .txt file:', e);
+                }
+            }
+
+            // Filter out .txt files from media
+            const mediaFiles = groupFiles.filter(f => !f.name.toLowerCase().endsWith('.txt'));
+            if (mediaFiles.length === 0) continue;
+
+            if (mediaFiles.length === 1) {
+                // Single file in folder → standalone post with caption
+                const file = mediaFiles[0];
+                newTasks.push({
+                    id: crypto.randomUUID(),
+                    file,
+                    name: file.name,
+                    size: file.size,
+                    progress: 0,
+                    status: 'pending',
+                    folderPath: 'admin',
+                    tags,
+                    parentId: null,
+                    forceType: null,
+                    caption: folderCaption || null,
+                    chunkSize: CHUNK_SIZE,
+                    totalChunks: Math.ceil(file.size / CHUNK_SIZE),
+                    currentChunk: 0
+                });
+            } else {
+                // 2+ files → create carousel_folder in DB, then queue children
+                try {
+                    const res = await fetch('/api/content-items', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            name: folderName,
+                            type: 'carousel_folder',
+                            parent_id: null,
+                            caption: folderCaption || null,
+                            ...(tags.length > 0 ? { tags: JSON.stringify(tags) } : {})
+                        })
+                    });
+
+                    if (!res.ok) throw new Error('Failed to create carousel folder');
+                    const folderData = await res.json();
+
+                    // Sort media files by name for consistent ordering
+                    const sortedMedia = [...mediaFiles].sort((a, b) =>
+                        a.name.localeCompare(b.name, undefined, { numeric: true })
+                    );
+
+                    for (const file of sortedMedia) {
+                        newTasks.push({
+                            id: crypto.randomUUID(),
+                            file,
+                            name: file.name,
+                            size: file.size,
+                            progress: 0,
+                            status: 'pending',
+                            folderPath: 'admin',
+                            tags,
+                            parentId: folderData.id,
+                            forceType: 'carousel_item',
+                            caption: null,
+                            chunkSize: CHUNK_SIZE,
+                            totalChunks: Math.ceil(file.size / CHUNK_SIZE),
+                            currentChunk: 0
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error creating carousel folder:', error);
+                }
+            }
+        }
+
+        // Loose files — individual uploads
+        for (const file of looseFiles) {
+            if (file.name.toLowerCase().endsWith('.txt')) continue; // skip .txt
+            newTasks.push({
+                id: crypto.randomUUID(),
+                file,
+                name: file.name,
+                size: file.size,
+                progress: 0,
+                status: 'pending',
+                folderPath: 'admin',
+                tags,
+                parentId: null,
+                forceType: null,
+                caption: null,
+                chunkSize: CHUNK_SIZE,
+                totalChunks: Math.ceil(file.size / CHUNK_SIZE),
+                currentChunk: 0
+            });
+        }
+
+        if (newTasks.length > 0) {
+            setTasks(prev => [...prev, ...newTasks]);
+        }
     }, []);
 
     const cancelTask = useCallback((taskId: string) => {
@@ -90,13 +248,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
     const retryTask = useCallback((taskId: string) => {
         setTasks(prev => {
-            // Re-order the queue: move the retried task to the back of the pending line 
-            // by removing it here and re-inserting it at the end with status = pending
             const taskToRetry = prev.find(t => t.id === taskId);
             if (!taskToRetry) return prev;
 
             const others = prev.filter(t => t.id !== taskId);
-            return [...others, { ...taskToRetry, status: 'pending', progress: 0, currentChunk: 0, errorMessage: undefined }];
+            return [...others, { ...taskToRetry, status: 'pending' as UploadStatus, progress: 0, currentChunk: 0, errorMessage: undefined }];
         });
     }, []);
 
@@ -106,10 +262,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
     // Main Orchestrator Effect
     useEffect(() => {
-        // Find tasks that need to start uploading
         const pendingTasks = tasks.filter(t => t.status === 'pending');
 
-        // If we have capacity, start new uploads
         if (activeUploads.size < MAX_CONCURRENT && pendingTasks.length > 0) {
             const tasksToStart = pendingTasks.slice(0, MAX_CONCURRENT - activeUploads.size);
 
@@ -134,7 +288,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     if (task && task.status === 'uploading' && lastMs && (now - lastMs > FREEZE_TIMEOUT_MS)) {
                         console.warn(`Upload ID ${taskId} frozen! Aborting and moving to back of queue.`);
 
-                        // Abort the network request
                         if (abortControllers.current.has(taskId)) {
                             abortControllers.current.get(taskId)?.abort();
                             abortControllers.current.delete(taskId);
@@ -142,7 +295,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
                         changed = true;
 
-                        // Set status to frozen and push to end of array to retry later
                         nextTasks = nextTasks.filter(t => t.id !== taskId);
                         nextTasks.push({
                             ...task,
@@ -159,7 +311,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 });
                 return changed ? nextTasks : prev;
             });
-        }, 5000); // Check every 5 seconds
+        }, 5000);
 
         return () => clearInterval(interval);
     }, [activeUploads]);
@@ -174,13 +326,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         abortControllers.current.set(task.id, controller);
 
         try {
-            // Standard directory path logic (e.g., test-tenant/admin/file.mp4)
             const targetPath = `${task.folderPath ? task.folderPath + '/' : ''}${task.name}`;
 
             let currentChunk = task.currentChunk;
 
             while (currentChunk < task.totalChunks) {
-                // If the task was canceled asynchronously, break the loop
                 if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
                 const start = currentChunk * CHUNK_SIZE;
@@ -188,14 +338,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 const chunkBlob = task.file.slice(start, end);
 
                 try {
-                    lastProgressMs.current.set(task.id, Date.now()); // Mark activity before fetch
+                    lastProgressMs.current.set(task.id, Date.now());
 
                     const response = await fetch('/api/upload-chunk', {
                         method: 'POST',
                         headers: {
                             'x-chunk-index': currentChunk.toString(),
                             'x-total-chunks': task.totalChunks.toString(),
-                            'x-file-name': targetPath, // Provide destination path so API stores it properly
+                            'x-file-name': targetPath,
                             'Content-Type': 'application/octet-stream',
                         },
                         body: chunkBlob,
@@ -206,12 +356,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                         throw new Error(`Server returned ${response.status}`);
                     }
 
-                    lastProgressMs.current.set(task.id, Date.now()); // Mark activity after successful chunk
+                    lastProgressMs.current.set(task.id, Date.now());
 
                     currentChunk++;
                     const progress = Math.round((currentChunk / task.totalChunks) * 100);
 
-                    // If aborted during fetch
                     if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
                     setTasks(prev => prev.map(t =>
@@ -220,7 +369,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
                 } catch (chunkError: any) {
                     if (chunkError.name === 'AbortError') {
-                        throw chunkError; // propagate upward
+                        throw chunkError;
                     }
                     console.error(`Chunk ${currentChunk} failed:`, chunkError);
                     throw new Error(`Chunk ${currentChunk} upload failed. ${chunkError.message || ''}`);
@@ -233,12 +382,21 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             formData.append('size', task.size.toString());
             formData.append('path', targetPath);
             formData.append('folderPath', task.folderPath);
-            formData.append('type', task.name.toLowerCase().endsWith('.mp4') || task.name.toLowerCase().endsWith('.mov') ? 'video' : 'image');
+
+            // Type detection: use forceType if set, otherwise auto-detect
+            const detectedType = task.forceType || (task.name.toLowerCase().match(/\.(mp4|mov|mkv|avi|webm)$/) ? 'video' : 'image');
+            formData.append('type', detectedType);
+
             if (task.tags.length > 0) {
                 formData.append('tags', JSON.stringify(task.tags));
             }
+            if (task.parentId) {
+                formData.append('parentId', task.parentId);
+            }
+            if (task.caption) {
+                formData.append('caption', task.caption);
+            }
 
-            // Send metadata to complete the upload
             const metaRes = await fetch('/api/upload-chunk/complete', {
                 method: 'POST',
                 body: formData,
@@ -254,12 +412,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
         } catch (error: any) {
             if (error.name === 'AbortError') {
-                // Canceled or Frozen status is already handled in state
                 return;
             }
 
-            // Real network error or unforced crash => put to Frozen so it retries automatically at the back
-            // or mark as error if we want manual intervention. Let's auto-retry robustly by pushing to Frozen.
             setTasks(prev => {
                 const others = prev.filter(t => t.id !== task.id);
                 const failedTask = prev.find(t => t.id === task.id);
@@ -267,7 +422,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
                 return [...others, {
                     ...failedTask,
-                    status: 'frozen',
+                    status: 'frozen' as UploadStatus,
                     errorMessage: error.message
                 }];
             });
@@ -283,7 +438,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     };
 
     return (
-        <UploadContext.Provider value={{ tasks, addFiles, cancelTask, retryTask, clearCompleted }}>
+        <UploadContext.Provider value={{ tasks, addFiles, addFolderFiles, cancelTask, retryTask, clearCompleted }}>
             {children}
         </UploadContext.Provider>
     );
