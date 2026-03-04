@@ -94,10 +94,14 @@ export async function POST(
                         where: { parent_id: libItem.id },
                         orderBy: { created_at: 'asc' },
                     });
-                    children = subItems.map((c: any) => ({
-                        url: c.url || '',
-                        type: c.type === 'video' ? 'video' : 'image',
-                    }));
+                    children = subItems.map((c: any) => {
+                        const urlStr = c.url || '';
+                        const isVideo = c.type === 'video' || (urlStr && /\.(mp4|mov)(\?.*)?$/i.test(urlStr));
+                        return {
+                            url: urlStr,
+                            type: isVideo ? 'video' : 'image',
+                        };
+                    });
                 }
 
                 let itemTitle = libItem.title || selectedContent.title_fallback || '';
