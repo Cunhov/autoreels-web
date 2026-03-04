@@ -13,14 +13,15 @@ export async function POST(req: Request) {
     try {
         const chunkIndex = parseInt(req.headers.get("x-chunk-index") || "0");
         const totalChunks = parseInt(req.headers.get("x-total-chunks") || "1");
-        const path = req.headers.get("x-file-name");
+        const rawPath = req.headers.get("x-file-name");
 
-        if (!path) {
+        if (!rawPath) {
             return NextResponse.json({ error: "Missing x-file-name header" }, { status: 400 });
         }
 
-        // Security check
+        // Security check + ensure path always includes userId prefix
         const userId = (session.user as any).id;
+        const path = rawPath.startsWith(`${userId}/`) ? rawPath : `${userId}/${rawPath}`;
         if (!path.startsWith(`${userId}/`)) {
             return NextResponse.json({ error: "Permission denied" }, { status: 403 });
         }

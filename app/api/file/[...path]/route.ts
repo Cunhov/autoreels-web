@@ -62,9 +62,18 @@ async function handleFileRequest(
     }
 
     // Try /data/uploads first (new location), then /public/uploads (legacy)
+    // Also try collapsing duplicate leading path segment for old records
+    // e.g. "admin/admin/file.mp4" → also try "admin/file.mp4"
+    const parts = filePath.split("/");
+    const dedupedPath = parts.length >= 2 && parts[0] === parts[1]
+        ? parts.slice(1).join("/")
+        : null;
+
     const candidatePaths = [
         join(process.cwd(), "data", "uploads", filePath),
+        ...(dedupedPath ? [join(process.cwd(), "data", "uploads", dedupedPath)] : []),
         join(process.cwd(), "public", "uploads", filePath),
+        ...(dedupedPath ? [join(process.cwd(), "public", "uploads", dedupedPath)] : []),
     ];
 
     for (const candidate of candidatePaths) {
