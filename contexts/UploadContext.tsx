@@ -24,8 +24,8 @@ export interface UploadTask {
 
 interface UploadContextType {
     tasks: UploadTask[];
-    addFiles: (files: File[], folderPath?: string, tags?: string[]) => void;
-    addFolderFiles: (files: File[], tags?: string[]) => Promise<void>;
+    addFiles: (files: File[], folderId?: string | null, tags?: string[]) => void;
+    addFolderFiles: (files: File[], parentFolderId?: string | null, tags?: string[]) => Promise<void>;
     cancelTask: (taskId: string) => void;
     retryTask: (taskId: string) => void;
     clearCompleted: () => void;
@@ -56,7 +56,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     const lastProgressMs = useRef<Map<string, number>>(new Map());
 
     // Add new files to the queue (individual / loose files)
-    const addFiles = useCallback((files: File[], folderPath: string = 'admin', tags: string[] = []) => {
+    const addFiles = useCallback((files: File[], folderId: string | null = null, tags: string[] = []) => {
         const newTasks: UploadTask[] = files.map(file => ({
             id: crypto.randomUUID(),
             file,
@@ -64,9 +64,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             size: file.size,
             progress: 0,
             status: 'pending',
-            folderPath,
+            folderPath: folderId ? `folder_${folderId}` : 'admin',
             tags,
-            parentId: null,
+            parentId: folderId,
             forceType: null,
             caption: null,
             chunkSize: CHUNK_SIZE,
@@ -78,7 +78,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     }, []);
 
     // Add files from a folder upload with carousel detection
-    const addFolderFiles = useCallback(async (files: File[], tags: string[] = []) => {
+    const addFolderFiles = useCallback(async (files: File[], parentFolderId: string | null = null, tags: string[] = []) => {
         const newTasks: UploadTask[] = [];
 
         // Group files by their folder using webkitRelativePath
@@ -146,9 +146,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     size: file.size,
                     progress: 0,
                     status: 'pending',
-                    folderPath: 'admin',
+                    folderPath: parentFolderId ? `folder_${parentFolderId}` : 'admin',
                     tags,
-                    parentId: null,
+                    parentId: parentFolderId,
                     forceType: null,
                     caption: folderCaption || null,
                     chunkSize: CHUNK_SIZE,
@@ -164,7 +164,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                         body: JSON.stringify({
                             name: folderName,
                             type: 'carousel_folder',
-                            parent_id: null,
+                            parent_id: parentFolderId,
                             caption: folderCaption || null,
                             ...(tags.length > 0 ? { tags: JSON.stringify(tags) } : {})
                         })
@@ -186,7 +186,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                             size: file.size,
                             progress: 0,
                             status: 'pending',
-                            folderPath: 'admin',
+                            folderPath: `carousel_${folderData.id}`,
                             tags,
                             parentId: folderData.id,
                             forceType: 'carousel_item',
@@ -212,9 +212,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 size: file.size,
                 progress: 0,
                 status: 'pending',
-                folderPath: 'admin',
+                folderPath: parentFolderId ? `folder_${parentFolderId}` : 'admin',
                 tags,
-                parentId: null,
+                parentId: parentFolderId,
                 forceType: null,
                 caption: null,
                 chunkSize: CHUNK_SIZE,

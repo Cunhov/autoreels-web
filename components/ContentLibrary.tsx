@@ -442,9 +442,9 @@ export default function ContentLibrary({
             const hasFolderStructure = acceptedFiles.some(f => (f as any).webkitRelativePath && (f as any).webkitRelativePath.includes('/'));
 
             if (hasFolderStructure) {
-                await addFolderFiles(acceptedFiles);
+                await addFolderFiles(acceptedFiles, currentFolderId || null);
             } else {
-                addFiles(acceptedFiles, currentFolderId || undefined);
+                addFiles(acceptedFiles, currentFolderId || null);
             }
 
             setToast({ msg: 'Uploads queued. Check the Uploads tab for details.', show: true, type: 'info' });

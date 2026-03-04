@@ -46,14 +46,14 @@ export default function UploadPage() {
             f.type.startsWith('video/') || f.type.startsWith('image/')
         );
         if (fileArray.length > 0) {
-            addFiles(fileArray, 'admin', tags);
+            addFiles(fileArray, null, tags);
         }
     }, [addFiles, tags]);
 
     const handleFolderFiles = useCallback(async (files: FileList | File[]) => {
         const fileArray = Array.from(files);
         if (fileArray.length > 0) {
-            await addFolderFiles(fileArray, tags);
+            await addFolderFiles(fileArray, null, tags);
         }
     }, [addFolderFiles, tags]);
 
