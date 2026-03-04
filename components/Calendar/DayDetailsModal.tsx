@@ -128,7 +128,14 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick }: D
                                         {/* Thumbnail */}
                                         <div className="w-16 h-20 bg-black/5 rounded-lg overflow-hidden flex-shrink-0 relative border border-black/5">
                                             {post.video_url ? (
-                                                <video src={post.video_url} className="w-full h-full object-cover" muted />
+                                                /* No <video> — show thumbnail_url if available, else a static placeholder */
+                                                post.thumbnail_url ? (
+                                                    <img src={post.thumbnail_url} className="w-full h-full object-cover" alt="Video thumbnail" />
+                                                ) : (
+                                                    <div className="w-full h-full bg-gray-900 flex items-center justify-center">
+                                                        <Play className="w-5 h-5 text-white/40 fill-white/20" />
+                                                    </div>
+                                                )
                                             ) : post.image_url || post.thumbnail_url ? (
                                                 <img src={post.image_url || post.thumbnail_url} className="w-full h-full object-cover" alt="Post preview" />
                                             ) : (
@@ -144,7 +151,7 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick }: D
 
                                             {/* Status dot */}
                                             <div className={`absolute top-1 right-1 w-2.5 h-2.5 rounded-full border border-white/20 shadow-sm ${post.status === 'published' ? 'bg-ios-green' :
-                                                    post.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'
+                                                post.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'
                                                 }`} />
                                         </div>
 

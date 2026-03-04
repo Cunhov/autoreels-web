@@ -783,19 +783,19 @@ export default function ContentLibrary({
 
                     {/* Selection Actions & Select All */}
                     <div className="flex items-center gap-2">
-                        {/* Sort Dropdown */}
-                        {currentFolderId && (
-                            <select
-                                value={sortBy}
-                                onChange={(e) => setSortBy(e.target.value as any)}
-                                className="text-xs bg-ios-card border border-ios-separator rounded-lg px-2 py-1.5 focus:border-ios-blue outline-none"
-                            >
-                                <option value="name-asc">A-Z / 1-9</option>
-                                <option value="name-desc">Z-A / 9-1</option>
-                                <option value="created-asc">Oldest First</option>
-                                <option value="created-desc">Newest First</option>
-                            </select>
-                        )}
+                        {/* Sort Dropdown — always visible */}
+                        <select
+                            value={sortBy}
+                            onChange={(e) => setSortBy(e.target.value as any)}
+                            title="Sort order"
+                            aria-label="Sort order"
+                            className="text-xs bg-ios-card border border-ios-separator rounded-lg px-2 py-1.5 focus:border-ios-blue outline-none"
+                        >
+                            <option value="name-asc">A→Z</option>
+                            <option value="name-desc">Z→A</option>
+                            <option value="created-asc">Oldest</option>
+                            <option value="created-desc">Newest</option>
+                        </select>
 
                         {/* Select All / Deselect All Toggle */}
                         {sortedItems.length > 0 && (
@@ -893,19 +893,11 @@ export default function ContentLibrary({
                         />
                     </div>
 
-                    {/* Select All shortcut in Search Row */}
-                    {filteredItems.length > 0 && (
-                        <button
-                            onClick={handleSelectAll}
-                            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-sm font-medium transition-all ${filteredItems.every(i => selectedIds.includes(i.id))
-                                ? 'bg-ios-blue text-white border-ios-blue shadow-sm'
-                                : 'bg-ios-card border-ios-separator text-ios-secondary hover:text-ios-blue hover:border-ios-blue/30'
-                                }`}
-                            title={filteredItems.every(i => selectedIds.includes(i.id)) ? 'Deselect All' : 'Select All'}
-                        >
-                            {filteredItems.every(i => selectedIds.includes(i.id)) ? <Check size={16} /> : <div className="w-4 h-4 border-2 border-current rounded-sm" />}
-                            <span className="hidden sm:inline">Select All</span>
-                        </button>
+                    {/* Total count badge */}
+                    {!loading && totalCount > 0 && (
+                        <span className="text-xs text-ios-secondary bg-ios-card border border-ios-separator px-2.5 py-2 rounded-xl whitespace-nowrap">
+                            {selectedIds.length > 0 ? `${selectedIds.length} / ${totalCount}` : `${totalCount} items`}
+                        </span>
                     )}
 
                     <button
@@ -1050,107 +1042,221 @@ export default function ContentLibrary({
                 ) : (
                     viewMode === 'list' ? (
                         <div className="bg-ios-card border border-ios-separator rounded-xl overflow-hidden shadow-sm">
-                            <table className="min-w-full divide-y divide-ios-separator">
-                                <thead className="bg-ios-background">
-                                    <tr>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-ios-secondary uppercase tracking-wider">Name</th>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-ios-secondary uppercase tracking-wider">Type</th>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-ios-secondary uppercase tracking-wider">Size</th>
-                                        <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-ios-secondary uppercase tracking-wider">Duration</th>
-                                        <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-ios-secondary uppercase tracking-wider">Actions</th>
+                            <table className="min-w-full">
+                                {/* Sortable column headers */}
+                                <thead className="bg-ios-background/80 backdrop-blur-sm sticky top-0 z-10">
+                                    <tr className="border-b border-ios-separator">
+                                        {/* Checkbox select-all */}
+                                        <th scope="col" className="w-10 pl-4 pr-2 py-3">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleSelectAll(); }}
+                                                className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${sortedItems.length > 0 && sortedItems.every(i => selectedIds.includes(i.id))
+                                                    ? 'bg-ios-blue border-ios-blue text-white'
+                                                    : 'border-ios-separator hover:border-ios-blue'
+                                                    }`}
+                                                title="Select / Deselect All"
+                                            >
+                                                {sortedItems.length > 0 && sortedItems.every(i => selectedIds.includes(i.id)) && <Check size={12} />}
+                                            </button>
+                                        </th>
+                                        <th scope="col"
+                                            className="px-3 py-3 text-left text-xs font-semibold text-ios-secondary uppercase tracking-wider cursor-pointer hover:text-ios-text select-none"
+                                            onClick={() => setSortBy(s => s === 'name-asc' ? 'name-desc' : 'name-asc')}
+                                        >
+                                            <div className="flex items-center gap-1">
+                                                Name
+                                                {sortBy.startsWith('name') && <span className="text-ios-blue">{sortBy === 'name-asc' ? '↑' : '↓'}</span>}
+                                            </div>
+                                        </th>
+                                        <th scope="col" className="px-3 py-3 text-left text-xs font-semibold text-ios-secondary uppercase tracking-wider hidden sm:table-cell">Type</th>
+                                        <th scope="col" className="px-3 py-3 text-left text-xs font-semibold text-ios-secondary uppercase tracking-wider hidden md:table-cell">Size</th>
+                                        <th scope="col" className="px-3 py-3 text-left text-xs font-semibold text-ios-secondary uppercase tracking-wider hidden lg:table-cell">Duration</th>
+                                        <th scope="col"
+                                            className="px-3 py-3 text-left text-xs font-semibold text-ios-secondary uppercase tracking-wider cursor-pointer hover:text-ios-text select-none hidden xl:table-cell"
+                                            onClick={() => setSortBy(s => s === 'created-desc' ? 'created-asc' : 'created-desc')}
+                                        >
+                                            <div className="flex items-center gap-1">
+                                                Date
+                                                {sortBy.startsWith('created') && <span className="text-ios-blue">{sortBy === 'created-asc' ? '↑' : '↓'}</span>}
+                                            </div>
+                                        </th>
+                                        <th scope="col" className="px-3 py-3 text-right text-xs font-semibold text-ios-secondary uppercase tracking-wider">Actions</th>
                                     </tr>
                                 </thead>
-                                <tbody className="bg-ios-card divide-y divide-ios-separator">
-                                    {sortedItems.map((item) => (
-                                        <tr
-                                            key={item.id}
-                                            onClick={() => {
-                                                if (item.type === 'carousel_folder') {
-                                                    if (mode === 'select' && disableUrlNavigation) {
-                                                        toggleSelection(item.id);
+                                <tbody className="divide-y divide-ios-separator/50">
+                                    {sortedItems.map((item) => {
+                                        const isSelected = selectedIds.includes(item.id);
+                                        return (
+                                            <tr
+                                                key={item.id}
+                                                onClick={() => {
+                                                    if (item.type === 'carousel_folder') {
+                                                        if (mode === 'select' && disableUrlNavigation) {
+                                                            toggleSelection(item.id);
+                                                        } else {
+                                                            disableUrlNavigation ? setInternalFolderId(item.id) : router.push(`/content?folderId=${item.id}`);
+                                                        }
                                                     } else {
-                                                        disableUrlNavigation ? setInternalFolderId(item.id) : router.push(`/content?folderId=${item.id}`);
+                                                        toggleSelection(item.id);
                                                     }
-                                                } else {
-                                                    toggleSelection(item.id);
-                                                }
-                                            }}
-                                            className={`
-                                        cursor-pointer transition-colors hover:bg-ios-background/50
-                                        ${selectedIds.includes(item.id) ? 'bg-blue-50 dark:bg-blue-900/10' : ''}
-                                    `}
-                                        >
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <div className="flex items-center">
-                                                    <div className="flex-shrink-0 h-10 w-10 rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center border border-ios-separator">
-                                                        {item.type === 'carousel_folder' ? (
-                                                            item.thumbnail_url ? (
-                                                                <div className="relative w-full h-full">
-                                                                    <img src={item.thumbnail_url} className="w-full h-full object-cover opacity-80" />
-                                                                    <div className="absolute inset-0 flex items-center justify-center bg-black/10">
-                                                                        <Folder size={20} className="text-white drop-shadow-md" />
-                                                                    </div>
+                                                }}
+                                                className={`group cursor-pointer transition-colors duration-100 ${isSelected
+                                                    ? 'bg-blue-50 dark:bg-blue-900/15'
+                                                    : 'hover:bg-ios-background/60'
+                                                    }`}
+                                            >
+                                                {/* Checkbox */}
+                                                <td className="pl-4 pr-2 py-3 w-10" onClick={(e) => { e.stopPropagation(); toggleSelection(item.id); }}>
+                                                    <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all flex-shrink-0 ${isSelected
+                                                        ? 'bg-ios-blue border-ios-blue text-white'
+                                                        : 'border-ios-separator group-hover:border-ios-blue/50'
+                                                        }`}>
+                                                        {isSelected && <Check size={12} />}
+                                                    </div>
+                                                </td>
+
+                                                {/* Name + thumbnail + meta */}
+                                                <td className="px-3 py-2.5">
+                                                    <div className="flex items-center gap-3 min-w-0">
+                                                        {/* Thumbnail */}
+                                                        <div className="flex-shrink-0 h-12 w-12 rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800 flex items-center justify-center border border-ios-separator relative">
+                                                            {item.type === 'carousel_folder' ? (
+                                                                item.thumbnail_url ? (
+                                                                    <>
+                                                                        <img src={item.thumbnail_url} className="w-full h-full object-cover opacity-80" alt="" />
+                                                                        <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                                                                            <Folder size={18} className="text-white drop-shadow" />
+                                                                        </div>
+                                                                    </>
+                                                                ) : (
+                                                                    <Folder size={22} className="text-blue-400" />
+                                                                )
+                                                            ) : item.type === 'video' ? (
+                                                                /* No <video> tag — static placeholder saves RAM/CPU */
+                                                                <div className="w-full h-full bg-gray-800 flex items-center justify-center">
+                                                                    <Video size={16} className="text-white/60" />
                                                                 </div>
                                                             ) : (
-                                                                <Folder size={20} className="text-blue-400" />
-                                                            )
-                                                        ) : item.type === 'video' ? (
-                                                            <div className="relative w-full h-full">
-                                                                <video src={item.url} className="w-full h-full object-cover" />
-                                                                <div className="absolute inset-0 flex items-center justify-center bg-black/20">
-                                                                    <Video size={14} className="text-white" />
+                                                                <img className="w-full h-full object-cover" src={item.url} alt="" />
+                                                            )}
+                                                        </div>
+                                                        {/* Text info */}
+                                                        <div className="min-w-0 flex-1">
+                                                            <p className="text-sm font-medium text-ios-text truncate max-w-xs" title={item.name}>{item.name}</p>
+                                                            {item.caption && <p className="text-xs text-ios-secondary truncate max-w-xs mt-0.5" title={item.caption}>{item.caption}</p>}
+                                                            {item.tags && item.tags.length > 0 && (
+                                                                <div className="flex flex-wrap gap-1 mt-1">
+                                                                    {item.tags.slice(0, 3).map(tag => (
+                                                                        <span key={tag} className="inline-block text-[10px] px-1.5 py-0.5 rounded bg-ios-blue/10 text-ios-blue font-medium leading-none">
+                                                                            {tag}
+                                                                        </span>
+                                                                    ))}
+                                                                    {item.tags.length > 3 && <span className="text-[10px] text-ios-secondary">+{item.tags.length - 3}</span>}
                                                                 </div>
-                                                            </div>
-                                                        ) : (
-                                                            <img className="h-10 w-10 object-cover" src={item.url} alt="" />
-                                                        )}
+                                                            )}
+                                                        </div>
                                                     </div>
-                                                    <div className="ml-4">
-                                                        <div className="text-sm font-medium text-ios-text">{item.name}</div>
-                                                    </div>
-                                                </div>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap">
-                                                <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
-                                            ${item.type === 'video' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300' :
-                                                        item.type === 'carousel_folder' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300' :
-                                                            'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'}`}>
-                                                    {item.type === 'carousel_folder' ? 'Folder' : item.type === 'video' ? 'Video' : 'Image'}
-                                                </span>
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-ios-secondary">
-                                                {formatBytes(item.size || 0)}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-ios-secondary">
-                                                {item.duration ? formatTime(item.duration) : '-'}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                {mode === 'manage' && (
-                                                    <div className="flex justify-end gap-2">
-                                                        <button onClick={(e) => { e.stopPropagation(); openEditModal([item]); }} className="text-ios-secondary hover:text-ios-blue">
-                                                            <Edit2 size={16} />
-                                                        </button>
-                                                        <button onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }} className="text-ios-secondary hover:text-ios-blue">
-                                                            <Move size={16} />
-                                                        </button>
-                                                        <button onClick={(e) => deleteItem(e, item)} className="text-ios-secondary hover:text-red-500">
-                                                            <Trash2 size={16} />
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
+                                                </td>
+
+                                                {/* Type badge */}
+                                                <td className="px-3 py-2.5 whitespace-nowrap hidden sm:table-cell">
+                                                    <span className={`px-2 py-0.5 inline-flex text-xs font-semibold rounded-full ${item.type === 'video'
+                                                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+                                                        : item.type === 'carousel_folder'
+                                                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                                                            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+                                                        }`}>
+                                                        {item.type === 'carousel_folder' ? 'Carousel' : item.type === 'video' ? 'Video' : 'Image'}
+                                                    </span>
+                                                </td>
+
+                                                {/* Size */}
+                                                <td className="px-3 py-2.5 whitespace-nowrap text-sm text-ios-secondary hidden md:table-cell">
+                                                    {formatBytes(item.size || 0)}
+                                                </td>
+
+                                                {/* Duration */}
+                                                <td className="px-3 py-2.5 whitespace-nowrap text-sm text-ios-secondary hidden lg:table-cell">
+                                                    {item.duration ? formatTime(item.duration) : <span className="text-ios-separator">—</span>}
+                                                </td>
+
+                                                {/* Date */}
+                                                <td className="px-3 py-2.5 whitespace-nowrap text-xs text-ios-secondary hidden xl:table-cell">
+                                                    {new Date(item.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', year: '2-digit' })}
+                                                </td>
+
+                                                {/* Actions */}
+                                                <td className="px-3 py-2.5 whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                                                    {mode === 'manage' && (
+                                                        <div className="flex items-center justify-end gap-0.5">
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
+                                                                className="p-1.5 rounded-lg text-ios-secondary hover:text-ios-blue hover:bg-ios-blue/10 transition-colors"
+                                                                title="Edit metadata"
+                                                            >
+                                                                <Edit2 size={15} />
+                                                            </button>
+                                                            {item.type === 'image' && (
+                                                                <button
+                                                                    onClick={(e) => { e.stopPropagation(); openImageEditor(item); }}
+                                                                    className="p-1.5 rounded-lg text-ios-secondary hover:text-violet-500 hover:bg-violet-500/10 transition-colors"
+                                                                    title="Edit image"
+                                                                >
+                                                                    <Palette size={15} />
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }}
+                                                                className="p-1.5 rounded-lg text-ios-secondary hover:text-ios-blue hover:bg-ios-blue/10 transition-colors"
+                                                                title="Move"
+                                                            >
+                                                                <Move size={15} />
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => deleteItem(e, item)}
+                                                                className="p-1.5 rounded-lg text-ios-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                                                                title="Delete"
+                                                            >
+                                                                <Trash2 size={15} />
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                    {mode === 'select' && (
+                                                        <div
+                                                            onClick={() => toggleSelection(item.id)}
+                                                            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer transition-all ${isSelected
+                                                                ? 'bg-ios-blue border-ios-blue text-white'
+                                                                : 'bg-ios-background border-ios-separator text-ios-secondary hover:border-ios-blue hover:text-ios-blue'
+                                                                }`}
+                                                        >
+                                                            {isSelected ? <Check size={12} /> : <div className="w-3 h-3 border-2 border-current rounded-sm" />}
+                                                            <span className="hidden sm:inline">{isSelected ? 'Selected' : 'Select'}</span>
+                                                        </div>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
                                 </tbody>
                             </table>
-                            {loadingMore && (
-                                <div className="flex justify-center py-4">
-                                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-ios-blue" />
-                                </div>
-                            )}
-                            {hasMore && !loadingMore && (
-                                <div className="text-center py-3">
-                                    <button onClick={loadMore} className="text-sm text-ios-blue hover:underline">Load more ({items.length} of {totalCount})</button>
+
+                            {/* Footer: load more */}
+                            {(loadingMore || (hasMore && !loadingMore)) && (
+                                <div className="border-t border-ios-separator/50 px-4 py-3 flex items-center justify-between bg-ios-background/50">
+                                    <span className="text-xs text-ios-secondary">Showing {items.length} of {totalCount} items</span>
+                                    {loadingMore ? (
+                                        <div className="flex items-center gap-2 text-xs text-ios-secondary">
+                                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-ios-blue" />
+                                            Loading…
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={loadMore}
+                                            className="text-xs font-semibold text-ios-blue hover:underline px-3 py-1.5 rounded-lg hover:bg-ios-blue/5 transition-colors"
+                                        >
+                                            Load more
+                                        </button>
+                                    )}
                                 </div>
                             )}
                         </div>
@@ -1227,12 +1333,10 @@ export default function ContentLibrary({
                                                 ) : (
                                                     <div className="w-full h-full relative">
                                                         {item.type === 'video' ? (
-                                                            <div className="w-full h-full bg-black flex items-center justify-center relative">
-                                                                <video src={item.url} className="w-full h-full object-cover opacity-80" />
-                                                                <div className="absolute inset-0 flex items-center justify-center">
-                                                                    <div className="w-10 h-10 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center">
-                                                                        <Video className="text-white fill-white" size={18} />
-                                                                    </div>
+                                                            <div className="w-full h-full bg-gray-900 flex items-center justify-center relative">
+                                                                {/* No <video> tag — avoids loading/decoding video frames (saves RAM & CPU) */}
+                                                                <div className="w-12 h-12 rounded-full bg-white/10 border border-white/20 flex items-center justify-center">
+                                                                    <Video className="text-white/70 fill-white/20" size={22} />
                                                                 </div>
                                                             </div>
                                                         ) : (

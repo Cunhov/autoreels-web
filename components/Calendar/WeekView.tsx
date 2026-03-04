@@ -84,7 +84,12 @@ export default function WeekView({ currentDate, posts, onPostClick }: WeekViewPr
                                              ${getBorderClass(p.status)}
                                         `}
                                     >
-                                        <video src={p.video_url} className="w-full h-full object-cover" muted />
+                                        {/* No <video> — static placeholder to save RAM/CPU */}
+                                        <div className="w-full h-full bg-gray-900 flex items-center justify-center">
+                                            <div className="text-[9px] text-white/40 font-medium text-center">
+                                                {new Date(p.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            </div>
+                                        </div>
                                         <div className="absolute top-2 right-2">
                                             <div className={`w-2.5 h-2.5 rounded-full border border-white/20 shadow-sm ${p.status === 'published' ? 'bg-ios-green' : p.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'}`} />
                                         </div>
