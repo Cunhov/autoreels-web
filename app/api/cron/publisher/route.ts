@@ -56,30 +56,27 @@ async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
                 const redis = new Redis({ url: redisUrl, token: redisToken });
 
                 let val: string | null = null;
+                const keyType = await redis.type(input);
 
-                // 1️⃣ Try String (most common)
-                try { val = await redis.get<string>(input); } catch (e: any) {
-                    console.warn(`[Redis] GET failed for ${input} (may be wrong type): ${e.message}`);
-                }
-
-                // 2️⃣ Fallback: List (LINDEX 0)
-                if (!val) {
-                    try { const lv = await redis.lindex(input, 0); if (lv) val = lv as string; } catch { /* ignore */ }
-                }
-
-                // 3️⃣ Fallback: Hash (HGETALL – n8n stores tokens this way)
-                if (!val) {
-                    try {
-                        const hashData = await redis.hgetall(input);
-                        if (hashData && typeof hashData === 'object') {
-                            // Pick the first value that looks like a token
-                            const firstVal = Object.values(hashData).find(v => v && typeof v === 'string' && (v as string).length > 10);
-                            if (firstVal) {
-                                val = firstVal as string;
-                                console.log(`[Redis] Resolved ${input} via HGETALL (Hash key)`);
-                            }
+                if (keyType === 'string') {
+                    val = await redis.get<string>(input);
+                } else if (keyType === 'list') {
+                    const lv = await redis.lindex(input, 0);
+                    if (lv) val = lv as string;
+                } else if (keyType === 'hash') {
+                    const hashData = await redis.hgetall(input);
+                    if (hashData && typeof hashData === 'object') {
+                        // Pick the first value that looks like a token
+                        const firstVal = Object.values(hashData).find(v => v && typeof v === 'string' && (v as string).length > 10);
+                        if (firstVal) {
+                            val = firstVal as string;
+                            console.log(`[Redis] Resolved ${input} via HGETALL (Hash key)`);
                         }
-                    } catch { /* ignore */ }
+                    }
+                } else if (keyType === 'none') {
+                    console.log(`[Redis] Key ${input} does not exist`);
+                } else {
+                    console.log(`[Redis] Key ${input} has unsupported type: ${keyType}`);
                 }
 
                 if (val) {
@@ -414,12 +411,15 @@ async function handler(request: Request) {
 
                     // Parallelize carousel child creation
                     const childPromises = childrenData.map(async (child, idx) => {
+                        const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, child.url);
                         const childParams = new URLSearchParams({
                             is_carousel_item: 'true',
                             access_token: accessToken,
-                            [child.type === 'video' ? 'video_url' : 'image_url']: makeAbsoluteUrl(systemBaseUrl, child.url)
+                            [child.type === 'video' ? 'video_url' : 'image_url']: mediaUrlAbsolute
                         });
                         if (child.type === 'video') childParams.append('media_type', 'VIDEO');
+
+                        await logPlanner(plannerId, `[Phase1] Sending Carousel Child[${idx}] to IG: type=${child.type}, url=${mediaUrlAbsolute}`, 'info');
 
                         const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, {
                             method: 'POST',
@@ -462,12 +462,15 @@ async function handler(request: Request) {
 
                 // SINGLE MEDIA
                 const bodyParams = new URLSearchParams({ access_token: accessToken });
+                let mediaUrlAbsolute = '';
                 if (mediaType === 'IMAGE') {
-                    bodyParams.append('image_url', makeAbsoluteUrl(systemBaseUrl, post.image_url));
+                    mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, post.image_url);
+                    bodyParams.append('image_url', mediaUrlAbsolute);
                     bodyParams.append('caption', post.caption || '');
                 } else {
                     bodyParams.append('media_type', mediaType === 'STORIES' ? 'STORIES' : 'REELS');
-                    bodyParams.append('video_url', makeAbsoluteUrl(systemBaseUrl, post.video_url || post.image_url));
+                    mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, post.video_url || post.image_url);
+                    bodyParams.append('video_url', mediaUrlAbsolute);
                     bodyParams.append('caption', post.caption || '');
                     if (mediaType === 'REELS') {
                         let shareToFeed = 'true';
@@ -480,6 +483,8 @@ async function handler(request: Request) {
                         bodyParams.append('share_to_feed', shareToFeed);
                     }
                 }
+
+                await logPlanner(plannerId, `[Phase1] Sending to IG: mediaType=${mediaType}, url=${mediaUrlAbsolute}`, 'info');
 
                 const apiRes = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, { method: 'POST', headers: igHeaders, body: bodyParams.toString() }, 300_000); // 5 minutes for large videos
                 const data = await apiRes.json();
