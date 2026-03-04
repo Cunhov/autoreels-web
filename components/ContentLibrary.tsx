@@ -1488,9 +1488,9 @@ export default function ContentLibrary({
                                             rowCount={rowCount}
                                             rowHeight={rowHeight}
                                             style={{ height: h, width: w }}
-                                            {...({ itemData } as any)}
+                                            cellComponent={GridCell}
+                                            cellProps={{ data: itemData }}
                                         >
-                                            {GridCell as any}
                                         </GridComponent>
                                         {loadingMore && (
                                             <div className="flex justify-center py-4">

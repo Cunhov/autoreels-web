@@ -65,7 +65,7 @@ async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
                     if (lv) val = lv as string;
                 } else if (keyType === 'hash') {
                     const hashData = await redis.hgetall(input);
-                    if (hashData && typeof hashData === 'object') {
+                    if (hashData && typeof hashData === 'object' && Object.keys(hashData).length > 0) {
                         // Pick the first value that looks like a token
                         const firstVal = Object.values(hashData).find(v => v && typeof v === 'string' && (v as string).length > 10);
                         if (firstVal) {
