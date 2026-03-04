@@ -77,11 +77,190 @@ interface ContentLibraryProps {
     disableUrlNavigation?: boolean;
 }
 
+const GridCell = ({ columnIndex, rowIndex, style, data }: any) => {
+    const {
+        columnCount,
+        sortedItems,
+        handleDragStart,
+        handleDragEnd,
+        handleDragOver,
+        handleDragLeave,
+        handleDrop,
+        mode,
+        disableUrlNavigation,
+        toggleSelection,
+        setInternalFolderId,
+        router,
+        selectedIds,
+        dropTargetId,
+        draggedItems,
+        openEditModal,
+        openImageEditor,
+        deleteItem,
+        openMoveModal,
+        formatBytes,
+        formatTime,
+    } = data;
+
+    const index = rowIndex * columnCount + columnIndex;
+    if (index >= sortedItems.length) return null; // Empty slots at end of last row
+    const item = sortedItems[index];
+
+    return (
+        <div style={{ ...style, padding: '0.5rem' }}>
+            <div
+                key={item.id}
+                draggable={item.type !== 'carousel_folder'}
+                onDragStart={(e) => item.type !== 'carousel_folder' && handleDragStart(e, item.id)}
+                onDragEnd={handleDragEnd}
+                onDragOver={(e) => handleDragOver(e, item.id, item)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => item.type === 'carousel_folder' && handleDrop(e, item.id)}
+                onClick={() => {
+                    if (item.type === 'carousel_folder') {
+                        if (mode === 'select' && disableUrlNavigation) {
+                            toggleSelection(item.id);
+                        } else {
+                            disableUrlNavigation ? setInternalFolderId(item.id) : router.push(`/content?folderId=${item.id}`);
+                        }
+                    } else {
+                        toggleSelection(item.id);
+                    }
+                }}
+                className={`
+                    w-full h-full group relative aspect-square rounded-2xl border overflow-hidden cursor-pointer transition-all duration-200
+                    ${selectedIds.includes(item.id)
+                        ? 'ring-2 ring-ios-blue border-transparent shadow-lg scale-[1.02]'
+                        : 'border-ios-separator hover:border-ios-blue/50 hover:shadow-md'}
+                    ${dropTargetId === item.id ? 'ring-2 ring-green-500 scale-105 bg-green-50 dark:bg-green-900/20' : ''}
+                    ${draggedItems.includes(item.id) ? 'opacity-50' : ''}
+                    bg-ios-card
+                `}
+            >
+                {/* Thumbnail Content */}
+                {item.type === 'carousel_folder' ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors relative overflow-hidden">
+                        {item.thumbnail_url ? (
+                            <>
+                                <img src={item.thumbnail_url} className="absolute inset-0 w-full h-full object-cover opacity-60 blur-[1px] group-hover:blur-0 transition-all duration-300" />
+                                <div className="absolute inset-0 bg-white/30 dark:bg-black/30 group-hover:bg-transparent transition-colors" />
+                                <div className="relative z-10 flex flex-col items-center">
+                                    <Folder size={48} strokeWidth={1.5} className="text-white drop-shadow-lg fill-white/20" />
+                                </div>
+                            </>
+                        ) : (
+                            <Folder size={48} strokeWidth={1} className="text-blue-400 fill-blue-400/20" />
+                        )}
+
+                        <span className={`text-xs font-medium mt-3 px-3 text-center truncate w-full relative z-10 flex-shrink-0 ${item.thumbnail_url ? 'text-white drop-shadow-md' : 'text-ios-secondary'}`}>
+                            {item.name}
+                        </span>
+                    </div>
+                ) : (
+                    <div className="w-full h-full relative">
+                        {item.type === 'video' ? (
+                            <div className="w-full h-full bg-gray-900 flex items-center justify-center relative">
+                                {/* No <video> tag — avoids loading/decoding video frames (saves RAM & CPU) */}
+                                <div className="w-12 h-12 rounded-full bg-white/10 border border-white/20 flex items-center justify-center">
+                                    <Video className="text-white/70 fill-white/20" size={22} />
+                                </div>
+                            </div>
+                        ) : (
+                            <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
+                        )}
+
+                        {/* Overlay Info (Gradient) */}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 pt-8 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end">
+                            <p className="text-white text-xs font-medium truncate drop-shadow-sm">{item.name}</p>
+                            {/* Size / Duration Badge */}
+                            <div className="flex items-center gap-2 mt-1 text-[10px] text-gray-200">
+                                {item.size && <span>{formatBytes(item.size)}</span>}
+                                {item.duration ? <span>• {formatTime(item.duration)}</span> : null}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Selection Checkbox */}
+                {selectedIds.includes(item.id) && (
+                    <div className="absolute top-2 right-2 bg-ios-blue text-white rounded-full p-1 shadow-sm z-20 animate-in zoom-in duration-200">
+                        <Check size={12} strokeWidth={3} />
+                    </div>
+                )}
+
+                {/* Bottom Left: Enter Folder Button */}
+                {item.type === 'carousel_folder' && (
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            disableUrlNavigation ? setInternalFolderId(item.id) : router.push(`/content?folderId=${item.id}`);
+                        }}
+                        className="absolute bottom-2 left-2 p-1.5 bg-black/50 hover:bg-black/70 backdrop-blur text-white rounded-full shadow-sm transition-all z-20 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                        title="Open Folder"
+                    >
+                        <CornerDownRight size={14} />
+                    </button>
+                )}
+
+                {/* Bottom Right: Preview Button */}
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        window.open(item.url, '_blank');
+                    }}
+                    className="absolute bottom-2 right-2 p-1.5 bg-black/50 hover:bg-black/70 backdrop-blur text-white rounded-full shadow-sm transition-all z-20 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
+                    title="Preview"
+                >
+                    <Eye size={14} />
+                </button>
+
+                {/* Hover Actions (Context Menu triggers) */}
+                <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 translate-x-2 group-hover:translate-x-0 duration-200">
+                    <button
+                        onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
+                        className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
+                        title="Edit Metadata"
+                    >
+                        <Edit2 size={12} />
+                    </button>
+                    {(item.type === 'image' || item.type === 'carousel_item') && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); openImageEditor(item); }}
+                            className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-purple-500 transition-colors"
+                            title="Edit Image"
+                        >
+                            <Palette size={12} />
+                        </button>
+                    )}
+                    {mode === 'manage' && (
+                        <>
+                            <button
+                                onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }}
+                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
+                                title="Move"
+                            >
+                                <Move size={12} />
+                            </button>
+                            <button
+                                onClick={(e) => deleteItem(e, item)}
+                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
+                                title="Delete"
+                            >
+                                <Trash2 size={12} />
+                            </button>
+                        </>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 export default function ContentLibrary({
     mode = 'manage',
     onSelectionChange,
     initialSelection = [],
-    allowedTypes = ['video', 'image', 'carousel_folder'],
+    allowedTypes = ['video', 'image', 'carousel_folder', 'carousel_item'],
     disableUrlNavigation = false
 }: ContentLibraryProps) {
     const router = useRouter();
@@ -629,6 +808,7 @@ export default function ContentLibrary({
             if (t === 'carousel_folder') return item.type === 'carousel_folder';
             if (t === 'image') return item.type === 'image' || item.type === 'carousel_item';
             if (t === 'video') return item.type === 'video';
+            if (t === 'carousel_item') return item.type === 'carousel_item';
             return false;
         });
 
@@ -1275,159 +1455,28 @@ export default function ContentLibrary({
                                 const columnWidth = w / columnCount;
                                 const rowHeight = columnWidth; // aspect-square
 
-                                const Cell = ({ columnIndex, rowIndex, style }: { columnIndex: number, rowIndex: number, style: any }) => {
-                                    const index = rowIndex * columnCount + columnIndex;
-                                    if (index >= sortedItems.length) return null; // Empty slots at end of last row
-                                    const item = sortedItems[index];
-
-                                    return (
-                                        <div style={{ ...style, padding: '0.5rem' }}>
-                                            <div
-                                                key={item.id}
-                                                draggable={item.type !== 'carousel_folder'}
-                                                onDragStart={(e) => item.type !== 'carousel_folder' && handleDragStart(e, item.id)}
-                                                onDragEnd={handleDragEnd}
-                                                onDragOver={(e) => handleDragOver(e, item.id, item)}
-                                                onDragLeave={handleDragLeave}
-                                                onDrop={(e) => item.type === 'carousel_folder' && handleDrop(e, item.id)}
-                                                onClick={() => {
-                                                    if (item.type === 'carousel_folder') {
-                                                        if (mode === 'select' && disableUrlNavigation) {
-                                                            toggleSelection(item.id);
-                                                        } else {
-                                                            disableUrlNavigation ? setInternalFolderId(item.id) : router.push(`/content?folderId=${item.id}`);
-                                                        }
-                                                    } else {
-                                                        toggleSelection(item.id);
-                                                    }
-                                                }}
-                                                className={`
-                                                    w-full h-full group relative aspect-square rounded-2xl border overflow-hidden cursor-pointer transition-all duration-200
-                                                    ${selectedIds.includes(item.id)
-                                                        ? 'ring-2 ring-ios-blue border-transparent shadow-lg scale-[1.02]'
-                                                        : 'border-ios-separator hover:border-ios-blue/50 hover:shadow-md'}
-                                                    ${dropTargetId === item.id ? 'ring-2 ring-green-500 scale-105 bg-green-50 dark:bg-green-900/20' : ''}
-                                                    ${draggedItems.includes(item.id) ? 'opacity-50' : ''}
-                                                    bg-ios-card
-                                                `}
-                                            >
-                                                {/* Thumbnail Content */}
-                                                {item.type === 'carousel_folder' ? (
-                                                    <div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors relative overflow-hidden">
-                                                        {item.thumbnail_url ? (
-                                                            <>
-                                                                <img src={item.thumbnail_url} className="absolute inset-0 w-full h-full object-cover opacity-60 blur-[1px] group-hover:blur-0 transition-all duration-300" />
-                                                                <div className="absolute inset-0 bg-white/30 dark:bg-black/30 group-hover:bg-transparent transition-colors" />
-                                                                <div className="relative z-10 flex flex-col items-center">
-                                                                    <Folder size={48} strokeWidth={1.5} className="text-white drop-shadow-lg fill-white/20" />
-                                                                </div>
-                                                            </>
-                                                        ) : (
-                                                            <Folder size={48} strokeWidth={1} className="text-blue-400 fill-blue-400/20" />
-                                                        )}
-
-                                                        <span className={`text-xs font-medium mt-3 px-3 text-center truncate w-full relative z-10 flex-shrink-0 ${item.thumbnail_url ? 'text-white drop-shadow-md' : 'text-ios-secondary'}`}>
-                                                            {item.name}
-                                                        </span>
-                                                    </div>
-                                                ) : (
-                                                    <div className="w-full h-full relative">
-                                                        {item.type === 'video' ? (
-                                                            <div className="w-full h-full bg-gray-900 flex items-center justify-center relative">
-                                                                {/* No <video> tag — avoids loading/decoding video frames (saves RAM & CPU) */}
-                                                                <div className="w-12 h-12 rounded-full bg-white/10 border border-white/20 flex items-center justify-center">
-                                                                    <Video className="text-white/70 fill-white/20" size={22} />
-                                                                </div>
-                                                            </div>
-                                                        ) : (
-                                                            <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
-                                                        )}
-
-                                                        {/* Overlay Info (Gradient) */}
-                                                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 pt-8 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end">
-                                                            <p className="text-white text-xs font-medium truncate drop-shadow-sm">{item.name}</p>
-                                                            {/* Size / Duration Badge */}
-                                                            <div className="flex items-center gap-2 mt-1 text-[10px] text-gray-200">
-                                                                {item.size && <span>{formatBytes(item.size)}</span>}
-                                                                {item.duration ? <span>• {formatTime(item.duration)}</span> : null}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                )}
-
-                                                {/* Selection Checkbox */}
-                                                {selectedIds.includes(item.id) && (
-                                                    <div className="absolute top-2 right-2 bg-ios-blue text-white rounded-full p-1 shadow-sm z-20 animate-in zoom-in duration-200">
-                                                        <Check size={12} strokeWidth={3} />
-                                                    </div>
-                                                )}
-
-                                                {/* Bottom Left: Enter Folder Button */}
-                                                {item.type === 'carousel_folder' && (
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            disableUrlNavigation ? setInternalFolderId(item.id) : router.push(`/content?folderId=${item.id}`);
-                                                        }}
-                                                        className="absolute bottom-2 left-2 p-1.5 bg-black/50 hover:bg-black/70 backdrop-blur text-white rounded-full shadow-sm transition-all z-20 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
-                                                        title="Open Folder"
-                                                    >
-                                                        <CornerDownRight size={14} />
-                                                    </button>
-                                                )}
-
-                                                {/* Bottom Right: Preview Button */}
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        window.open(item.url, '_blank');
-                                                    }}
-                                                    className="absolute bottom-2 right-2 p-1.5 bg-black/50 hover:bg-black/70 backdrop-blur text-white rounded-full shadow-sm transition-all z-20 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
-                                                    title="Preview"
-                                                >
-                                                    <Eye size={14} />
-                                                </button>
-
-                                                {/* Hover Actions (Context Menu triggers) */}
-                                                <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 translate-x-2 group-hover:translate-x-0 duration-200">
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
-                                                        className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-                                                        title="Edit Metadata"
-                                                    >
-                                                        <Edit2 size={12} />
-                                                    </button>
-                                                    {(item.type === 'image' || item.type === 'carousel_item') && (
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); openImageEditor(item); }}
-                                                            className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-purple-500 transition-colors"
-                                                            title="Edit Image"
-                                                        >
-                                                            <Palette size={12} />
-                                                        </button>
-                                                    )}
-                                                    {mode === 'manage' && (
-                                                        <>
-                                                            <button
-                                                                onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }}
-                                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-                                                                title="Move"
-                                                            >
-                                                                <Move size={12} />
-                                                            </button>
-                                                            <button
-                                                                onClick={(e) => deleteItem(e, item)}
-                                                                className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
-                                                                title="Delete"
-                                                            >
-                                                                <Trash2 size={12} />
-                                                            </button>
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
+                                const itemData = {
+                                    columnCount,
+                                    sortedItems,
+                                    handleDragStart,
+                                    handleDragEnd,
+                                    handleDragOver,
+                                    handleDragLeave,
+                                    handleDrop,
+                                    mode,
+                                    disableUrlNavigation,
+                                    toggleSelection,
+                                    setInternalFolderId,
+                                    router,
+                                    selectedIds,
+                                    dropTargetId,
+                                    draggedItems,
+                                    openEditModal,
+                                    openImageEditor,
+                                    deleteItem,
+                                    openMoveModal,
+                                    formatBytes,
+                                    formatTime
                                 };
 
                                 return (
@@ -1439,9 +1488,10 @@ export default function ContentLibrary({
                                             rowCount={rowCount}
                                             rowHeight={rowHeight}
                                             style={{ height: h, width: w }}
-                                            cellComponent={Cell as any}
-                                            cellProps={{ items: sortedItems }}
-                                        />
+                                            {...({ itemData } as any)}
+                                        >
+                                            {GridCell as any}
+                                        </GridComponent>
                                         {loadingMore && (
                                             <div className="flex justify-center py-4">
                                                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-ios-blue" />

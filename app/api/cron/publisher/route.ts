@@ -239,8 +239,19 @@ async function handler(request: Request) {
                 if (sortOrder === 'random_loop') {
                     const published = state.published_indexes || [];
                     const available = contentList.map((_: any, i: number) => i).filter((i: number) => !published.includes(i));
+
                     if (available.length === 0) {
-                        selectedIndex = Math.floor(Math.random() * contentList.length);
+                        // All items have been posted at least once, time to reset the pool.
+                        // To prevent the exact same video posting twice in a row when the pool resets,
+                        // we must exclude the last posted index from the next random candidate selection (if possible)
+                        const lastIndex = published.length > 0 ? published[published.length - 1] : -1;
+                        let candidates = contentList.map((_: any, i: number) => i);
+
+                        if (contentList.length > 1 && lastIndex !== -1) {
+                            candidates = candidates.filter((i: number) => i !== lastIndex);
+                        }
+
+                        selectedIndex = candidates[Math.floor(Math.random() * candidates.length)];
                         state.published_indexes = [selectedIndex];
                     } else {
                         selectedIndex = available[Math.floor(Math.random() * available.length)];
