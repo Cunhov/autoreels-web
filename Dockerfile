@@ -1,5 +1,13 @@
+# syntax=docker/dockerfile:1.7
+
 # Base image
 FROM node:20-alpine AS base
+
+ENV NEXT_TELEMETRY_DISABLED=1 \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_PROGRESS=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -8,11 +16,12 @@ WORKDIR /app
 
 # Install dependencies based on the preferred package manager
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund --prefer-offline --progress=false
 
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
+ENV NODE_OPTIONS="--max-old-space-size=768"
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
