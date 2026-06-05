@@ -1,29 +1,14 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import {
+    fetchWithTimeout,
+    getGraphBaseUrl,
+    GRAPH_API_VERSION,
+    refreshInstagramToken,
+    resolveAccessToken,
+} from '@/lib/instagram';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const GRAPH_API_VERSION = 'v22.0';
-
-/** All external HTTP calls go through this — aborts after 15 s by default, but allows overrides (e.g., 5 mins for large uploads). */
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 15_000): Promise<Response> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-        return await fetch(url, { ...options, signal: controller.signal });
-    } finally {
-        clearTimeout(timer);
-    }
-}
-
-function cleanToken(token: string): string {
-    return (token || '').trim().replace(/^["']|["']$/g, '').trim();
-}
-
-function getBaseUrl(token: string) {
-    const cleaned = cleanToken(token);
-    return cleaned.startsWith('IG') ? 'https://graph.instagram.com' : 'https://graph.facebook.com';
-}
 
 function makeAbsoluteUrl(baseOut: string, path: string | null | undefined): string {
     if (!path) return '';
@@ -31,75 +16,6 @@ function makeAbsoluteUrl(baseOut: string, path: string | null | undefined): stri
     const cleanPath = path.startsWith('/') ? path : `/${path}`;
     return `${baseOut}${cleanPath}`;
 }
-
-/** Resolve access token — supports Redis `token_` prefix if Redis is configured.
- *  Handles String, List, *and* Hash key types (n8n may store tokens as Hashes). */
-async function resolveAccessToken(tokenOrKey: string | null): Promise<string> {
-    if (!tokenOrKey) return '';
-
-    // Trim early to catch " token_..." cases
-    const input = tokenOrKey.trim().replace(/^[\"']|[\"']$/g, '').trim();
-    let resolvedToken = input;
-
-    if (input.startsWith('token_')) {
-        try {
-            let redisUrl = process.env.REDIS_URL || '';
-            let redisToken = process.env.REDIS_TOKEN || '';
-
-            if (redisUrl && redisUrl.startsWith('rediss://')) {
-                const match = redisUrl.match(/rediss:\/\/[^:]+:([^@]+)@([^:]+)/);
-                if (match) { redisToken = match[1]; redisUrl = `https://${match[2]}`; }
-            }
-
-            if (redisUrl) {
-                const { Redis } = await import('@upstash/redis');
-                const redis = new Redis({ url: redisUrl, token: redisToken });
-
-                let val: string | null = null;
-                const keyType = await redis.type(input);
-
-                if (keyType === 'string') {
-                    val = await redis.get<string>(input);
-                } else if (keyType === 'list') {
-                    const lv = await redis.lindex(input, 0);
-                    if (lv) val = lv as string;
-                } else if (keyType === 'hash') {
-                    const hashData = await redis.hgetall(input);
-                    if (hashData && typeof hashData === 'object' && Object.keys(hashData).length > 0) {
-                        // Pick the first value that looks like a token
-                        const firstVal = Object.values(hashData).find(v => v && typeof v === 'string' && (v as string).length > 10);
-                        if (firstVal) {
-                            val = firstVal as string;
-                            console.log(`[Redis] Resolved ${input} via HGETALL (Hash key)`);
-                        }
-                    }
-                } else if (keyType === 'none') {
-                    console.log(`[Redis] Key ${input} does not exist`);
-                } else {
-                    console.log(`[Redis] Key ${input} has unsupported type: ${keyType}`);
-                }
-
-                if (val) {
-                    resolvedToken = val;
-                } else {
-                    const msg = `Token key ${input} yielded no value in Redis (tried String, List, Hash)`;
-                    console.error(`[resolveAccessToken] ${msg}`);
-                    throw new Error(`${msg}. Please re-connect the channel.`);
-                }
-            } else {
-                const msg = `Redis URL missing, cannot resolve ${input}`;
-                console.error(`[resolveAccessToken] ${msg}`);
-                throw new Error(msg);
-            }
-        } catch (e: any) {
-            console.error(`[resolveAccessToken] Exception resolving ${input}:`, e.message);
-            throw e;
-        }
-    }
-
-    return cleanToken(resolvedToken);
-}
-
 
 /** Insert a planner log entry. */
 async function logPlanner(plannerId: string, message: string, level: 'info' | 'error' = 'info', details: any = {}) {
@@ -115,6 +31,46 @@ async function logPlanner(plannerId: string, message: string, level: 'info' | 'e
             },
         });
     } catch { /* Don't crash on log failures */ }
+}
+
+async function refreshDueChannelTokens(now: Date) {
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const fourteenDaysFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+
+    const channels = await prisma.channel.findMany({
+        where: {
+            platform: 'instagram',
+            status: 'active',
+            access_token: { not: null },
+            NOT: { access_token: { startsWith: 'token_' } },
+            OR: [
+                { token_refreshed_at: null },
+                { token_refreshed_at: { lte: sevenDaysAgo } },
+                { token_expires_at: { lte: fourteenDaysFromNow } },
+            ],
+        },
+        take: 10,
+    });
+
+    let refreshed = 0;
+    for (const channel of channels) {
+        try {
+            const tokenData = await refreshInstagramToken(channel.access_token || '');
+            await prisma.channel.update({
+                where: { id: channel.id },
+                data: {
+                    access_token: tokenData.token,
+                    token_expires_at: new Date(Date.now() + tokenData.expiresIn * 1000),
+                    token_refreshed_at: now,
+                    token_source: channel.token_source || 'manual',
+                },
+            });
+            refreshed++;
+        } catch (err) {
+            console.error(`[ChannelRefresh] ${channel.id}:`, err instanceof Error ? err.message : err);
+        }
+    }
+    return refreshed;
 }
 
 // ─── Route Handler ────────────────────────────────────────────────────────────
@@ -146,8 +102,9 @@ async function handler(request: Request) {
         const startTime = Date.now();
         const MAX_EXEC_MS = 45_000; // Leave 10-15s buffer for the 60s worker heartbeat
 
-        const results: any = { pending: 0, processing: 0, published: 0, errors: 0, cleaned: 0 };
+        const results: any = { pending: 0, processing: 0, published: 0, errors: 0, cleaned: 0, tokens_refreshed: 0 };
         const now = new Date();
+        results.tokens_refreshed = await refreshDueChannelTokens(now);
 
         // ═══════════════════════════════════════════════════════════════════════
         // PHASE -1: Cleanup — instantly fail posts with no media
@@ -275,6 +232,8 @@ async function handler(request: Request) {
                 let mediaUrl = selectedContent.url;
                 let mediaType = selectedContent.media_type || 'REELS';
                 let caption = selectedContent.caption || '';
+                const locationId = selectedContent.location_id || null;
+                const shareToFeed = selectedContent.share_to_feed !== false;
                 let children: { url: string; type: string }[] = selectedContent.children_urls || selectedContent.carousel_items || [];
 
                 // SUPPORT LEGACY { type: 'config' } and new { type: 'library_item' }
@@ -343,12 +302,14 @@ async function handler(request: Request) {
                             channel_id: channel.id,
                             status: 'pending',
                             media_type: mediaType,
-                            video_url: (mediaType === 'REELS' || mediaType === 'VIDEO') ? mediaUrl : null,
+                            video_url: mediaType === 'REELS' ? mediaUrl : null,
                             image_url: (mediaType === 'IMAGE') ? mediaUrl
                                 : (mediaType === 'STORIES' && mediaUrl && !mediaUrl.includes('.mp4')) ? mediaUrl
                                     : (mediaType === 'CAROUSEL' && children.length > 0) ? children[0].url // Set first child as thumbnail
                                         : null,
-                            children_urls: children.length > 0 ? JSON.stringify(children) : JSON.stringify({ share_to_feed: selectedContent.share_to_feed !== false }),
+                            children_urls: children.length > 0 ? JSON.stringify(children) : null,
+                            share_to_feed: shareToFeed,
+                            location_id: locationId,
                             caption,
                             scheduled_at: now,
                             planner_id: planner.id,
@@ -393,7 +354,7 @@ async function handler(request: Request) {
                 const accountId = (post.channel?.account_id || '').trim();
                 if (!accessToken || !accountId) throw new Error('Missing credentials');
 
-                const baseUrl = getBaseUrl(accessToken);
+                const baseUrl = getGraphBaseUrl(accessToken);
                 const mediaType = post.media_type || 'REELS';
                 const igHeaders = {
                     'Authorization': `Bearer ${accessToken}`,
@@ -467,20 +428,15 @@ async function handler(request: Request) {
                     mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, post.image_url);
                     bodyParams.append('image_url', mediaUrlAbsolute);
                     bodyParams.append('caption', post.caption || '');
+                    if (post.location_id) bodyParams.append('location_id', post.location_id);
                 } else {
                     bodyParams.append('media_type', mediaType === 'STORIES' ? 'STORIES' : 'REELS');
                     mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, post.video_url || post.image_url);
                     bodyParams.append('video_url', mediaUrlAbsolute);
-                    bodyParams.append('caption', post.caption || '');
+                    if (mediaType !== 'STORIES') bodyParams.append('caption', post.caption || '');
                     if (mediaType === 'REELS') {
-                        let shareToFeed = 'true';
-                        if (post.children_urls && post.children_urls.startsWith('{')) {
-                            try {
-                                const parsed = JSON.parse(post.children_urls);
-                                if (parsed.share_to_feed === false) shareToFeed = 'false';
-                            } catch (e) { }
-                        }
-                        bodyParams.append('share_to_feed', shareToFeed);
+                        bodyParams.append('share_to_feed', post.share_to_feed === false ? 'false' : 'true');
+                        if (post.location_id) bodyParams.append('location_id', post.location_id);
                     }
                 }
 
@@ -519,7 +475,7 @@ async function handler(request: Request) {
             if (Date.now() - startTime > MAX_EXEC_MS) { results.timeout = true; break; }
             try {
                 const accessToken = await resolveAccessToken(post.channel?.access_token || null);
-                const baseUrl = getBaseUrl(accessToken);
+                const baseUrl = getGraphBaseUrl(accessToken);
                 const igHeaders = { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' };
 
                 if (post.status === 'processing_children') {
@@ -540,6 +496,7 @@ async function handler(request: Request) {
                             caption: post.caption || '',
                             access_token: accessToken
                         });
+                        if (post.location_id) body.append('location_id', post.location_id);
                         const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media`, { method: 'POST', headers: igHeaders, body: body.toString() });
                         const data = await res.json();
                         if (data.id) {
@@ -603,7 +560,7 @@ async function handler(request: Request) {
             if (Date.now() - startTime > MAX_EXEC_MS) { results.timeout = true; break; }
             try {
                 const accessToken = await resolveAccessToken(post.channel?.access_token || null);
-                const baseUrl = getBaseUrl(accessToken);
+                const baseUrl = getGraphBaseUrl(accessToken);
 
                 const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media_publish`, {
                     method: 'POST',

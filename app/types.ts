@@ -9,8 +9,9 @@ export interface Post {
     instagram_media_id?: string;
     channel_id: string;
     planner_id?: string;
+    share_to_feed?: boolean;
+    location_id?: string;
     title?: string;
     thumbnail_url?: string;
     image_url?: string;
 }
-

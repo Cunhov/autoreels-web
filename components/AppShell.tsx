@@ -3,9 +3,12 @@ import { useState, useEffect, useCallback } from 'react';
 import Sidebar from '@/components/Sidebar';
 import TabBar from '@/components/TabBar';
 import CommandPalette from '@/components/CommandPalette';
+import { usePathname } from 'next/navigation';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
     const [paletteOpen, setPaletteOpen] = useState(false);
+    const pathname = usePathname();
+    const isPublicPage = pathname === '/login' || pathname === '/signup';
 
     const openPalette = useCallback(() => setPaletteOpen(true), []);
     const closePalette = useCallback(() => setPaletteOpen(false), []);
@@ -21,6 +24,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         window.addEventListener('keydown', handler);
         return () => window.removeEventListener('keydown', handler);
     }, []);
+
+    if (isPublicPage) {
+        return (
+            <main className="min-h-screen bg-ios-background text-ios-text">
+                {children}
+            </main>
+        );
+    }
 
     return (
         <div className="flex min-h-screen">

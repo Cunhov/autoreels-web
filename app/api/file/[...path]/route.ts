@@ -1,5 +1,7 @@
-import { readFile } from "fs/promises";
-import { join, extname } from "path";
+import { stat } from "fs/promises";
+import { createReadStream } from "fs";
+import { extname, resolve, sep } from "path";
+import { Readable } from "stream";
 
 // Simple MIME type map (no external dependencies)
 const MIME_TYPES: Record<string, string> = {
@@ -17,6 +19,13 @@ const MIME_TYPES: Record<string, string> = {
     ".heif": "image/heif",
     ".txt": "text/plain",
 };
+
+function fileStream(path: string, range?: { start: number; end: number }) {
+    const stream = range
+        ? createReadStream(path, { start: range.start, end: range.end })
+        : createReadStream(path);
+    return Readable.toWeb(stream) as ReadableStream;
+}
 
 // Serve uploaded files stored in /app/data/uploads (Docker volume)
 // Also checks /public/uploads for backwards compatibility
@@ -53,8 +62,7 @@ async function handleFileRequest(
     const { path } = await paramsPromise;
     const filePath = path.join("/");
 
-    // Security: ensure path doesn't escape the uploads directory
-    if (filePath.includes("..")) {
+    if (!filePath || filePath.includes("..") || filePath.startsWith("/") || filePath.includes("\\")) {
         return new Response(JSON.stringify({ error: "Forbidden" }), {
             status: 403,
             headers: { 'Content-Type': 'application/json' }
@@ -69,27 +77,68 @@ async function handleFileRequest(
         ? parts.slice(1).join("/")
         : null;
 
-    const candidatePaths = [
-        join(process.cwd(), "data", "uploads", filePath),
-        ...(dedupedPath ? [join(process.cwd(), "data", "uploads", dedupedPath)] : []),
-        join(process.cwd(), "public", "uploads", filePath),
-        ...(dedupedPath ? [join(process.cwd(), "public", "uploads", dedupedPath)] : []),
+    const roots = [
+        resolve(process.cwd(), "data", "uploads"),
+        resolve(process.cwd(), "public", "uploads"),
     ];
+    const relativePaths = [filePath, ...(dedupedPath ? [dedupedPath] : [])];
+    const candidatePaths = roots.flatMap(root =>
+        relativePaths.map(relativePath => {
+            const candidate = resolve(root, relativePath);
+            return candidate.startsWith(root + sep) ? candidate : null;
+        })
+    ).filter((candidate): candidate is string => Boolean(candidate));
 
     for (const candidate of candidatePaths) {
         try {
-            const data = await readFile(candidate);
+            const fileStat = await stat(candidate);
+            if (!fileStat.isFile()) continue;
+
             const ext = extname(filePath).toLowerCase();
             const mimeType = MIME_TYPES[ext] || "application/octet-stream";
+            const range = req.headers.get("range");
+            const baseHeaders = {
+                "Content-Type": mimeType,
+                "Cache-Control": "public, max-age=604800, immutable",
+                "Access-Control-Allow-Origin": "*",
+                "Accept-Ranges": "bytes",
+                "X-Content-Type-Options": "nosniff"
+            };
 
-            return new Response(isHead ? null : data, {
+            if (range) {
+                const match = range.match(/^bytes=(\d*)-(\d*)$/);
+                if (!match) {
+                    return new Response(null, { status: 416, headers: baseHeaders });
+                }
+
+                const size = fileStat.size;
+                const start = match[1] ? Number(match[1]) : 0;
+                const end = match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
+
+                if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= size) {
+                    return new Response(null, {
+                        status: 416,
+                        headers: {
+                            ...baseHeaders,
+                            "Content-Range": `bytes */${size}`,
+                        },
+                    });
+                }
+
+                return new Response(isHead ? null : fileStream(candidate, { start, end }), {
+                    status: 206,
+                    headers: {
+                        ...baseHeaders,
+                        "Content-Length": String(end - start + 1),
+                        "Content-Range": `bytes ${start}-${end}/${size}`,
+                    },
+                });
+            }
+
+            return new Response(isHead ? null : fileStream(candidate), {
                 headers: {
-                    "Content-Type": mimeType,
-                    "Content-Length": data.length.toString(),
-                    "Cache-Control": "public, max-age=86400, must-revalidate",
-                    "Access-Control-Allow-Origin": "*",
-                    "Accept-Ranges": "bytes",
-                    "X-Content-Type-Options": "nosniff"
+                    ...baseHeaders,
+                    "Content-Length": String(fileStat.size),
                 },
             });
         } catch {

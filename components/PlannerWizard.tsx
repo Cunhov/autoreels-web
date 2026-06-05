@@ -51,7 +51,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     const [sortOrder, setSortOrder] = useState('random_loop'); // random_loop, old_to_new, new_to_old
 
     // Advanced Content Settings
-    const [mediaType, setMediaType] = useState<'REELS' | 'STORIES' | 'IMAGE' | 'CAROUSEL' | 'VIDEO'>('REELS');
+    const [mediaType, setMediaType] = useState<'REELS' | 'STORIES' | 'IMAGE' | 'CAROUSEL'>('REELS');
     const [shareToFeed, setShareToFeed] = useState(true);
     const [isCarousel, setIsCarousel] = useState(false);
     const [caption, setCaption] = useState('');
@@ -533,7 +533,6 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                             <option value="IMAGE">Post / Image</option>
                                             <option value="CAROUSEL">Carousel</option>
                                             <option value="STORIES">Story</option>
-                                            <option value="VIDEO">Video</option>
                                         </select>
                                     </div>
                                     {mediaType === 'IMAGE' && !isCarousel && (

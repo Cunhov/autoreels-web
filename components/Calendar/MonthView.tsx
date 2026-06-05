@@ -100,26 +100,18 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                             ${getBorderClass(p.status)}
                                         `}
                                     >
-                                        {p.video_url ? (
-                                            <video
-                                                src={p.video_url}
-                                                className="w-full h-full object-cover opacity-90 group-hover/item:opacity-100 transition-opacity"
-                                                muted
-                                                playsInline
-                                                onMouseOver={e => e.currentTarget.play().catch(() => { })}
-                                                onMouseOut={e => {
-                                                    e.currentTarget.pause();
-                                                    e.currentTarget.currentTime = 0;
-                                                }}
-                                            />
-                                        ) : p.image_url || p.thumbnail_url ? (
+                                        {p.image_url || p.thumbnail_url ? (
                                             <img
                                                 src={p.image_url || p.thumbnail_url}
                                                 className="w-full h-full object-cover opacity-90 group-hover/item:opacity-100 transition-opacity"
                                                 alt="Post preview"
+                                                loading="lazy"
+                                                decoding="async"
                                             />
                                         ) : (
-                                            <div className="w-full h-full bg-ios-gray-5 flex items-center justify-center text-[10px] text-ios-secondary">No Media</div>
+                                            <div className="w-full h-full bg-ios-gray-5 flex items-center justify-center text-[10px] text-ios-secondary">
+                                                {p.video_url ? 'Video' : 'No Media'}
+                                            </div>
                                         )}
 
                                         <div className="absolute top-1 right-1">
@@ -134,7 +126,10 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                 ))}
                                 {dayPosts.length > 3 && (
                                     <div
-                                        onClick={(e) => { e.stopPropagation(); item.date && onDayClick(item.date); }}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (item.date) onDayClick(item.date);
+                                        }}
                                         className="text-[10px] text-center font-bold text-ios-blue bg-ios-blue/10 rounded-full py-0.5 mt-1 hover:bg-ios-blue/20 transition-colors"
                                     >
                                         +{dayPosts.length - 3} more

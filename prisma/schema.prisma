@@ -74,7 +74,11 @@ model Channel {
   name                String
   platform            String
   access_token        String?
+  token_source        String?  @default("manual")
+  token_expires_at    DateTime?
+  token_refreshed_at  DateTime?
   account_id          String?
+  username            String?
   profile_picture_url String?
   status              String   @default("active")
   created_at          DateTime @default(now())
@@ -84,6 +88,8 @@ model Channel {
   planners Planner[] @relation("ChannelToPlanner")
 
   @@map("channels")
+  @@index([user_id, status])
+  @@unique([user_id, account_id])
 }
 
 
@@ -102,6 +108,8 @@ model Planner {
   channels    Channel[]    @relation("ChannelToPlanner")
 
   @@map("planners")
+  @@index([user_id, status])
+  @@index([user_id, created_at])
 }
 
 model PlannerLog {
@@ -115,6 +123,7 @@ model PlannerLog {
   planner     Planner  @relation(fields: [planner_id], references: [id], onDelete: Cascade)
 
   @@map("planner_logs")
+  @@index([planner_id, created_at])
 }
 
 model ContentItem {
@@ -138,6 +147,8 @@ model ContentItem {
 
   @@map("content_items")
   @@index([parent_id])
+  @@index([user_id, parent_id, name])
+  @@index([user_id, type])
 }
 
 model Post {
@@ -151,6 +162,8 @@ model Post {
   caption                String?
   media_type             String?   // REELS, IMAGE, CAROUSEL, STORIES, VIDEO
   children_urls          String?   // JSON: array of {url, type} for carousels
+  share_to_feed          Boolean   @default(true)
+  location_id            String?
   status                 String    @default("scheduled")
   scheduled_at           DateTime?
   published_at           DateTime?
@@ -166,4 +179,9 @@ model Post {
   planner Planner?  @relation(fields: [planner_id], references: [id], onDelete: SetNull)
 
   @@map("posts")
+  @@index([user_id, status])
+  @@index([user_id, scheduled_at])
+  @@index([user_id, created_at])
+  @@index([channel_id])
+  @@index([planner_id])
 }

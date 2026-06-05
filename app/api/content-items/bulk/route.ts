@@ -37,7 +37,7 @@ export async function POST(req: Request) {
                 where,
                 select: { id: true },
             });
-            targetIds = allItems.map((i) => i.id);
+            targetIds = allItems.map((item: { id: string }) => item.id);
         }
 
         if (targetIds.length === 0) {
@@ -67,8 +67,8 @@ export async function POST(req: Request) {
 
                 // Collect children of carousel folders
                 const folderIds = itemsToDelete
-                    .filter((i) => i.type === "carousel_folder")
-                    .map((i) => i.id);
+                    .filter((item: { type: string }) => item.type === "carousel_folder")
+                    .map((item: { id: string }) => item.id);
 
                 if (folderIds.length > 0) {
                     const descendants = await prisma.contentItem.findMany({
@@ -128,7 +128,7 @@ export async function POST(req: Request) {
 
                 // Use a transaction for atomicity
                 await prisma.$transaction(
-                    itemsToRename.map((item, i) =>
+                    itemsToRename.map((item: { id: string }, i: number) =>
                         prisma.contentItem.update({
                             where: { id: item.id },
                             data: {

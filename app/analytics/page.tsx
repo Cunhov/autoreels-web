@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import IOSCard from '@/components/IOSComponents';
 import {
-    BarChart2, Video, CheckCircle2, Clock, XCircle, Radio,
+    Video, CheckCircle2, Clock, XCircle, Radio,
     Sliders, TrendingUp, AlertTriangle
 } from 'lucide-react';
 
@@ -10,6 +10,7 @@ interface PostData {
     id: string;
     status: string;
     scheduled_at: string;
+    channel_id?: string;
     caption?: string;
     error_message?: string;
     channel_name?: string;
@@ -170,12 +171,21 @@ export default function AnalyticsPage() {
     const [channels, setChannels] = useState<ChannelData[]>([]);
     const [planners, setPlanners] = useState<PlannerData[]>([]);
     const [loading, setLoading] = useState(true);
+    const [rangeDays, setRangeDays] = useState(30);
+    const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'failed' | 'pending'>('all');
 
     useEffect(() => {
         (async () => {
+            setLoading(true);
             try {
+                const start = new Date();
+                start.setDate(start.getDate() - rangeDays);
+                const params = new URLSearchParams({
+                    start: start.toISOString(),
+                    limit: '2000',
+                });
                 const [pR, cR, plR] = await Promise.all([
-                    fetch('/api/posts'),
+                    fetch(`/api/posts?${params.toString()}`),
                     fetch('/api/channels'),
                     fetch('/api/planners'),
                 ]);
@@ -185,13 +195,21 @@ export default function AnalyticsPage() {
             } catch { }
             finally { setLoading(false); }
         })();
-    }, []);
+    }, [rangeDays]);
+
+    const filteredPosts = useMemo(() => {
+        if (statusFilter === 'all') return posts;
+        if (statusFilter === 'pending') {
+            return posts.filter(p => !['published', 'failed'].includes(p.status));
+        }
+        return posts.filter(p => p.status === statusFilter);
+    }, [posts, statusFilter]);
 
     // KPIs
-    const published = useMemo(() => posts.filter(p => p.status === 'published').length, [posts]);
-    const failed = useMemo(() => posts.filter(p => p.status === 'failed').length, [posts]);
-    const pending = useMemo(() => posts.filter(p => ['pending', 'scheduled'].includes(p.status)).length, [posts]);
-    const successRate = posts.length ? Math.round((published / posts.length) * 100) : 0;
+    const published = useMemo(() => filteredPosts.filter(p => p.status === 'published').length, [filteredPosts]);
+    const failed = useMemo(() => filteredPosts.filter(p => p.status === 'failed').length, [filteredPosts]);
+    const pending = useMemo(() => filteredPosts.filter(p => ['pending', 'scheduled', 'processing', 'processing_upload', 'processing_children', 'ready_to_publish'].includes(p.status)).length, [filteredPosts]);
+    const successRate = filteredPosts.length ? Math.round((published / filteredPosts.length) * 100) : 0;
 
     // Last-30-days bar chart
     const { daily30, daily30Labels } = useMemo(() => {
@@ -204,18 +222,18 @@ export default function AnalyticsPage() {
             counts[key] = 0;
             labels.push(key);
         }
-        posts.filter(p => p.status === 'published' && p.scheduled_at).forEach(p => {
+        filteredPosts.filter(p => p.status === 'published' && p.scheduled_at).forEach(p => {
             const d = new Date(p.scheduled_at);
             const key = d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
             if (key in counts) counts[key]++;
         });
         return { daily30: labels.map(l => counts[l]), daily30Labels: labels };
-    }, [posts]);
+    }, [filteredPosts]);
 
     // Per-channel stats
     const channelStats = useMemo(() => {
         return channels.map(ch => {
-            const chPosts = posts.filter(p => (p as any).channel_id === ch.id || (p as any).channel?.name === ch.name);
+            const chPosts = filteredPosts.filter(p => p.channel_id === ch.id || p.channel?.name === ch.name);
             return {
                 id: ch.id,
                 name: ch.name,
@@ -224,15 +242,15 @@ export default function AnalyticsPage() {
                 pending: chPosts.filter(p => ['pending', 'scheduled'].includes(p.status)).length,
             };
         });
-    }, [posts, channels]);
+    }, [filteredPosts, channels]);
 
     // Recent failures
     const recentFailed = useMemo(() =>
-        posts.filter(p => p.status === 'failed').slice(-5).reverse(),
-        [posts]);
+        filteredPosts.filter(p => p.status === 'failed').slice(-5).reverse(),
+        [filteredPosts]);
 
     const kpis = [
-        { label: 'Total Posts', value: posts.length, icon: Video, color: 'text-ios-blue', bg: 'bg-ios-blue/10' },
+        { label: 'Total Posts', value: filteredPosts.length, icon: Video, color: 'text-ios-blue', bg: 'bg-ios-blue/10' },
         { label: 'Published', value: published, icon: CheckCircle2, color: 'text-ios-green', bg: 'bg-ios-green/10' },
         { label: 'Failed', value: failed, icon: XCircle, color: 'text-ios-red', bg: 'bg-ios-red/10' },
         { label: 'Pending', value: pending, icon: Clock, color: 'text-ios-text-secondary', bg: 'bg-ios-gray-5/50' },
@@ -249,7 +267,32 @@ export default function AnalyticsPage() {
 
     return (
         <div className="space-y-6 pb-8">
-            <h1 className="text-[34px] font-bold text-ios-text">Analytics</h1>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                    <h1 className="text-[34px] font-bold text-ios-text">Analytics</h1>
+                    <p className="text-sm text-ios-text-secondary">Customize the reporting window and status focus.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {[7, 30, 90].map(days => (
+                        <button
+                            key={days}
+                            onClick={() => setRangeDays(days)}
+                            className={`px-3 py-2 rounded-lg text-sm font-semibold border ${rangeDays === days ? 'bg-ios-blue text-white border-ios-blue' : 'bg-ios-card border-ios-separator text-ios-text-secondary'}`}
+                        >
+                            {days}d
+                        </button>
+                    ))}
+                    {(['all', 'published', 'failed', 'pending'] as const).map(status => (
+                        <button
+                            key={status}
+                            onClick={() => setStatusFilter(status)}
+                            className={`px-3 py-2 rounded-lg text-sm font-semibold border capitalize ${statusFilter === status ? 'bg-ios-gray-5 text-ios-text border-ios-separator' : 'bg-ios-card border-ios-separator text-ios-text-secondary'}`}
+                        >
+                            {status}
+                        </button>
+                    ))}
+                </div>
+            </div>
 
             {/* KPI Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -271,7 +314,7 @@ export default function AnalyticsPage() {
                         <h3 className="text-[17px] font-bold">Posts Per Day</h3>
                         <span className="text-[12px] text-ios-text-secondary">Last 30 days</span>
                     </div>
-                    {posts.length === 0 ? (
+                    {filteredPosts.length === 0 ? (
                         <div className="h-32 flex items-center justify-center text-ios-text-secondary text-sm">
                             No published posts yet
                         </div>
@@ -302,7 +345,7 @@ export default function AnalyticsPage() {
             {/* Heatmap */}
             <IOSCard className="p-5">
                 <h3 className="text-[17px] font-bold mb-4">Posting Heatmap</h3>
-                <PostingHeatmap posts={posts} />
+                <PostingHeatmap posts={filteredPosts} />
             </IOSCard>
 
             {/* Per-channel stats */}

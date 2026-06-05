@@ -2,10 +2,22 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getErrorMessage, getSessionUserId } from "@/lib/api";
+import { posix } from "path";
+
+function cleanPathSegment(value: string | null) {
+    if (!value) return "";
+    const normalized = posix.normalize(value.replace(/\\/g, "/")).replace(/^\/+|\/+$/g, "");
+    if (normalized === "." || normalized.startsWith("../") || normalized.includes("/../")) {
+        return null;
+    }
+    return normalized;
+}
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    const userId = getSessionUserId(session);
+    if (!userId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -24,17 +36,22 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
         }
 
-        const userId = (session.user as any).id;
+        const safeFolderPath = cleanPathSegment(folderPath);
+        const safeFilename = cleanPathSegment(filename);
+
+        if (safeFolderPath === null || safeFilename === null || safeFilename.includes("/")) {
+            return NextResponse.json({ error: "Invalid file path" }, { status: 400 });
+        }
 
         // Define clean URL for serving
-        const finalUrl = `/api/file/${userId}/${folderPath}/${filename}`.replace(/\/+/g, '/');
+        const finalUrl = `/api/file/${[userId, safeFolderPath, safeFilename].filter(Boolean).join("/")}`;
 
         // Check if an item already exists with this name/path to avoid constraint errors
         const existingItem = await prisma.contentItem.findFirst({
             where: {
                 user_id: userId,
-                name: filename,
-                path: folderPath,
+                name: safeFilename,
+                path: safeFolderPath,
             }
         });
 
@@ -56,10 +73,10 @@ export async function POST(req: Request) {
             savedItem = await prisma.contentItem.create({
                 data: {
                     user_id: userId,
-                    name: filename,
+                    name: safeFilename,
                     size: size,
                     url: finalUrl,
-                    path: folderPath,
+                    path: safeFolderPath,
                     type: type,
                     ...(tags ? { tags } : {}),
                     ...(parentId ? { parent_id: parentId } : {}),
@@ -69,8 +86,8 @@ export async function POST(req: Request) {
         }
 
         return NextResponse.json({ success: true, item: savedItem });
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Finalizing upload error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
     }
 }

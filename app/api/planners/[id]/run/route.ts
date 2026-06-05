@@ -79,6 +79,8 @@ export async function POST(
         let mediaUrl = selectedContent.url;
         let mediaType = selectedContent.media_type || 'REELS';
         let caption = selectedContent.caption || '';
+        const locationId = selectedContent.location_id || null;
+        const shareToFeed = selectedContent.share_to_feed !== false;
         let children: { url: string; type: string }[] = selectedContent.children_urls || [];
 
         if (selectedContent.type === 'library_item') {
@@ -128,10 +130,12 @@ export async function POST(
                     channel_id: channel.id,
                     status: 'pending',
                     media_type: mediaType,
-                    video_url: (mediaType === 'REELS' || mediaType === 'VIDEO') ? mediaUrl : null,
+                    video_url: mediaType === 'REELS' ? mediaUrl : null,
                     image_url: (mediaType === 'IMAGE') ? mediaUrl
                         : (mediaType === 'STORIES' && mediaUrl && !mediaUrl?.includes('.mp4')) ? mediaUrl : null,
                     children_urls: children.length > 0 ? JSON.stringify(children) : null,
+                    share_to_feed: shareToFeed,
+                    location_id: locationId,
                     caption,
                     scheduled_at: now,
                     planner_id: planner.id,

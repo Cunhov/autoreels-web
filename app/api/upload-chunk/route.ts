@@ -1,12 +1,28 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { appendFile, mkdir, rename, unlink } from "fs/promises";
-import { join, dirname } from "path";
+import { getErrorMessage, getSessionUserId } from "@/lib/api";
+import { mkdir, rename } from "fs/promises";
+import { join, dirname, posix } from "path";
+import type { ReadableStream as NodeReadableStream } from "stream/web";
+
+function normalizeUploadPath(userId: string, rawPath: string) {
+    const normalized = posix.normalize(rawPath.replace(/\\/g, "/")).replace(/^\/+/, "");
+    const withoutUserPrefix = normalized.startsWith(`${userId}/`)
+        ? normalized.slice(userId.length + 1)
+        : normalized;
+
+    if (!withoutUserPrefix || withoutUserPrefix === "." || withoutUserPrefix.startsWith("../") || withoutUserPrefix.includes("/../")) {
+        return null;
+    }
+
+    return `${userId}/${withoutUserPrefix}`;
+}
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    const userId = getSessionUserId(session);
+    if (!userId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -19,11 +35,9 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Missing x-file-name header" }, { status: 400 });
         }
 
-        // Security check + ensure path always includes userId prefix
-        const userId = (session.user as any).id;
-        const path = rawPath.startsWith(`${userId}/`) ? rawPath : `${userId}/${rawPath}`;
-        if (!path.startsWith(`${userId}/`)) {
-            return NextResponse.json({ error: "Permission denied" }, { status: 403 });
+        const path = normalizeUploadPath(userId, rawPath);
+        if (!path) {
+            return NextResponse.json({ error: "Invalid upload path" }, { status: 400 });
         }
 
         const uploadDir = join(process.cwd(), "data", "uploads");
@@ -43,7 +57,7 @@ export async function POST(req: Request) {
         const { createWriteStream } = await import('fs');
         const { pipeline } = await import('stream/promises');
 
-        const readableStream = Readable.fromWeb(req.body as any);
+        const readableStream = Readable.fromWeb(req.body as unknown as NodeReadableStream<Uint8Array>);
 
         // Use append mode for parts > 0 to collect all chunks safely
         const flags = chunkIndex === 0 ? 'w' : 'a';
@@ -58,8 +72,8 @@ export async function POST(req: Request) {
         }
 
         return NextResponse.json({ success: true, path, completed: false });
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Local chunk upload error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
     }
 }

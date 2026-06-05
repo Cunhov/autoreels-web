@@ -5,6 +5,9 @@ const nextConfig = {
     '*': ['./prisma.config.ts'],
   },
   experimental: {},
+  turbopack: {
+    root: __dirname,
+  },
 };
 
 module.exports = nextConfig;

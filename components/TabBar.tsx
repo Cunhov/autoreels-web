@@ -9,6 +9,7 @@ interface TabBarProps {
 }
 
 export default function TabBar({ onSearchOpen }: TabBarProps) {
+    void onSearchOpen;
     const pathname = usePathname();
     const router = useRouter();
     const [fabOpen, setFabOpen] = useState(false);
@@ -20,14 +21,10 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
     useEffect(() => {
         (async () => {
             try {
-                const [postsRes, plannersRes] = await Promise.all([
-                    fetch('/api/posts'),
-                    fetch('/api/planners'),
-                ]);
-                const posts = postsRes.ok ? await postsRes.json() : [];
-                const planners = plannersRes.ok ? await plannersRes.json() : [];
-                setFailedCount(Array.isArray(posts) ? posts.filter((p: any) => p.status === 'failed').length : 0);
-                setActivePlanners(Array.isArray(planners) ? planners.filter((p: any) => p.status === 'active').length : 0);
+                const res = await fetch('/api/summary');
+                const summary = res.ok ? await res.json() : {};
+                setFailedCount(Number(summary.failedPosts || 0));
+                setActivePlanners(Number(summary.activePlanners || 0));
             } catch { }
         })();
     }, []);

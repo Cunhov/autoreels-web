@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { X, CheckCircle2, XCircle, Clock, CalendarClock } from 'lucide-react'
 
 import CalendarHeader from '@/components/Calendar/CalendarHeader'
@@ -14,9 +14,43 @@ type FilterStatus = 'all' | 'published' | 'failed' | 'pending';
 
 interface Planner { id: string; name: string; }
 
+function toApiDate(date: Date) {
+  return date.toISOString();
+}
+
+function getFetchWindow(currentDate: Date, viewMode: 'month' | 'week') {
+  const today = new Date();
+  let start: Date;
+  let end: Date;
+
+  if (viewMode === 'month') {
+    start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    start.setDate(start.getDate() - 7);
+    end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
+    end.setDate(end.getDate() + 14);
+  } else {
+    start = new Date(currentDate);
+    start.setDate(start.getDate() - start.getDay());
+    start.setHours(0, 0, 0, 0);
+    end = new Date(start);
+    end.setDate(start.getDate() + 14);
+    end.setHours(23, 59, 59, 999);
+  }
+
+  const todayStart = new Date(today);
+  todayStart.setHours(0, 0, 0, 0);
+  const upcomingEnd = new Date(today);
+  upcomingEnd.setDate(upcomingEnd.getDate() + 30);
+  upcomingEnd.setHours(23, 59, 59, 999);
+
+  return {
+    start: new Date(Math.min(start.getTime(), todayStart.getTime())),
+    end: new Date(Math.max(end.getTime(), upcomingEnd.getTime())),
+  };
+}
+
 export default function CalendarPage() {
   const [posts, setPosts] = useState<Post[]>([]);
-  const [channels, setChannels] = useState<any[]>([]);
   const [planners, setPlanners] = useState<Planner[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -31,32 +65,42 @@ export default function CalendarPage() {
 
   const router = useRouter();
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  async function fetchData() {
+  const fetchPosts = useCallback(async () => {
     setLoading(true);
     try {
-      const [postsRes, channelsRes, plannersRes] = await Promise.all([
-        fetch('/api/posts'),
-        fetch('/api/channels'),
-        fetch('/api/planners'),
-      ]);
-
+      const { start, end } = getFetchWindow(currentDate, viewMode);
+      const postsParams = new URLSearchParams({
+        start: toApiDate(start),
+        end: toApiDate(end),
+        limit: '1000',
+      });
+      const postsRes = await fetch(`/api/posts?${postsParams.toString()}`);
       const postsData = await postsRes.json();
-      const channelsData = await channelsRes.json();
-      const plannersData = await plannersRes.json();
 
       if (Array.isArray(postsData)) setPosts(postsData);
-      if (Array.isArray(channelsData)) setChannels(channelsData);
-      if (Array.isArray(plannersData)) setPlanners(plannersData);
     } catch (err) {
       console.error('Error fetching data:', err);
     } finally {
       setLoading(false);
     }
-  }
+  }, [currentDate, viewMode]);
+
+  useEffect(() => {
+    fetchPosts();
+  }, [fetchPosts]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const plannersRes = await fetch('/api/planners');
+        const plannersData = await plannersRes.json();
+
+        if (Array.isArray(plannersData)) setPlanners(plannersData);
+      } catch (err) {
+        console.error('Error fetching metadata:', err);
+      }
+    })();
+  }, []);
 
   const handlePrev = () => {
     const newDate = new Date(currentDate);
@@ -81,10 +125,6 @@ export default function CalendarPage() {
   const handleToday = () => {
     setCurrentDate(new Date());
   }
-
-  const getChannelToken = (channelId: string) => {
-    return channels.find(c => c.id === channelId)?.access_token;
-  };
 
   // Apply filters
   const filteredPosts = useMemo(() => {
@@ -314,7 +354,6 @@ export default function CalendarPage() {
       {selectedPost && selectedPost.status === 'published' && (
         <SuccessModal
           post={selectedPost}
-          accessToken={getChannelToken(selectedPost.channel_id)}
           onClose={() => setSelectedPost(null)}
         />
       )}

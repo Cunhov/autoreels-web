@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { X, Instagram, Link as LinkIcon } from 'lucide-react';
+import { X, Instagram, Link as LinkIcon, ShieldCheck } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import { useSession } from 'next-auth/react';
 
@@ -11,6 +11,7 @@ interface Channel {
     status: string;
     account_id: string;
     access_token?: string;
+    token_source?: string;
     profile_picture_url?: string;
 }
 
@@ -26,6 +27,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
     const [accountId, setAccountId] = useState('');
     const [accessToken, setAccessToken] = useState('');
     const [profilePictureUrl, setProfilePictureUrl] = useState('');
+    const [mode, setMode] = useState<'oauth' | 'manual'>('oauth');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const { data: session } = useSession();
@@ -34,14 +36,16 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
         if (isOpen && channel) {
             setName(channel.name);
             setAccountId(channel.account_id);
-            setAccessToken(channel.access_token || '');
+            setAccessToken('');
             setProfilePictureUrl(channel.profile_picture_url || '');
+            setMode('manual');
         } else if (isOpen && !channel) {
             // Reset for create mode
             setName('');
             setAccountId('');
             setAccessToken('');
             setProfilePictureUrl('');
+            setMode('oauth');
         }
         setError('');
     }, [isOpen, channel]);
@@ -60,7 +64,8 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                 name: name,
                 platform: 'instagram',
                 account_id: accountId,
-                access_token: accessToken,
+                ...(accessToken ? { access_token: accessToken } : {}),
+                token_source: 'manual',
                 profile_picture_url: profilePictureUrl,
                 status: 'active'
             };
@@ -90,10 +95,24 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
 
             onSuccess();
             onClose();
-        } catch (err: any) {
+        } catch (err: unknown) {
             console.error(err);
-            setError(err.message || `Failed to ${channel ? 'update' : 'create'} channel`);
+            setError(err instanceof Error ? err.message : `Failed to ${channel ? 'update' : 'create'} channel`);
         } finally {
+            setLoading(false);
+        }
+    };
+
+    const startOAuth = async () => {
+        setLoading(true);
+        setError('');
+        try {
+            const res = await fetch('/api/channels/oauth/start');
+            const data = await res.json();
+            if (!res.ok || !data.url) throw new Error(data.error || 'Could not start Instagram OAuth');
+            window.location.href = data.url;
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Could not connect Instagram');
             setLoading(false);
         }
     };
@@ -111,6 +130,49 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                 </div>
 
                 <form onSubmit={handleSubmit} className="p-6 space-y-4 bg-ios-background/50">
+                    {!channel && (
+                        <div className="grid grid-cols-2 gap-2 p-1 bg-ios-separator/50 rounded-xl">
+                            <button
+                                type="button"
+                                onClick={() => setMode('oauth')}
+                                className={`py-2 rounded-lg text-sm font-semibold ${mode === 'oauth' ? 'bg-ios-card text-ios-blue shadow-sm' : 'text-ios-secondary'}`}
+                            >
+                                OAuth
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setMode('manual')}
+                                className={`py-2 rounded-lg text-sm font-semibold ${mode === 'manual' ? 'bg-ios-card text-ios-blue shadow-sm' : 'text-ios-secondary'}`}
+                            >
+                                Manual
+                            </button>
+                        </div>
+                    )}
+
+                    {!channel && mode === 'oauth' && (
+                        <div className="space-y-4">
+                            <div className="p-4 rounded-xl bg-ios-card border border-ios-separator">
+                                <div className="w-10 h-10 rounded-full bg-ios-blue/10 text-ios-blue flex items-center justify-center mb-3">
+                                    <ShieldCheck size={20} />
+                                </div>
+                                <h3 className="font-semibold text-ios-text">Connect with Instagram</h3>
+                                <p className="text-sm text-ios-secondary mt-1">
+                                    Authorize the profile once. AutoReels stores the long-lived token and refreshes it weekly.
+                                </p>
+                            </div>
+                            <IOSButton
+                                variant="primary"
+                                type="button"
+                                disabled={loading}
+                                onClick={startOAuth}
+                                className="w-full justify-center !py-3.5 !text-[17px]"
+                            >
+                                {loading ? 'Connecting...' : 'Continue with Instagram'}
+                            </IOSButton>
+                        </div>
+                    )}
+
+                    {(channel || mode === 'manual') && (
                     <div className="space-y-4">
                         <div>
                             <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
@@ -160,15 +222,15 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
 
                         <div>
                             <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
-                                Redis List Key
+                                Access Token
                             </label>
                             <div className="relative">
                                 <input
                                     type="text"
-                                    required
+                                    required={!channel}
                                     value={accessToken}
                                     onChange={(e) => setAccessToken(e.target.value)}
-                                    placeholder="instagram_access_tokens"
+                                    placeholder={channel ? 'Leave blank to keep current token' : 'Paste Meta token or legacy token_ key'}
                                     className="w-full bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue transition-all font-mono text-sm pl-10"
                                 />
                                 <div className="absolute left-3 top-3.5 text-ios-text-secondary opacity-50">
@@ -176,10 +238,11 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                                 </div>
                             </div>
                             <p className="text-[11px] text-ios-secondary mt-1.5 px-1">
-                                Enter the Redis list key for access tokens.
+                                Paste the Meta Business access token. Existing Redis keys that start with token_ still work for legacy channels.
                             </p>
                         </div>
                     </div>
+                    )}
 
                     {error && (
                         <div className="p-3 bg-red-50 text-red-600 text-sm rounded-xl text-center">
@@ -188,6 +251,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                     )}
 
                     <div className="pt-2">
+                        {(channel || mode === 'manual') && (
                         <IOSButton
                             variant="primary"
                             type="submit"
@@ -196,6 +260,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                         >
                             {loading ? 'Saving...' : (channel ? 'Update Channel' : 'Add Channel')}
                         </IOSButton>
+                        )}
                     </div>
                 </form>
             </div>
