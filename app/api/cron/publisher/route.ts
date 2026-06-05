@@ -7,6 +7,7 @@ import {
     refreshInstagramToken,
     resolveAccessToken,
 } from '@/lib/instagram';
+import { describeChannelHealth, resolvePlannerRuntime } from '@/lib/planner-runtime';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -174,128 +175,39 @@ async function handler(request: Request) {
                     }
                 }
 
-                const contentList = config.content || [];
-                if (contentList.length === 0) {
-                    await logPlanner(planner.id, `[Phase0] No content configured`, 'error');
-                    continue;
-                }
-
                 if (!planner.channels || planner.channels.length === 0) {
                     await logPlanner(planner.id, `[Phase0] No channels connected`, 'error');
                     continue;
                 }
 
-                // Select content
-                let selectedIndex = -1;
-                const sortOrder = config.sort_order || 'random_loop';
-                const state = config.state || {};
-
-                if (sortOrder === 'random_loop') {
-                    const published = state.published_indexes || [];
-                    const available = contentList.map((_: any, i: number) => i).filter((i: number) => !published.includes(i));
-
-                    if (available.length === 0) {
-                        // All items have been posted at least once, time to reset the pool.
-                        // To prevent the exact same video posting twice in a row when the pool resets,
-                        // we must exclude the last posted index from the next random candidate selection (if possible)
-                        const lastIndex = published.length > 0 ? published[published.length - 1] : -1;
-                        let candidates = contentList.map((_: any, i: number) => i);
-
-                        if (contentList.length > 1 && lastIndex !== -1) {
-                            candidates = candidates.filter((i: number) => i !== lastIndex);
-                        }
-
-                        selectedIndex = candidates[Math.floor(Math.random() * candidates.length)];
-                        state.published_indexes = [selectedIndex];
-                    } else {
-                        selectedIndex = available[Math.floor(Math.random() * available.length)];
-                        state.published_indexes = [...published, selectedIndex];
-                    }
-                } else if (sortOrder === 'new_to_old') {
-                    const last = state.last_index !== undefined ? state.last_index : contentList.length;
-                    selectedIndex = last - 1 < 0 ? contentList.length - 1 : last - 1;
-                    state.last_index = selectedIndex;
-                } else {
-                    const last = state.last_index !== undefined ? state.last_index : -1;
-                    selectedIndex = (last + 1) % contentList.length;
-                    state.last_index = selectedIndex;
-                }
-
-                const selectedContent = contentList[selectedIndex];
-                if (!selectedContent) {
-                    await logPlanner(planner.id, `[Phase0] selectedContent is null at index ${selectedIndex}`, 'error');
+                const runtime = await resolvePlannerRuntime(prisma, planner, now);
+                if (!runtime.ok) {
+                    await logPlanner(planner.id, `[Phase0] Planner preview blocked: ${runtime.errors.join('; ')}`, 'error', runtime);
                     continue;
                 }
 
-                await logPlanner(planner.id, `[Phase0] Selected content[${selectedIndex}]: type=${selectedContent.type}, id=${selectedContent.id}, url=${selectedContent.url}`, 'info');
-
-                let mediaUrl = selectedContent.url;
-                let mediaType = selectedContent.media_type || 'REELS';
-                let caption = selectedContent.caption || '';
-                const locationId = selectedContent.location_id || null;
-                const shareToFeed = selectedContent.share_to_feed !== false;
-                let children: { url: string; type: string }[] = selectedContent.children_urls || selectedContent.carousel_items || [];
-
-                // SUPPORT LEGACY { type: 'config' } and new { type: 'library_item' }
-                if (selectedContent.type === 'library_item' || (selectedContent.type === 'config' && selectedContent.id) || (!selectedContent.type && selectedContent.id)) {
-                    const libItem = await prisma.contentItem.findUnique({ where: { id: selectedContent.id } });
-                    if (libItem) {
-                        mediaUrl = libItem.url;
-                        mediaType = libItem.type === 'video' ? 'REELS'
-                            : libItem.type === 'image' ? 'IMAGE'
-                                : libItem.type === 'carousel_folder' ? 'CAROUSEL' : mediaType;
-
-                        if (libItem.type === 'carousel_folder') {
-                            const subItems = await prisma.contentItem.findMany({
-                                where: { parent_id: libItem.id },
-                                orderBy: { created_at: 'asc' },
-                            });
-                            children = subItems.map((c: any) => {
-                                const urlStr = c.url || '';
-                                const isVideo = c.type === 'video' || (urlStr && /\.(mp4|mov)(\?.*)?$/i.test(urlStr));
-                                return {
-                                    url: urlStr,
-                                    type: isVideo ? 'video' : 'image'
-                                };
-                            }).slice(0, 10);
-                            await logPlanner(planner.id, `[Phase0] Carousel folder: ${children.length} children (limited to max 10)`, 'info');
-                        }
-
-                        let itemTitle = libItem.title || selectedContent.title_fallback || '';
-                        let itemCaption = libItem.caption || selectedContent.caption_fallback || '';
-
-                        caption = (caption || '')
-                            .replace(/{post_title}/g, itemTitle)
-                            .replace(/{post_caption}/g, itemCaption);
-
-                        await logPlanner(planner.id, `[Phase0] Item matched: type=${libItem.type}, title=${itemTitle}`, 'info');
-                    } else {
-                        await logPlanner(planner.id, `[Phase0] Item ID not found: ${selectedContent.id}`, 'error');
-                        // Do not abort, use existing config data as fallback
-                    }
+                const publishableChannels = (planner.channels || []).filter((channel: any) => describeChannelHealth(channel, now).ok);
+                const blockedChannels = (planner.channels || []).filter((channel: any) => !describeChannelHealth(channel, now).ok);
+                if (blockedChannels.length > 0) {
+                    await logPlanner(planner.id, `[Phase0] ${blockedChannels.length} channel(s) blocked`, 'info', {
+                        blocked: blockedChannels.map((channel: any) => channel.id),
+                    });
                 }
-
-                // Final safety checks before post creation
-                if (mediaType === 'CAROUSEL') {
-                    if (children.length === 0) {
-                        await logPlanner(planner.id, `[Phase0] Carousel item at index ${selectedIndex} has no children — skipping`, 'error');
-                        await prisma.planner.update({ where: { id: planner.id }, data: { last_run: now, config: JSON.stringify({ ...config, state }) } });
-                        continue;
-                    }
-                    if (children.length > 10) {
-                        await logPlanner(planner.id, `[Phase0] Carousel has ${children.length} items, limiting to 10 (Instagram API limit)`, 'info');
-                        children = children.slice(0, 10);
-                    }
-                }
-
-                if (!mediaUrl && children.length === 0) {
-                    await logPlanner(planner.id, `[Phase0] Media missing for content[${selectedIndex}] — skipping`, 'error');
-                    await prisma.planner.update({ where: { id: planner.id }, data: { last_run: now, config: JSON.stringify({ ...config, state }) } });
+                if (publishableChannels.length === 0) {
+                    await logPlanner(planner.id, `[Phase0] No publishable channels available`, 'error');
                     continue;
                 }
+
+                const { selectedIndex, selectedContent, mediaUrl, mediaType, caption, locationId, shareToFeed, children, nextState, warnings } = runtime;
+                const safeChildren = children || [];
+                for (const warning of warnings) {
+                    await logPlanner(planner.id, `[Phase0] ${warning}`, 'info');
+                }
+
+                await logPlanner(planner.id, `[Phase0] Selected content[${selectedIndex}]: type=${selectedContent?.type}, id=${selectedContent?.id}, url=${mediaUrl || selectedContent?.url}`, 'info');
 
                 let postsCreated = 0;
-                for (const channel of planner.channels) {
+                for (const channel of publishableChannels) {
                     await prisma.post.create({
                         data: {
                             user_id: planner.user_id,
@@ -305,9 +217,9 @@ async function handler(request: Request) {
                             video_url: mediaType === 'REELS' ? mediaUrl : null,
                             image_url: (mediaType === 'IMAGE') ? mediaUrl
                                 : (mediaType === 'STORIES' && mediaUrl && !mediaUrl.includes('.mp4')) ? mediaUrl
-                                    : (mediaType === 'CAROUSEL' && children.length > 0) ? children[0].url // Set first child as thumbnail
+                            : (mediaType === 'CAROUSEL' && safeChildren.length > 0) ? safeChildren[0].url // Set first child as thumbnail
                                         : null,
-                            children_urls: children.length > 0 ? JSON.stringify(children) : null,
+                            children_urls: safeChildren.length > 0 ? JSON.stringify(safeChildren) : null,
                             share_to_feed: shareToFeed,
                             location_id: locationId,
                             caption,
@@ -321,7 +233,7 @@ async function handler(request: Request) {
                 await logPlanner(planner.id, `[Phase0] Created ${postsCreated} post(s) for mediaType=${mediaType}`, 'info');
                 await prisma.planner.update({
                     where: { id: planner.id },
-                    data: { last_run: now, config: JSON.stringify({ ...config, state }) },
+                    data: { last_run: now, config: JSON.stringify({ ...config, state: nextState }) },
                 });
             } catch (err: any) {
                 await logPlanner(planner.id, `[Phase0] Uncaught error: ${err.message}`, 'error', { stack: err.stack });

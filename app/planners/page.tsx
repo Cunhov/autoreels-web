@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import {
-    Sliders, Plus, Play, Pause, Trash2, Calendar, Terminal,
+    Sliders, Plus, Play, Pause, Trash2, Calendar, Terminal, Eye,
     X, RefreshCw, Zap, CheckCircle2, XCircle, Clock, Instagram
 } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
@@ -51,6 +51,9 @@ export default function PlannersPage() {
     const [viewingLogs, setViewingLogs] = useState<Planner | null>(null);
     const [logs, setLogs] = useState<any[]>([]);
     const [loadingLogs, setLoadingLogs] = useState(false);
+    const [viewingPreview, setViewingPreview] = useState<Planner | null>(null);
+    const [previewData, setPreviewData] = useState<any>(null);
+    const [loadingPreview, setLoadingPreview] = useState(false);
     const [runningId, setRunningId] = useState<string | null>(null);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
@@ -118,6 +121,19 @@ export default function PlannersPage() {
     }
 
     useEffect(() => { if (viewingLogs) fetchLogs(viewingLogs.id); }, [viewingLogs]);
+
+    async function fetchPreview(plannerId: string) {
+        setLoadingPreview(true);
+        try {
+            const res = await fetch(`/api/planners/${plannerId}/preview`);
+            const data = await res.json().catch(() => ({}));
+            setPreviewData(res.ok ? data : { error: data.error || 'Failed to load preview' });
+        } finally {
+            setLoadingPreview(false);
+        }
+    }
+
+    useEffect(() => { if (viewingPreview) fetchPreview(viewingPreview.id); }, [viewingPreview]);
 
     return (
         <div className="space-y-6 pb-8">
@@ -239,6 +255,13 @@ export default function PlannersPage() {
                                             <Terminal size={18} />
                                         </button>
                                         <button
+                                            onClick={() => setViewingPreview(planner)}
+                                            title="Preview next run"
+                                            className="p-2 rounded-lg text-ios-text-secondary hover:bg-ios-gray-5 transition-colors"
+                                        >
+                                            <Eye size={18} />
+                                        </button>
+                                        <button
                                             onClick={() => { setEditingPlanner(planner); setIsWizardOpen(true); }}
                                             title="Edit planner"
                                             className="p-2 rounded-lg text-ios-blue hover:bg-ios-blue/10 transition-colors"
@@ -338,6 +361,84 @@ export default function PlannersPage() {
                                         )}
                                     </div>
                                 ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Preview Modal */}
+            {viewingPreview && (
+                <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm fade-in">
+                    <div className="bg-ios-card w-full max-w-2xl max-h-[85vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden zoom-in-95">
+                        <div className="p-5 border-b border-ios-separator flex items-center justify-between">
+                            <div>
+                                <h2 className="text-[17px] font-bold text-ios-text">Preview: {viewingPreview.name}</h2>
+                                <p className="text-[12px] text-ios-text-secondary">Next run without creating posts</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button onClick={() => fetchPreview(viewingPreview.id)} className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors" disabled={loadingPreview}>
+                                    <RefreshCw size={18} className={loadingPreview ? 'animate-spin' : ''} />
+                                </button>
+                                <button onClick={() => setViewingPreview(null)} className="p-2 text-ios-text-secondary hover:bg-ios-gray-5 rounded-full transition-colors">
+                                    <X size={20} />
+                                </button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-ios-background">
+                            {loadingPreview ? (
+                                <div className="flex items-center justify-center py-12 text-ios-text-secondary">
+                                    <RefreshCw size={18} className="animate-spin mr-2" />
+                                    Loading preview...
+                                </div>
+                            ) : previewData?.error ? (
+                                <div className="p-4 rounded-xl bg-ios-red/10 text-ios-red text-sm">
+                                    {previewData.error}
+                                </div>
+                            ) : (
+                                <>
+                                    {previewData?.runtime?.warnings?.length > 0 && (
+                                        <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm space-y-1">
+                                            {previewData.runtime.warnings.map((warning: string) => (
+                                                <div key={warning}>{warning}</div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    <div className="grid gap-2">
+                                        <div className="bg-ios-card border border-ios-separator rounded-xl p-4">
+                                            <div className="text-xs uppercase tracking-wide text-ios-text-secondary mb-1">Selected content</div>
+                                            <div className="font-semibold text-ios-text">{previewData?.runtime?.selectedContent?.id || 'No content'}</div>
+                                            <div className="text-sm text-ios-text-secondary mt-1">
+                                                {previewData?.runtime?.mediaType || 'Unknown'} · {previewData?.runtime?.mediaUrl ? 'Media ready' : 'No media URL'}
+                                            </div>
+                                        </div>
+                                        <div className="bg-ios-card border border-ios-separator rounded-xl p-4">
+                                            <div className="text-xs uppercase tracking-wide text-ios-text-secondary mb-1">Caption</div>
+                                            <p className="text-sm text-ios-text whitespace-pre-wrap">{previewData?.runtime?.caption || 'No caption'}</p>
+                                        </div>
+                                        <div className="bg-ios-card border border-ios-separator rounded-xl p-4">
+                                            <div className="text-xs uppercase tracking-wide text-ios-text-secondary mb-2">Channels</div>
+                                            <div className="space-y-2">
+                                                {(previewData?.channels || []).map((channel: any) => (
+                                                    <div key={channel.id} className="flex items-start justify-between gap-4 text-sm">
+                                                        <div>
+                                                            <div className="font-medium text-ios-text">{channel.name}</div>
+                                                            <div className="text-ios-text-secondary text-xs">{channel.account_id}</div>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <div className={channel.health?.ok ? 'text-ios-green' : 'text-ios-red'}>
+                                                                {channel.health?.ok ? 'Ready' : 'Blocked'}
+                                                            </div>
+                                                            {(channel.health?.warnings || []).length > 0 && (
+                                                                <div className="text-[11px] text-amber-700">{channel.health.warnings.join(', ')}</div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
                             )}
                         </div>
                     </div>
