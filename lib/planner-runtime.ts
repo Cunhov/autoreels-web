@@ -11,6 +11,9 @@ type PlannerContentItem = {
     thumbnail_url?: string;
     children_urls?: { url: string; type: string; thumbnail_url?: string }[];
     carousel_items?: { url: string; type: string; thumbnail_url?: string }[];
+    collaborators?: string | null;
+    audio_configuration?: { audio_id: string; audio_volume?: number; video_volume?: number } | null;
+    user_tags?: string | null;
 };
 
 type PlannerConfig = {
@@ -172,6 +175,9 @@ export async function resolvePlannerRuntime(prisma: PrismaLike, planner: any, no
     const shareToFeed = selectedContent.share_to_feed !== false;
     let thumbnailUrl = selectedContent.thumbnail_url || null;
     let children: { url: string; type: string; thumbnail_url?: string }[] = selectedContent.children_urls || selectedContent.carousel_items || [];
+    const collaborators = selectedContent.collaborators || null;
+    const audioConfiguration = selectedContent.audio_configuration || null;
+    const userTags = selectedContent.user_tags || null;
 
     if (selectedContent.type === 'library_item' || (selectedContent.type === 'config' && selectedContent.id) || (!selectedContent.type && selectedContent.id)) {
         const libItem = await prisma.contentItem.findUnique({ where: { id: selectedContent.id } });
@@ -246,6 +252,9 @@ export async function resolvePlannerRuntime(prisma: PrismaLike, planner: any, no
         shareToFeed,
         thumbnailUrl,
         children,
+        collaborators,
+        audioConfiguration,
+        userTags,
         preview: {
             mediaUrl,
             mediaType,
@@ -254,6 +263,9 @@ export async function resolvePlannerRuntime(prisma: PrismaLike, planner: any, no
             shareToFeed,
             thumbnailUrl,
             children,
+            collaborators,
+            audioConfiguration,
+            userTags,
         },
         config,
     };

@@ -199,7 +199,7 @@ async function handler(request: Request) {
                     continue;
                 }
 
-                const { selectedIndex, selectedContent, mediaUrl, mediaType, caption, locationId, shareToFeed, thumbnailUrl, children, nextState, warnings } = runtime;
+                const { selectedIndex, selectedContent, mediaUrl, mediaType, caption, locationId, shareToFeed, thumbnailUrl, children, collaborators, audioConfiguration, userTags, nextState, warnings } = runtime;
                 const safeChildren = children || [];
                 for (const warning of warnings) {
                     await logPlanner(planner.id, `[Phase0] ${warning}`, 'info');
@@ -224,6 +224,9 @@ async function handler(request: Request) {
                             children_urls: safeChildren.length > 0 ? JSON.stringify(safeChildren) : null,
                             share_to_feed: shareToFeed,
                             location_id: locationId,
+                            collaborators: collaborators,
+                            audio_configuration: audioConfiguration ? JSON.stringify(audioConfiguration) : null,
+                            user_tags: userTags,
                             caption,
                             scheduled_at: now,
                             planner_id: planner.id,
@@ -293,6 +296,17 @@ async function handler(request: Request) {
                             [child.type === 'video' ? 'video_url' : 'image_url']: mediaUrlAbsolute
                         });
                         if (child.type === 'video') childParams.append('media_type', 'VIDEO');
+                        if (idx === 0 && child.type !== 'video' && post.user_tags) {
+                            const usernames = post.user_tags.split(',').map((u: string) => u.trim()).filter(Boolean);
+                            if (usernames.length > 0) {
+                                const tagsJson = usernames.map((username: string) => ({
+                                    username,
+                                    x: 0.5,
+                                    y: 0.5
+                                }));
+                                childParams.append('user_tags', JSON.stringify(tagsJson));
+                            }
+                        }
 
                         await logPlanner(plannerId, `[Phase1] Sending Carousel Child[${idx}] to IG: type=${child.type}, url=${mediaUrlAbsolute}`, 'info');
 
@@ -343,6 +357,17 @@ async function handler(request: Request) {
                     bodyParams.append('image_url', mediaUrlAbsolute);
                     bodyParams.append('caption', post.caption || '');
                     if (post.location_id) bodyParams.append('location_id', post.location_id);
+                    if (post.user_tags) {
+                        const usernames = post.user_tags.split(',').map((u: string) => u.trim()).filter(Boolean);
+                        if (usernames.length > 0) {
+                            const tagsJson = usernames.map((username: string) => ({
+                                username,
+                                x: 0.5,
+                                y: 0.5
+                            }));
+                            bodyParams.append('user_tags', JSON.stringify(tagsJson));
+                        }
+                    }
                 } else {
                     bodyParams.append('media_type', mediaType === 'STORIES' ? 'STORIES' : 'REELS');
                     mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, post.video_url || post.image_url);
@@ -351,6 +376,23 @@ async function handler(request: Request) {
                     if (mediaType === 'REELS') {
                         bodyParams.append('share_to_feed', post.share_to_feed === false ? 'false' : 'true');
                         if (post.location_id) bodyParams.append('location_id', post.location_id);
+                        if (post.audio_configuration) {
+                            try {
+                                const audioConfig = JSON.parse(post.audio_configuration);
+                                if (audioConfig && audioConfig.audio_id) {
+                                    bodyParams.append('audio_configuration', JSON.stringify(audioConfig));
+                                }
+                            } catch (err) {
+                                console.error('Failed to parse audio_configuration:', err);
+                            }
+                        }
+                    }
+                }
+
+                if (post.collaborators && mediaType !== 'STORIES') {
+                    const list = post.collaborators.split(',').map((c: string) => c.trim()).filter(Boolean);
+                    if (list.length > 0) {
+                        bodyParams.append('collaborators', JSON.stringify(list));
                     }
                 }
 
@@ -411,6 +453,12 @@ async function handler(request: Request) {
                             access_token: accessToken
                         });
                         if (post.location_id) body.append('location_id', post.location_id);
+                        if (post.collaborators) {
+                            const list = post.collaborators.split(',').map((c: string) => c.trim()).filter(Boolean);
+                            if (list.length > 0) {
+                                body.append('collaborators', JSON.stringify(list));
+                            }
+                        }
                         const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media`, { method: 'POST', headers: igHeaders, body: body.toString() });
                         const data = await res.json();
                         if (data.id) {

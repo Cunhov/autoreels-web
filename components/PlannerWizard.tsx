@@ -59,6 +59,11 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     const [location, setLocation] = useState('');
     const [captionFallback, setCaptionFallback] = useState('');
     const [titleFallback, setTitleFallback] = useState('');
+    const [collaborators, setCollaborators] = useState('');
+    const [userTags, setUserTags] = useState('');
+    const [audioId, setAudioId] = useState('');
+    const [audioVolume, setAudioVolume] = useState(80);
+    const [videoVolume, setVideoVolume] = useState(20);
 
     const selectedChannelNames = useMemo(() => {
         return selectedChannels
@@ -129,6 +134,12 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     setCaptionFallback(content[0]?.caption_fallback || '');
                     setTitleFallback(content[0]?.title_fallback || '');
                     setLocation(content[0]?.location_id || '');
+                    setCollaborators(content[0]?.collaborators || '');
+                    setUserTags(content[0]?.user_tags || '');
+                    const audioConfig = content[0]?.audio_configuration || {};
+                    setAudioId(audioConfig.audio_id || '');
+                    setAudioVolume(audioConfig.audio_volume !== undefined ? audioConfig.audio_volume : 80);
+                    setVideoVolume(audioConfig.video_volume !== undefined ? audioConfig.video_volume : 20);
                 } else {
                     setSelectedContentIds([]);
                     setFiles([]);
@@ -138,6 +149,11 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     setShareToFeed(true);
                     setCaption('');
                     setLocation('');
+                    setCollaborators('');
+                    setUserTags('');
+                    setAudioId('');
+                    setAudioVolume(80);
+                    setVideoVolume(20);
                 }
             } else {
                 // Full reset for new planner
@@ -158,6 +174,11 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 setMediaType('REELS');
                 setShareToFeed(true);
                 setLocation('');
+                setCollaborators('');
+                setUserTags('');
+                setAudioId('');
+                setAudioVolume(80);
+                setVideoVolume(20);
                 setContentTab('upload');
             }
         }
@@ -298,7 +319,9 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                         caption,
                         caption_fallback: captionFallback,
                         title_fallback: titleFallback,
-                        location_id: location
+                        location_id: location,
+                        collaborators: collaborators || null,
+                        user_tags: userTags || null
                     });
                 }
 
@@ -311,7 +334,9 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                         caption,
                         caption_fallback: captionFallback,
                         title_fallback: titleFallback,
-                        location_id: location
+                        location_id: location,
+                        collaborators: collaborators || null,
+                        user_tags: userTags || null
                     });
                 }
             } else if (isCarousel && uploadedItems.length >= 2) {
@@ -323,10 +348,18 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     caption,
                     caption_fallback: captionFallback,
                     title_fallback: titleFallback,
-                    location_id: location
+                    location_id: location,
+                    collaborators: collaborators || null,
+                    user_tags: userTags || null
                 }];
             } else {
                 // Separate Posts (Reels, Images, etc)
+                const audioConfig = mediaType === 'REELS' && audioId ? {
+                    audio_id: audioId,
+                    audio_volume: audioVolume,
+                    video_volume: videoVolume
+                } : null;
+
                 content = [
                     ...uploadedItems.map(item => ({
                         ...item,
@@ -335,7 +368,10 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                         caption,
                         caption_fallback: captionFallback,
                         title_fallback: titleFallback,
-                        location_id: location
+                        location_id: location,
+                        collaborators: collaborators || null,
+                        user_tags: mediaType === 'IMAGE' ? userTags || null : null,
+                        audio_configuration: audioConfig
                     })),
                     ...selectedContentIds.map(id => ({
                         type: 'library_item',
@@ -345,7 +381,10 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                         caption,
                         caption_fallback: captionFallback,
                         title_fallback: titleFallback,
-                        location_id: location
+                        location_id: location,
+                        collaborators: collaborators || null,
+                        user_tags: mediaType === 'IMAGE' ? userTags || null : null,
+                        audio_configuration: audioConfig
                     }))
                 ];
             }
@@ -657,14 +696,83 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                     </div>
                                 </div>
 
-                                <div>
-                                    <label className="text-xs font-medium text-ios-text mb-1.5 block">Location ID (Optional)</label>
-                                    <input
-                                        value={location}
-                                        onChange={(e) => setLocation(e.target.value)}
-                                        className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
-                                        placeholder="Instagram Location ID"
-                                    />
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-xs font-medium text-ios-text mb-1.5 block">Location ID (Optional)</label>
+                                        <input
+                                            value={location}
+                                            onChange={(e) => setLocation(e.target.value)}
+                                            className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
+                                            placeholder="Instagram Location ID"
+                                        />
+                                    </div>
+
+                                    {mediaType !== 'STORIES' && (
+                                        <div>
+                                            <label className="text-xs font-medium text-ios-text mb-1.5 block">Collaborators (Optional)</label>
+                                            <input
+                                                value={collaborators}
+                                                onChange={(e) => setCollaborators(e.target.value)}
+                                                className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
+                                                placeholder="e.g. user1, user2"
+                                            />
+                                            <p className="text-[10px] text-gray-400 mt-1">Comma-separated Instagram usernames to invite as collaborators.</p>
+                                        </div>
+                                    )}
+
+                                    {(mediaType === 'IMAGE' || mediaType === 'CAROUSEL') && (
+                                        <div>
+                                            <label className="text-xs font-medium text-ios-text mb-1.5 block">User Tags (Optional)</label>
+                                            <input
+                                                value={userTags}
+                                                onChange={(e) => setUserTags(e.target.value)}
+                                                className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
+                                                placeholder="e.g. user1, user2"
+                                            />
+                                            <p className="text-[10px] text-gray-400 mt-1">Comma-separated Instagram usernames to tag on the image.</p>
+                                        </div>
+                                    )}
+
+                                    {mediaType === 'REELS' && (
+                                        <div className="space-y-3 p-3 bg-ios-gray-6 rounded-xl border border-ios-separator">
+                                            <span className="text-xs font-semibold text-ios-text block">Meta Audio Settings (Optional)</span>
+                                            <div>
+                                                <label className="text-[11px] font-medium text-ios-text mb-1 block">Audio ID</label>
+                                                <input
+                                                    value={audioId}
+                                                    onChange={(e) => setAudioId(e.target.value)}
+                                                    className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-xs focus:border-ios-blue outline-none placeholder:text-gray-400"
+                                                    placeholder="Meta Audio Track ID"
+                                                />
+                                            </div>
+                                            {audioId && (
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div>
+                                                        <label className="text-[10px] font-medium text-ios-text mb-1 block">Music Volume ({audioVolume}%)</label>
+                                                        <input
+                                                            type="range"
+                                                            min="0"
+                                                            max="100"
+                                                            value={audioVolume}
+                                                            onChange={(e) => setAudioVolume(parseInt(e.target.value))}
+                                                            className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-ios-blue"
+                                                        />
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[10px] font-medium text-ios-text mb-1 block">Video Volume ({videoVolume}%)</label>
+                                                        <input
+                                                            type="range"
+                                                            min="0"
+                                                            max="100"
+                                                            value={videoVolume}
+                                                            onChange={(e) => setVideoVolume(parseInt(e.target.value))}
+                                                            className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-ios-blue"
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>

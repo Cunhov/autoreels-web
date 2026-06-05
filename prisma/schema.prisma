@@ -165,6 +165,9 @@ model Post {
   children_urls          String?   // JSON: array of {url, type} for carousels
   share_to_feed          Boolean   @default(true)
   location_id            String?
+  collaborators          String?   // JSON or comma-separated list of collaborators
+  audio_configuration    String?   // JSON object for Reels audio
+  user_tags              String?   // JSON or comma-separated list of tagged users
   status                 String    @default("scheduled")
   scheduled_at           DateTime?
   published_at           DateTime?
