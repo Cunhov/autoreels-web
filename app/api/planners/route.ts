@@ -21,19 +21,47 @@ export async function GET() {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const planners = await prisma.planner.findMany({
-        where: {
-            user_id: userId,
-        },
-        include: {
-            channels: { select: publicChannelSelect },
-        },
-        orderBy: {
-            created_at: "desc",
-        },
-    });
+    const [planners, postStats] = await Promise.all([
+        prisma.planner.findMany({
+            where: {
+                user_id: userId,
+            },
+            include: {
+                channels: { select: publicChannelSelect },
+            },
+            orderBy: {
+                created_at: "desc",
+            },
+        }),
+        prisma.post.groupBy({
+            by: ["planner_id", "status"],
+            where: {
+                user_id: userId,
+                planner_id: { not: null },
+            },
+            _count: { _all: true },
+        }),
+    ]);
 
-    return NextResponse.json(planners);
+    const statsByPlanner: Record<string, { total: number; published: number; failed: number }> = {};
+    for (const row of postStats) {
+        const plannerId = row.planner_id;
+        if (!plannerId) continue;
+        if (!statsByPlanner[plannerId]) {
+            statsByPlanner[plannerId] = { total: 0, published: 0, failed: 0 };
+        }
+        const count = row._count._all;
+        statsByPlanner[plannerId].total += count;
+        if (row.status === "published") statsByPlanner[plannerId].published += count;
+        if (row.status === "failed") statsByPlanner[plannerId].failed += count;
+    }
+
+    return NextResponse.json(
+        planners.map(planner => ({
+            ...planner,
+            stats: statsByPlanner[planner.id] ?? { total: 0, published: 0, failed: 0 },
+        }))
+    );
 }
 
 export async function POST(req: Request) {

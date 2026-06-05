@@ -15,6 +15,8 @@ export function buildContentWhere(
     const parent_id = searchParams.get('parent_id') || null;
     const types = searchParams.get('types')?.split(',').filter(Boolean) || undefined;
     const search = searchParams.get('search')?.trim().toLowerCase() || undefined;
+    const includeTags = searchParams.get('include_tags')?.split(',').map(t => t.trim()).filter(Boolean) || [];
+    const excludeTags = searchParams.get('exclude_tags')?.split(',').map(t => t.trim()).filter(Boolean) || [];
     const sizeMin = searchParams.get('size_min') ? parseInt(searchParams.get('size_min')!, 10) : undefined;
     const sizeMax = searchParams.get('size_max') ? parseInt(searchParams.get('size_max')!, 10) : undefined;
     const durationMin = searchParams.get('duration_min') ? parseFloat(searchParams.get('duration_min')!) : undefined;
@@ -34,6 +36,18 @@ export function buildContentWhere(
             { caption: { contains: search } },
             { tags: { contains: search } },
         ];
+    }
+
+    if (includeTags.length > 0 || excludeTags.length > 0) {
+        where.AND = where.AND ? [...(Array.isArray(where.AND) ? where.AND : [where.AND])] : [];
+        if (Array.isArray(where.AND)) {
+            for (const tag of includeTags) {
+                where.AND.push({ tags: { contains: tag } });
+            }
+            for (const tag of excludeTags) {
+                where.AND.push({ NOT: { tags: { contains: tag } } });
+            }
+        }
     }
 
     // Size filter
@@ -64,15 +78,21 @@ export async function GET(req: Request) {
 
     const limit = Math.min(parseInt(searchParams.get('limit') || '100', 10), 500);
     const offset = parseInt(searchParams.get('offset') || '0', 10);
+    const sortBy = searchParams.get('sort_by') || 'name-asc';
 
     const where = buildContentWhere(userId, searchParams);
+    const orderBy =
+        sortBy === 'created-desc' ? { created_at: 'desc' as const } :
+        sortBy === 'created-asc' ? { created_at: 'asc' as const } :
+        sortBy === 'name-desc' ? { name: 'desc' as const } :
+        { name: 'asc' as const };
 
     // Run count + query in parallel for efficiency
     const [totalCount, contentItems] = await Promise.all([
         prisma.contentItem.count({ where }),
         prisma.contentItem.findMany({
             where,
-            orderBy: { name: "asc" },
+            orderBy,
             take: limit,
             skip: offset,
             include: {

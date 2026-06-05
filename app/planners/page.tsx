@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import {
     Sliders, Plus, Play, Pause, Trash2, Calendar, Terminal,
     X, RefreshCw, Zap, CheckCircle2, XCircle, Clock, Instagram
@@ -16,12 +16,7 @@ interface Planner {
     channels: any[];
     last_run?: string;
     created_at: string;
-}
-
-interface PlannerPost {
-    id: string;
-    status: string;
-    planner_id?: string;
+    stats?: { total: number; published: number; failed: number };
 }
 
 function frequencyText(config: any): string {
@@ -50,7 +45,6 @@ function relativeTime(dateStr?: string): string {
 
 export default function PlannersPage() {
     const [planners, setPlanners] = useState<Planner[]>([]);
-    const [posts, setPosts] = useState<PlannerPost[]>([]);
     const [loading, setLoading] = useState(true);
     const [isWizardOpen, setIsWizardOpen] = useState(false);
     const [editingPlanner, setEditingPlanner] = useState<Planner | null>(null);
@@ -71,28 +65,10 @@ export default function PlannersPage() {
     async function fetchData() {
         setLoading(true);
         try {
-            const [pr, postr] = await Promise.all([
-                fetch('/api/planners'),
-                fetch('/api/posts'),
-            ]);
+            const pr = await fetch('/api/planners');
             if (pr.ok) setPlanners(await pr.json());
-            if (postr.ok) setPosts(await postr.json());
         } finally { setLoading(false); }
     }
-
-    // Post counts per planner
-    const postStats = useMemo(() => {
-        const map: Record<string, { total: number; published: number; failed: number }> = {};
-        posts.forEach(p => {
-            const pid = (p as any).planner_id;
-            if (!pid) return;
-            if (!map[pid]) map[pid] = { total: 0, published: 0, failed: 0 };
-            map[pid].total++;
-            if (p.status === 'published') map[pid].published++;
-            if (p.status === 'failed') map[pid].failed++;
-        });
-        return map;
-    }, [posts]);
 
     async function toggleStatus(planner: Planner) {
         const newStatus = planner.status === 'active' ? 'paused' : 'active';
@@ -191,7 +167,7 @@ export default function PlannersPage() {
                             } catch { /* ignore */ }
                         }
 
-                        const stats = postStats[planner.id] ?? { total: 0, published: 0, failed: 0 };
+                        const stats = planner.stats ?? { total: 0, published: 0, failed: 0 };
                         const isRunning = runningId === planner.id;
                         return (
                             <IOSCard key={planner.id} className="p-5 group">

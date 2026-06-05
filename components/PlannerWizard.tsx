@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { getPublicUrl } from '@/lib/storage';
 import { useSession } from 'next-auth/react';
 import { X, ChevronRight, ChevronLeft, Calendar, Clock, Instagram, Layers, ArrowUpDown, Check, Image as ImageIcon, Film } from 'lucide-react';
@@ -58,6 +58,26 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     const [location, setLocation] = useState('');
     const [captionFallback, setCaptionFallback] = useState('');
     const [titleFallback, setTitleFallback] = useState('');
+
+    const selectedChannelNames = useMemo(() => {
+        return selectedChannels
+            .map(id => channels.find(channel => channel.id === id)?.name)
+            .filter(Boolean) as string[];
+    }, [channels, selectedChannels]);
+
+    const scheduleSummary = useMemo(() => {
+        const frequency = `${frequencyValue} ${frequencyUnit}`;
+        const sleep = sleepEnabled ? `${sleepStart} - ${sleepEnd}` : 'off';
+        const start = startTime ? new Date(startTime).toLocaleString() : 'immediately';
+        const contentCount = files.length + selectedContentIds.length;
+        return {
+            frequency,
+            sleep,
+            start,
+            contentCount,
+            channels: selectedChannelNames.length,
+        };
+    }, [frequencyValue, frequencyUnit, sleepEnabled, sleepStart, sleepEnd, startTime, files.length, selectedContentIds.length, selectedChannelNames.length]);
 
     useEffect(() => {
         if (isOpen) {
@@ -733,6 +753,43 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                         <p className="text-xs text-ios-secondary">{option.desc}</p>
                                     </div>
                                 ))}
+                            </div>
+
+                            <div className="mt-6 bg-ios-card border border-ios-separator rounded-xl p-4 space-y-3">
+                                <h3 className="text-[13px] font-bold text-ios-secondary uppercase tracking-wide">Preview</h3>
+                                <div className="grid gap-2 text-sm text-ios-text">
+                                    <div className="flex items-center justify-between gap-4">
+                                        <span className="text-ios-secondary">Name</span>
+                                        <span className="font-medium truncate text-right">{name || 'Untitled planner'}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-4">
+                                        <span className="text-ios-secondary">Channels</span>
+                                        <span className="font-medium text-right">{selectedChannelNames.length > 0 ? selectedChannelNames.join(', ') : `${scheduleSummary.channels} selected`}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-4">
+                                        <span className="text-ios-secondary">Content</span>
+                                        <span className="font-medium text-right">{scheduleSummary.contentCount} item(s)</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-4">
+                                        <span className="text-ios-secondary">Frequency</span>
+                                        <span className="font-medium text-right">Every {scheduleSummary.frequency}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-4">
+                                        <span className="text-ios-secondary">Start</span>
+                                        <span className="font-medium text-right">{scheduleSummary.start}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-4">
+                                        <span className="text-ios-secondary">Sleep</span>
+                                        <span className="font-medium text-right">{scheduleSummary.sleep}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-4">
+                                        <span className="text-ios-secondary">Media</span>
+                                        <span className="font-medium text-right">{isCarousel ? 'Carousel' : mediaType === 'REELS' ? 'Reels' : mediaType === 'STORIES' ? 'Story' : 'Image'}{mediaType === 'REELS' && !shareToFeed ? ' - feed off' : ''}</span>
+                                    </div>
+                                </div>
+                                {location ? (
+                                    <p className="text-[11px] text-ios-secondary">Location ID configured.</p>
+                                ) : null}
                             </div>
                         </div>
                     )}

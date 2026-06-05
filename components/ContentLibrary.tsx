@@ -69,6 +69,33 @@ function normalizeItem(item: any): ContentItem {
     return { ...item, tags: normalizeTags(item.tags) };
 }
 
+function expandTypeFilters(types: string[]): string[] {
+    const expanded = new Set<string>();
+    for (const type of types) {
+        if (type === 'image') {
+            expanded.add('image');
+            expanded.add('carousel_item');
+        } else {
+            expanded.add(type);
+        }
+    }
+    return Array.from(expanded);
+}
+
+function sizeRangeForFilter(filter: 'all' | 'small' | 'medium' | 'large'): { min?: number; max?: number } {
+    if (filter === 'small') return { max: 5 * 1024 * 1024 };
+    if (filter === 'medium') return { min: 5 * 1024 * 1024, max: 20 * 1024 * 1024 };
+    if (filter === 'large') return { min: 20 * 1024 * 1024 };
+    return {};
+}
+
+function durationRangeForFilter(filter: 'all' | 'short' | 'medium' | 'long'): { min?: number; max?: number } {
+    if (filter === 'short') return { max: 15 };
+    if (filter === 'medium') return { min: 15, max: 60 };
+    if (filter === 'long') return { min: 60 };
+    return {};
+}
+
 interface ContentLibraryProps {
     mode?: 'manage' | 'select';
     onSelectionChange?: (selectedIds: string[]) => void;
@@ -282,6 +309,7 @@ export default function ContentLibrary({
     const [loading, setLoading] = useState(true);
     const [selectedIds, setSelectedIds] = useState<string[]>(initialSelection);
     const [search, setSearch] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
     const [showFilters, setShowFilters] = useState(false);
     const [filterTags, setFilterTags] = useState<string[]>([]);
     const [excludeTags, setExcludeTags] = useState<string[]>([]);
@@ -334,9 +362,48 @@ export default function ContentLibrary({
     // File Input Ref for Upload Button
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    useEffect(() => {
+        const id = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
+        return () => window.clearTimeout(id);
+    }, [search]);
+
     // -------------------------------------------------------------------------
     // Data Fetching & Navigation
     // -------------------------------------------------------------------------
+
+    const buildQueryParams = useCallback((folderId: string | null, offset: number) => {
+        const params = new URLSearchParams();
+        params.set('parent_id', folderId || '');
+        params.set('limit', String(PAGE_SIZE));
+        params.set('offset', String(offset));
+
+        if (debouncedSearch) params.set('search', debouncedSearch);
+
+        const typeSet = new Set<string>();
+        const selectedTypes = filterTypes.length > 0 ? filterTypes : allowedTypes;
+        expandTypeFilters(selectedTypes).forEach(type => typeSet.add(type));
+        const allowedSet = new Set(expandTypeFilters(allowedTypes));
+        const finalTypes = Array.from(typeSet).filter(type => allowedSet.has(type));
+        const defaultAllowedTypes = ['video', 'image', 'carousel_folder', 'carousel_item'];
+        const shouldSendTypes = filterTypes.length > 0 || allowedTypes.join(',') !== defaultAllowedTypes.join(',');
+        if (shouldSendTypes && finalTypes.length > 0) {
+            params.set('types', finalTypes.join(','));
+        }
+
+        if (filterTags.length > 0) params.set('include_tags', filterTags.join(','));
+        if (excludeTags.length > 0) params.set('exclude_tags', excludeTags.join(','));
+
+        const sizeRange = sizeRangeForFilter(sizeFilter);
+        if (sizeRange.min !== undefined) params.set('size_min', String(sizeRange.min));
+        if (sizeRange.max !== undefined) params.set('size_max', String(sizeRange.max));
+
+        const durationRange = durationRangeForFilter(durationFilter);
+        if (durationRange.min !== undefined) params.set('duration_min', String(durationRange.min));
+        if (durationRange.max !== undefined) params.set('duration_max', String(durationRange.max));
+
+        params.set('sort_by', sortBy);
+        return params;
+    }, [PAGE_SIZE, allowedTypes, debouncedSearch, durationFilter, excludeTags, filterTags, filterTypes, sizeFilter, sortBy]);
 
     // Fetch current folder details and its ancestors for Breadcrumbs
     useEffect(() => {
@@ -377,7 +444,6 @@ export default function ContentLibrary({
         };
 
         fetchFolderDetails();
-        fetchContent(currentFolderId);
     }, [currentFolderId, router, disableUrlNavigation]); // Added disableUrlNavigation dependency to re-run if prop changes (unlikely) but correct. Removed currentFolderId from deps of fetchContent call if it was separate, but it's inside effect.
 
 
@@ -385,8 +451,10 @@ export default function ContentLibrary({
         setLoading(true);
         setCurrentOffset(0);
         setSelectAllServer(false);
+        setSelectedIds([]);
+        setSelectionOrder([]);
         try {
-            const res = await fetch(`/api/content-items?parent_id=${folderId || ''}&limit=${PAGE_SIZE}&offset=0`);
+            const res = await fetch(`/api/content-items?${buildQueryParams(folderId, 0).toString()}`);
             if (!res.ok) throw new Error('Failed to fetch items');
             const json = await res.json();
             const data = json.items || json;
@@ -406,7 +474,7 @@ export default function ContentLibrary({
         if (loadingMore || !hasMore) return;
         setLoadingMore(true);
         try {
-            const res = await fetch(`/api/content-items?parent_id=${currentFolderId || ''}&limit=${PAGE_SIZE}&offset=${currentOffset}`);
+            const res = await fetch(`/api/content-items?${buildQueryParams(currentFolderId, currentOffset).toString()}`);
             if (!res.ok) throw new Error('Failed to fetch more items');
             const json = await res.json();
             const data = json.items || json;
@@ -420,7 +488,12 @@ export default function ContentLibrary({
         } finally {
             setLoadingMore(false);
         }
-    }, [loadingMore, hasMore, currentFolderId, currentOffset, items.length]);
+    }, [loadingMore, hasMore, currentFolderId, currentOffset, items.length, buildQueryParams]);
+
+    useEffect(() => {
+        fetchContent(currentFolderId);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [currentFolderId, debouncedSearch, filterTags, excludeTags, filterTypes, sizeFilter, durationFilter, sortBy]);
 
     // Update parent selection callback
     useEffect(() => {
@@ -874,10 +947,26 @@ export default function ContentLibrary({
         const params: Record<string, string> = {};
         if (currentFolderId) params.parent_id = currentFolderId;
         else params.parent_id = '';
-        if (filterTypes.length > 0) params.types = filterTypes.join(',');
-        if (search.trim()) params.search = search.trim();
+        const typeSet = new Set<string>();
+        const selectedTypes = filterTypes.length > 0 ? filterTypes : allowedTypes;
+        expandTypeFilters(selectedTypes).forEach(type => typeSet.add(type));
+        const allowedSet = new Set(expandTypeFilters(allowedTypes));
+        const finalTypes = Array.from(typeSet).filter(type => allowedSet.has(type));
+        const defaultAllowedTypes = ['video', 'image', 'carousel_folder', 'carousel_item'];
+        const shouldSendTypes = filterTypes.length > 0 || allowedTypes.join(',') !== defaultAllowedTypes.join(',');
+        if (shouldSendTypes && finalTypes.length > 0) params.types = finalTypes.join(',');
+        if (debouncedSearch) params.search = debouncedSearch;
+        if (filterTags.length > 0) params.include_tags = filterTags.join(',');
+        if (excludeTags.length > 0) params.exclude_tags = excludeTags.join(',');
+        const sizeRange = sizeRangeForFilter(sizeFilter);
+        if (sizeRange.min !== undefined) params.size_min = String(sizeRange.min);
+        if (sizeRange.max !== undefined) params.size_max = String(sizeRange.max);
+        const durationRange = durationRangeForFilter(durationFilter);
+        if (durationRange.min !== undefined) params.duration_min = String(durationRange.min);
+        if (durationRange.max !== undefined) params.duration_max = String(durationRange.max);
+        params.sort_by = sortBy;
         return params;
-    }, [currentFolderId, filterTypes, search]);
+    }, [allowedTypes, currentFolderId, debouncedSearch, durationFilter, excludeTags, filterTags, filterTypes, sizeFilter, sortBy]);
 
     // Bulk delete handler — uses server-side bulk endpoint
     const handleBulkDelete = async () => {
