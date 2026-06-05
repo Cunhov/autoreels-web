@@ -151,23 +151,52 @@ export async function exchangeInstagramCode(code: string, origin: string) {
 }
 
 export async function refreshInstagramToken(accessToken: string) {
-    const res = await fetchWithTimeout(
-        `https://graph.instagram.com/refresh_access_token?${new URLSearchParams({
-            grant_type: "ig_refresh_token",
-            access_token: cleanToken(accessToken),
-        }).toString()}`,
-        {},
-        30_000
-    );
-    const data = await res.json();
-    if (!res.ok || data.error || !data.access_token) {
-        throw new Error(data.error?.message || "Instagram token refresh failed.");
-    }
+    const token = cleanToken(accessToken);
+    if (token.startsWith("IG")) {
+        const res = await fetchWithTimeout(
+            `https://graph.instagram.com/refresh_access_token?${new URLSearchParams({
+                grant_type: "ig_refresh_token",
+                access_token: token,
+            }).toString()}`,
+            {},
+            30_000
+        );
+        const data = await res.json();
+        if (!res.ok || data.error || !data.access_token) {
+            throw new Error(data.error?.message || "Instagram token refresh failed.");
+        }
 
-    return {
-        token: cleanToken(data.access_token),
-        expiresIn: Number(data.expires_in || 60 * 24 * 60 * 60),
-    };
+        return {
+            token: cleanToken(data.access_token),
+            expiresIn: Number(data.expires_in || 60 * 24 * 60 * 60),
+        };
+    } else {
+        const clientId = process.env.INSTAGRAM_CLIENT_ID || process.env.NEXT_PUBLIC_INSTAGRAM_CLIENT_ID || "";
+        const clientSecret = process.env.INSTAGRAM_CLIENT_SECRET || "";
+        if (!clientId || !clientSecret) {
+            throw new Error("INSTAGRAM_CLIENT_ID and INSTAGRAM_CLIENT_SECRET must be configured to refresh Facebook-based tokens.");
+        }
+
+        const res = await fetchWithTimeout(
+            `https://graph.facebook.com/${GRAPH_API_VERSION}/oauth/access_token?${new URLSearchParams({
+                grant_type: "fb_exchange_token",
+                client_id: clientId,
+                client_secret: clientSecret,
+                fb_exchange_token: token,
+            }).toString()}`,
+            {},
+            30_000
+        );
+        const data = await res.json();
+        if (!res.ok || data.error || !data.access_token) {
+            throw new Error(data.error?.message || "Facebook/Instagram Professional token refresh failed.");
+        }
+
+        return {
+            token: cleanToken(data.access_token),
+            expiresIn: Number(data.expires_in || 60 * 24 * 60 * 60),
+        };
+    }
 }
 
 export async function fetchInstagramProfile(accessToken: string) {

@@ -104,13 +104,16 @@ export default function ChannelsPage() {
         setTestingId(channel.id);
         try {
             const res = await fetch(`/api/channels/${channel.id}/test`);
+            const data = await res.json().catch(() => ({}));
             if (res.ok) {
                 setTestResult(prev => ({ ...prev, [channel.id]: 'ok' }));
                 showToast(`${channel.name} — connection OK ✓`);
-            } else throw new Error();
-        } catch {
+            } else {
+                throw new Error(data.error || 'Connection failed');
+            }
+        } catch (err: unknown) {
             setTestResult(prev => ({ ...prev, [channel.id]: 'err' }));
-            showToast(`${channel.name} — connection failed`, 'err');
+            showToast(err instanceof Error ? err.message : `${channel.name} — connection failed`, 'err');
         } finally { setTestingId(null); }
     }
 

@@ -35,11 +35,11 @@ export async function GET(
 
         const testUrl = `${baseUrl}/${GRAPH_API_VERSION}/${channel.account_id}?fields=username,id&access_token=${accessToken}`;
         const res = await fetchWithTimeout(testUrl);
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
 
-        if (data.error) {
+        if (!res.ok || data.error) {
             return NextResponse.json({
-                error: data.error.message || "Token invalid",
+                error: data.error?.message || `API error (status ${res.status})`,
                 details: data
             }, { status: 400 });
         }
