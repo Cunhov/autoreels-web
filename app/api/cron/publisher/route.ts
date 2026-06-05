@@ -8,7 +8,6 @@ import {
     resolveAccessToken,
 } from '@/lib/instagram';
 import { describeChannelHealth, resolvePlannerRuntime } from '@/lib/planner-runtime';
-import { cleanupOrphanUploadFiles } from '@/lib/media-cleanup';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -556,10 +555,6 @@ async function handler(request: Request) {
                 results.errors++;
             }
         }
-
-        const mediaCleanup = await cleanupOrphanUploadFiles(now, 25);
-        results.cleaned_media = mediaCleanup.deleted;
-        results.scanned_media = mediaCleanup.scanned;
 
         return NextResponse.json(results);
     } catch (err: any) {
