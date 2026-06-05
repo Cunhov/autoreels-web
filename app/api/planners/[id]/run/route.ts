@@ -47,7 +47,7 @@ export async function POST(
             return NextResponse.json({ error: 'No publishable channels available' }, { status: 400 });
         }
 
-        const { selectedIndex, mediaUrl, mediaType, caption, locationId, shareToFeed, children, nextState, warnings } = runtime;
+        const { selectedIndex, mediaUrl, mediaType, caption, locationId, shareToFeed, thumbnailUrl, children, nextState, warnings } = runtime;
         const safeChildren = children || [];
 
         // Create posts for each channel
@@ -62,6 +62,7 @@ export async function POST(
                     video_url: mediaType === 'REELS' ? mediaUrl : null,
                     image_url: (mediaType === 'IMAGE') ? mediaUrl
                         : (mediaType === 'STORIES' && mediaUrl && !mediaUrl?.includes('.mp4')) ? mediaUrl : null,
+                    thumbnail_url: thumbnailUrl || (safeChildren.length > 0 ? safeChildren[0].url : null),
                     children_urls: safeChildren.length > 0 ? JSON.stringify(safeChildren) : null,
                     share_to_feed: shareToFeed,
                     location_id: locationId,

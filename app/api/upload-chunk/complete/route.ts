@@ -31,6 +31,7 @@ export async function POST(req: Request) {
         const tags = tagsRaw || null; // JSON string or null
         const parentId = formData.get("parentId") as string | null;
         const caption = formData.get("caption") as string | null;
+        const thumbnailPath = formData.get("thumbnailPath") as string | null;
 
         if (!filename || isNaN(size)) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -45,6 +46,8 @@ export async function POST(req: Request) {
 
         // Define clean URL for serving
         const finalUrl = `/api/file/${[userId, safeFolderPath, safeFilename].filter(Boolean).join("/")}`;
+        const safeThumbnailPath = thumbnailPath ? cleanPathSegment(thumbnailPath) : null;
+        const thumbnailUrl = safeThumbnailPath ? `/api/file/${safeThumbnailPath}` : null;
 
         // Check if an item already exists with this name/path to avoid constraint errors
         const existingItem = await prisma.contentItem.findFirst({
@@ -64,6 +67,7 @@ export async function POST(req: Request) {
                     size,
                     url: finalUrl,
                     type,
+                    ...(thumbnailUrl ? { thumbnail_url: thumbnailUrl } : {}),
                     ...(tags ? { tags } : {}),
                     ...(parentId ? { parent_id: parentId } : {}),
                     ...(caption ? { caption } : {}),
@@ -78,6 +82,7 @@ export async function POST(req: Request) {
                     url: finalUrl,
                     path: safeFolderPath,
                     type: type,
+                    ...(thumbnailUrl ? { thumbnail_url: thumbnailUrl } : {}),
                     ...(tags ? { tags } : {}),
                     ...(parentId ? { parent_id: parentId } : {}),
                     ...(caption ? { caption } : {}),

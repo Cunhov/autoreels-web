@@ -99,7 +99,7 @@ export async function GET(req: Request) {
                 children: {
                     take: 1,
                     orderBy: { created_at: 'desc' },
-                    select: { url: true, type: true }
+                    select: { url: true, type: true, thumbnail_url: true }
                 }
             }
         }),
@@ -107,11 +107,11 @@ export async function GET(req: Request) {
 
     // Post-process to map 'children' to 'thumbnail_url'
     const mappedItems = contentItems.map(item => {
-        let thumbnail_url = null;
+        let thumbnail_url = item.thumbnail_url || null;
         let thumbnail_type = null;
 
         if (item.type === 'carousel_folder' && item.children && item.children.length > 0) {
-            thumbnail_url = item.children[0].url;
+            thumbnail_url = item.children[0].thumbnail_url || item.children[0].url;
             thumbnail_type = item.children[0].type;
         }
 

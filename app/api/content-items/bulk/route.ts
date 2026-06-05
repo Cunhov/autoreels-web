@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { buildContentWhere } from "../route";
-import { deleteFileFromDisk, buildDiskPath } from "@/lib/deleteFiles";
+import { deleteFileFromDisk, buildDiskPath, extractUploadPathFromUrl } from "@/lib/deleteFiles";
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
@@ -52,7 +52,7 @@ export async function POST(req: Request) {
                 // Fetch items with their file info
                 const itemsToDelete = await prisma.contentItem.findMany({
                     where: ownershipWhere,
-                    select: { id: true, name: true, path: true, type: true },
+                    select: { id: true, name: true, path: true, type: true, thumbnail_url: true },
                 });
 
                 // Collect all disk paths to delete
@@ -62,6 +62,10 @@ export async function POST(req: Request) {
                 for (const item of itemsToDelete) {
                     if (item.type !== "carousel_folder" && item.name) {
                         diskPaths.push(buildDiskPath(userId, item.path, item.name));
+                    }
+                    const thumb = extractUploadPathFromUrl(item.thumbnail_url);
+                    if (thumb) {
+                        diskPaths.push(thumb);
                     }
                 }
 
@@ -73,11 +77,15 @@ export async function POST(req: Request) {
                 if (folderIds.length > 0) {
                     const descendants = await prisma.contentItem.findMany({
                         where: { parent_id: { in: folderIds } },
-                        select: { name: true, path: true },
+                        select: { name: true, path: true, thumbnail_url: true },
                     });
                     for (const d of descendants) {
                         if (d.name) {
                             diskPaths.push(buildDiskPath(userId, d.path, d.name));
+                        }
+                        const thumb = extractUploadPathFromUrl(d.thumbnail_url);
+                        if (thumb) {
+                            diskPaths.push(thumb);
                         }
                     }
                 }

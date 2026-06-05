@@ -132,6 +132,7 @@ model ContentItem {
   parent_id   String?
   type        String
   url         String?  // Can be null for folders
+  thumbnail_url String?
   path        String?
   name        String?
   title       String?

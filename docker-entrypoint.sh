@@ -8,7 +8,8 @@ mkdir -p /app/data/uploads
 echo "Running Prisma db push (SQLite)..."
 npx prisma db push \
   --schema=/app/prisma/schema.prisma \
-  --url="file:/app/data/prod.db"
+  --url="file:/app/data/prod.db" \
+  --accept-data-loss
 
 echo "Seeding admin user..."
 # Use better-sqlite3 directly (avoids all Prisma Client constructor issues)

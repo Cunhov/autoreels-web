@@ -186,12 +186,16 @@ const GridCell = ({ columnIndex, rowIndex, style, data }: any) => {
                 ) : (
                     <div className="w-full h-full relative">
                         {item.type === 'video' ? (
-                            <div className="w-full h-full bg-gray-900 flex items-center justify-center relative">
-                                {/* No <video> tag — avoids loading/decoding video frames (saves RAM & CPU) */}
-                                <div className="w-12 h-12 rounded-full bg-white/10 border border-white/20 flex items-center justify-center">
-                                    <Video className="text-white/70 fill-white/20" size={22} />
+                            item.thumbnail_url ? (
+                                <img src={item.thumbnail_url} alt={item.name} className="w-full h-full object-cover" />
+                            ) : (
+                                <div className="w-full h-full bg-gray-900 flex items-center justify-center relative">
+                                    {/* No <video> tag — avoids loading/decoding video frames (saves RAM & CPU) */}
+                                    <div className="w-12 h-12 rounded-full bg-white/10 border border-white/20 flex items-center justify-center">
+                                        <Video className="text-white/70 fill-white/20" size={22} />
+                                    </div>
                                 </div>
-                            </div>
+                            )
                         ) : (
                             <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
                         )}
@@ -833,82 +837,13 @@ export default function ContentLibrary({
         return Array.from(tags).sort();
     }, [items]);
 
-    const filteredItems = items.filter(item => {
-        const term = search.toLowerCase();
-        // 1. Text match (Name, Title, Caption, Tags)
-        const matchesText = !term || (
-            item.name.toLowerCase().includes(term) ||
-            (item.title && item.title.toLowerCase().includes(term)) ||
-            (item.caption && item.caption.toLowerCase().includes(term)) ||
-            (item.tags && item.tags.some(t => t.toLowerCase().includes(term)))
-        );
-
-        // 2. Tag Inclusion Filter
-        const matchesIncludedTags = filterTags.length === 0 || filterTags.every(t => item.tags?.includes(t));
-
-        // 3. Tag Exclusion Filter
-        const matchesExcludedTags = excludeTags.some(t => item.tags?.includes(t));
-
-        // 4. Type Filter
-        const matchesType = filterTypes.length === 0 || filterTypes.some(t => {
-            if (t === 'carousel_folder') return item.type === 'carousel_folder';
-            if (t === 'image') return item.type === 'image' || item.type === 'carousel_item'; // simplified
-            if (t === 'video') return item.type === 'video';
-            return false;
-        });
-
-        // 5. Size Filter
-        const matchesSize = sizeFilter === 'all' || (() => {
-            const size = item.size || 0;
-            if (sizeFilter === 'small') return size < 5 * 1024 * 1024; // < 5MB
-            if (sizeFilter === 'medium') return size >= 5 * 1024 * 1024 && size < 20 * 1024 * 1024; // 5-20MB
-            if (sizeFilter === 'large') return size >= 20 * 1024 * 1024; // > 20MB
-            return true;
-        })();
-
-        // 6. Duration Filter (Videos only effectively, others are 0 or null)
-        const matchesDuration = durationFilter === 'all' || (() => {
-            if (item.type !== 'video' && item.type !== 'carousel_item') return true; // Keep non-videos
-            const duration = item.duration || 0;
-            if (durationFilter === 'short') return duration < 15; // < 15s
-            if (durationFilter === 'medium') return duration >= 15 && duration <= 60; // 15-60s
-            if (durationFilter === 'long') return duration > 60; // > 60s
-            return true;
-        })();
-
-        // 7. Allowed Types Filter (from prop)
-        const matchesAllowedType = allowedTypes.some(t => {
-            if (t === 'carousel_folder') return item.type === 'carousel_folder';
-            if (t === 'image') return item.type === 'image' || item.type === 'carousel_item';
-            if (t === 'video') return item.type === 'video';
-            if (t === 'carousel_item') return item.type === 'carousel_item';
-            return false;
-        });
-
-        return matchesText && matchesIncludedTags && !matchesExcludedTags && matchesType && matchesSize && matchesDuration && matchesAllowedType;
-    });
-
-    // Apply sorting
     const sortedItems = useMemo(() => {
-        return [...filteredItems].sort((a, b) => {
-            // Folders always come first
+        return [...items].sort((a, b) => {
             if (a.type === 'carousel_folder' && b.type !== 'carousel_folder') return -1;
             if (a.type !== 'carousel_folder' && b.type === 'carousel_folder') return 1;
-
-            switch (sortBy) {
-                case 'name-asc':
-                    return a.name.localeCompare(b.name, undefined, { numeric: true });
-                case 'name-desc':
-                    return b.name.localeCompare(a.name, undefined, { numeric: true });
-                case 'created-asc':
-                    return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-                case 'created-desc':
-                    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-                default:
-                    return 0;
-            }
+            return 0;
         });
-    }, [filteredItems, sortBy]);
+    }, [items]);
 
     const handleSelectAll = () => {
         const allFilteredIds = sortedItems.map(i => i.id);
@@ -1401,10 +1336,14 @@ export default function ContentLibrary({
                                                                     <Folder size={22} className="text-blue-400" />
                                                                 )
                                                             ) : item.type === 'video' ? (
-                                                                /* No <video> tag — static placeholder saves RAM/CPU */
-                                                                <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                                                                    <Video size={16} className="text-white/60" />
-                                                                </div>
+                                                                item.thumbnail_url ? (
+                                                                    <img className="w-full h-full object-cover" src={item.thumbnail_url} alt="" />
+                                                                ) : (
+                                                                    /* No <video> tag — static placeholder saves RAM/CPU */
+                                                                    <div className="w-full h-full bg-gray-800 flex items-center justify-center">
+                                                                        <Video size={16} className="text-white/60" />
+                                                                    </div>
+                                                                )
                                                             ) : (
                                                                 <img className="w-full h-full object-cover" src={item.url} alt="" />
                                                             )}

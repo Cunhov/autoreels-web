@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
 import { getPublicUrl } from '@/lib/storage';
+import { createVideoThumbnailFile } from '@/lib/video-thumbnail';
 import { useSession } from 'next-auth/react';
 import { X, ChevronRight, ChevronLeft, Calendar, Clock, Instagram, Layers, ArrowUpDown, Check, Image as ImageIcon, Film } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
@@ -200,7 +201,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     };
 
     const uploadFiles = async (userId: string) => {
-        const uploadedItems: { url: string, type: string }[] = [];
+        const uploadedItems: { url: string, type: string, thumbnail_url?: string | null }[] = [];
 
         for (const file of files) {
             try {
@@ -246,7 +247,28 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 }
 
                 const publicUrl = getPublicUrl(fileName);
-                uploadedItems.push({ url: publicUrl, type: fileType });
+                let thumbnailUrl: string | null = null;
+
+                if (fileType === 'video') {
+                    const thumbnailFile = await createVideoThumbnailFile(file);
+                    if (thumbnailFile) {
+                        const thumbnailPath = `${userId}/thumbnails/${thumbnailFile.name}`;
+                        const thumbnailForm = new FormData();
+                        thumbnailForm.append('file', thumbnailFile);
+                        thumbnailForm.append('path', thumbnailPath);
+
+                        const thumbRes = await fetch('/api/upload', {
+                            method: 'POST',
+                            body: thumbnailForm,
+                        });
+
+                        if (thumbRes.ok) {
+                            thumbnailUrl = getPublicUrl(thumbnailPath);
+                        }
+                    }
+                }
+
+                uploadedItems.push({ url: publicUrl, type: fileType, thumbnail_url: thumbnailUrl });
             } catch (err) {
                 console.error(`Error processing ${file.name}:`, err);
             }

@@ -28,6 +28,21 @@ export async function deleteFileFromDisk(relativePath: string): Promise<void> {
     }
 }
 
+export function extractUploadPathFromUrl(url: string | null | undefined): string | null {
+    if (!url) return null;
+    const marker = "/api/file/";
+    const index = url.indexOf(marker);
+    if (index === -1) return null;
+
+    try {
+        const rawPath = url.slice(index + marker.length);
+        const cleaned = decodeURIComponent(rawPath).replace(/^\/+/, "");
+        return cleaned || null;
+    } catch {
+        return null;
+    }
+}
+
 /**
  * Build the disk-relative path for a content item.
  * DB stores: path = folderPath (e.g. "admin"), name = filename (e.g. "video.mp4")

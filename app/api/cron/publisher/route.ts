@@ -8,6 +8,7 @@ import {
     resolveAccessToken,
 } from '@/lib/instagram';
 import { describeChannelHealth, resolvePlannerRuntime } from '@/lib/planner-runtime';
+import { cleanupOrphanUploadFiles } from '@/lib/media-cleanup';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -198,7 +199,7 @@ async function handler(request: Request) {
                     continue;
                 }
 
-                const { selectedIndex, selectedContent, mediaUrl, mediaType, caption, locationId, shareToFeed, children, nextState, warnings } = runtime;
+                const { selectedIndex, selectedContent, mediaUrl, mediaType, caption, locationId, shareToFeed, thumbnailUrl, children, nextState, warnings } = runtime;
                 const safeChildren = children || [];
                 for (const warning of warnings) {
                     await logPlanner(planner.id, `[Phase0] ${warning}`, 'info');
@@ -219,6 +220,7 @@ async function handler(request: Request) {
                                 : (mediaType === 'STORIES' && mediaUrl && !mediaUrl.includes('.mp4')) ? mediaUrl
                             : (mediaType === 'CAROUSEL' && safeChildren.length > 0) ? safeChildren[0].url // Set first child as thumbnail
                                         : null,
+                            thumbnail_url: thumbnailUrl || (safeChildren.length > 0 ? safeChildren[0].url : null),
                             children_urls: safeChildren.length > 0 ? JSON.stringify(safeChildren) : null,
                             share_to_feed: shareToFeed,
                             location_id: locationId,
@@ -506,6 +508,10 @@ async function handler(request: Request) {
                 results.errors++;
             }
         }
+
+        const mediaCleanup = await cleanupOrphanUploadFiles(now, 25);
+        results.cleaned_media = mediaCleanup.deleted;
+        results.scanned_media = mediaCleanup.scanned;
 
         return NextResponse.json(results);
     } catch (err: any) {

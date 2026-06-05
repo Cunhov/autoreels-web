@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { deleteFileFromDisk, buildDiskPath } from "@/lib/deleteFiles";
+import { deleteFileFromDisk, buildDiskPath, extractUploadPathFromUrl } from "@/lib/deleteFiles";
 
 export async function GET(
     _req: Request,
@@ -74,7 +74,7 @@ export async function DELETE(
         // Fetch the item first so we can clean up its file
         const item = await prisma.contentItem.findFirst({
             where: { id, user_id: userId },
-            select: { id: true, name: true, path: true, type: true },
+            select: { id: true, name: true, path: true, type: true, thumbnail_url: true },
         });
 
         if (!item) {
@@ -88,16 +88,24 @@ export async function DELETE(
         if (item.type !== "carousel_folder" && item.name) {
             filesToDelete.push(buildDiskPath(userId, item.path, item.name));
         }
+        const itemThumb = extractUploadPathFromUrl(item.thumbnail_url);
+        if (itemThumb) {
+            filesToDelete.push(itemThumb);
+        }
 
         // If it's a carousel folder, also collect children's files
         if (item.type === "carousel_folder") {
             const children = await prisma.contentItem.findMany({
                 where: { parent_id: item.id },
-                select: { name: true, path: true },
+                select: { name: true, path: true, thumbnail_url: true },
             });
             for (const child of children) {
                 if (child.name) {
                     filesToDelete.push(buildDiskPath(userId, child.path, child.name));
+                }
+                const childThumb = extractUploadPathFromUrl(child.thumbnail_url);
+                if (childThumb) {
+                    filesToDelete.push(childThumb);
                 }
             }
         }

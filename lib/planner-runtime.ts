@@ -8,8 +8,9 @@ type PlannerContentItem = {
     title_fallback?: string;
     location_id?: string | null;
     share_to_feed?: boolean;
-    children_urls?: { url: string; type: string }[];
-    carousel_items?: { url: string; type: string }[];
+    thumbnail_url?: string;
+    children_urls?: { url: string; type: string; thumbnail_url?: string }[];
+    carousel_items?: { url: string; type: string; thumbnail_url?: string }[];
 };
 
 type PlannerConfig = {
@@ -169,12 +170,14 @@ export async function resolvePlannerRuntime(prisma: PrismaLike, planner: any, no
     let caption = selectedContent.caption || '';
     const locationId = selectedContent.location_id || null;
     const shareToFeed = selectedContent.share_to_feed !== false;
-    let children: { url: string; type: string }[] = selectedContent.children_urls || selectedContent.carousel_items || [];
+    let thumbnailUrl = selectedContent.thumbnail_url || null;
+    let children: { url: string; type: string; thumbnail_url?: string }[] = selectedContent.children_urls || selectedContent.carousel_items || [];
 
     if (selectedContent.type === 'library_item' || (selectedContent.type === 'config' && selectedContent.id) || (!selectedContent.type && selectedContent.id)) {
         const libItem = await prisma.contentItem.findUnique({ where: { id: selectedContent.id } });
         if (libItem) {
             mediaUrl = libItem.url || '';
+            thumbnailUrl = libItem.thumbnail_url || thumbnailUrl;
             mediaType = libItem.type === 'video'
                 ? 'REELS'
                 : libItem.type === 'image'
@@ -194,11 +197,15 @@ export async function resolvePlannerRuntime(prisma: PrismaLike, planner: any, no
                     return {
                         url: urlStr,
                         type: isVideo ? 'video' : 'image',
+                        thumbnail_url: c.thumbnail_url || null,
                     };
                 }).slice(0, 10);
 
                 if (subItems.length > 10) {
                     warnings.push('Carousel limited to 10 items for Instagram');
+                }
+                if (!thumbnailUrl && children.length > 0) {
+                    thumbnailUrl = children[0].url;
                 }
             }
 
@@ -211,6 +218,10 @@ export async function resolvePlannerRuntime(prisma: PrismaLike, planner: any, no
         } else {
             warnings.push(`Library item not found: ${selectedContent.id}`);
         }
+    }
+
+    if (!thumbnailUrl && children.length > 0) {
+        thumbnailUrl = children[0].thumbnail_url || children[0].url;
     }
 
     const errors: string[] = [];
@@ -233,6 +244,7 @@ export async function resolvePlannerRuntime(prisma: PrismaLike, planner: any, no
         caption,
         locationId,
         shareToFeed,
+        thumbnailUrl,
         children,
         preview: {
             mediaUrl,
@@ -240,9 +252,9 @@ export async function resolvePlannerRuntime(prisma: PrismaLike, planner: any, no
             caption,
             locationId,
             shareToFeed,
+            thumbnailUrl,
             children,
         },
         config,
     };
 }
-

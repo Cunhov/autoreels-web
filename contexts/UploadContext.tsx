@@ -1,6 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { useSession } from 'next-auth/react';
+import { createVideoThumbnailFile } from '@/lib/video-thumbnail';
 
 export type UploadStatus = 'pending' | 'uploading' | 'frozen' | 'error' | 'completed' | 'canceled';
 
@@ -46,6 +48,7 @@ const MAX_CONCURRENT = 2; // Maximum number of concurrent uploads
 const FREEZE_TIMEOUT_MS = 15000; // 15 seconds without progress = frozen
 
 export function UploadProvider({ children }: { children: React.ReactNode }) {
+    const { data: session } = useSession();
     const [tasks, setTasks] = useState<UploadTask[]>([]);
     const [activeUploads, setActiveUploads] = useState<Set<string>>(new Set());
 
@@ -327,6 +330,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
         try {
             const targetPath = `${task.folderPath ? task.folderPath + '/' : ''}${task.name}`;
+            const userId = (session?.user as any)?.id as string | undefined;
 
             let currentChunk = task.currentChunk;
 
@@ -376,6 +380,28 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 }
             }
 
+            let thumbnailPath: string | null = null;
+            if (userId && task.file.type.startsWith('video/')) {
+                const thumbnailFile = await createVideoThumbnailFile(task.file);
+                if (thumbnailFile) {
+                    thumbnailPath = `${userId}/${task.folderPath ? task.folderPath + '/' : ''}thumbnails/${thumbnailFile.name}`;
+                    const thumbForm = new FormData();
+                    thumbForm.append('file', thumbnailFile);
+                    thumbForm.append('path', thumbnailPath);
+
+                    const thumbRes = await fetch('/api/upload', {
+                        method: 'POST',
+                        body: thumbForm,
+                        signal: controller.signal,
+                    });
+
+                    if (!thumbRes.ok) {
+                        console.warn('Thumbnail upload failed; continuing without thumbnail.');
+                        thumbnailPath = null;
+                    }
+                }
+            }
+
             // Sync Database record upon final chunk completion
             const formData = new FormData();
             formData.append('filename', task.name);
@@ -395,6 +421,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             }
             if (task.caption) {
                 formData.append('caption', task.caption);
+            }
+            if (thumbnailPath) {
+                formData.append('thumbnailPath', thumbnailPath);
             }
 
             const metaRes = await fetch('/api/upload-chunk/complete', {
