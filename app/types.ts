@@ -2,7 +2,7 @@ export interface Post {
     id: string;
     video_url: string;
     caption: string;
-    status: 'published' | 'failed' | 'scheduled' | 'processing' | 'processing_upload' | 'processing_children' | 'pending';
+    status: 'published' | 'failed' | 'cancelled' | 'scheduled' | 'processing' | 'processing_upload' | 'processing_children' | 'pending';
     scheduled_at: string;
     error_message?: string;
     failed_reason?: string;
