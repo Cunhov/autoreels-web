@@ -22,6 +22,7 @@ export interface UploadTask {
     chunkSize: number;
     totalChunks: number;
     currentChunk: number;
+    retryCount: number;
 }
 
 interface UploadContextType {
@@ -45,7 +46,9 @@ export function useUpload() {
 
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
 const MAX_CONCURRENT = 2; // Maximum number of concurrent uploads
-const FREEZE_TIMEOUT_MS = 15000; // 15 seconds without progress = frozen
+const FREEZE_TIMEOUT_MS = 30000; // 30s without progress = frozen (chunks of 5MB can take a while on slow links)
+const RETRY_DELAY_MS = 5000; // delay before re-enqueuing a frozen upload
+const MAX_AUTO_RETRIES = 2; // auto-retries before marking the task as failed
 
 export function UploadProvider({ children }: { children: React.ReactNode }) {
     const { data: session } = useSession();
@@ -57,6 +60,37 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
     // Track byte progress timestamps to detect freezes
     const lastProgressMs = useRef<Map<string, number>>(new Map());
+
+    // Track the last observed byte progress so slow-but-alive uploads are not frozen
+    const lastProgressBytes = useRef<Map<string, number>>(new Map());
+
+    // Timers for automatic retry of frozen uploads
+    const retryTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+    // Enqueue a frozen task again after RETRY_DELAY_MS (only if it is still frozen)
+    const scheduleRetry = useCallback((taskId: string) => {
+        if (retryTimers.current.has(taskId)) return;
+
+        const timer = setTimeout(() => {
+            retryTimers.current.delete(taskId);
+            setTasks(prev => prev.map(t => {
+                if (t.id !== taskId || t.status !== 'frozen') return t;
+                // Restart from chunk 0: the server temp file may hold a partial chunk.
+                return { ...t, status: 'pending' as UploadStatus, progress: 0, currentChunk: 0 };
+            }));
+        }, RETRY_DELAY_MS);
+
+        retryTimers.current.set(taskId, timer);
+    }, []);
+
+    // Clear any pending retry timer for a task
+    const clearRetryTimer = useCallback((taskId: string) => {
+        const timer = retryTimers.current.get(taskId);
+        if (timer) {
+            clearTimeout(timer);
+            retryTimers.current.delete(taskId);
+        }
+    }, []);
 
     // Add new files to the queue (individual / loose files)
     const addFiles = useCallback((files: File[], folderId: string | null = null, tags: string[] = []) => {
@@ -74,7 +108,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             caption: null,
             chunkSize: CHUNK_SIZE,
             totalChunks: Math.ceil(file.size / CHUNK_SIZE),
-            currentChunk: 0
+            currentChunk: 0,
+            retryCount: 0
         }));
 
         setTasks(prev => [...prev, ...newTasks]);
@@ -156,7 +191,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     caption: folderCaption || null,
                     chunkSize: CHUNK_SIZE,
                     totalChunks: Math.ceil(file.size / CHUNK_SIZE),
-                    currentChunk: 0
+                    currentChunk: 0,
+                    retryCount: 0
                 });
             } else {
                 // 2+ files → create carousel_folder in DB, then queue children
@@ -196,7 +232,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                             caption: null,
                             chunkSize: CHUNK_SIZE,
                             totalChunks: Math.ceil(file.size / CHUNK_SIZE),
-                            currentChunk: 0
+                            currentChunk: 0,
+                            retryCount: 0
                         });
                     }
                 } catch (error) {
@@ -222,7 +259,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 caption: null,
                 chunkSize: CHUNK_SIZE,
                 totalChunks: Math.ceil(file.size / CHUNK_SIZE),
-                currentChunk: 0
+                currentChunk: 0,
+                retryCount: 0
             });
         }
 
@@ -232,6 +270,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     }, []);
 
     const cancelTask = useCallback((taskId: string) => {
+        // Cancel any pending retry timer
+        clearRetryTimer(taskId);
+
         // Abort network request if active
         if (abortControllers.current.has(taskId)) {
             abortControllers.current.get(taskId)?.abort();
@@ -247,9 +288,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             next.delete(taskId);
             return next;
         });
-    }, []);
+    }, [clearRetryTimer]);
 
     const retryTask = useCallback((taskId: string) => {
+        clearRetryTimer(taskId);
         setTasks(prev => {
             const taskToRetry = prev.find(t => t.id === taskId);
             if (!taskToRetry) return prev;
@@ -257,7 +299,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             const others = prev.filter(t => t.id !== taskId);
             return [...others, { ...taskToRetry, status: 'pending' as UploadStatus, progress: 0, currentChunk: 0, errorMessage: undefined }];
         });
-    }, []);
+    }, [clearRetryTimer]);
 
     const clearCompleted = useCallback(() => {
         setTasks(prev => prev.filter(t => t.status !== 'completed' && t.status !== 'canceled'));
@@ -280,50 +322,90 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         const interval = setInterval(() => {
             const now = Date.now();
-            let changed = false;
+            const frozen: { taskId: string; task: UploadTask }[] = [];
 
-            setTasks(prev => {
-                let nextTasks = [...prev];
-                activeUploads.forEach(taskId => {
-                    const lastMs = lastProgressMs.current.get(taskId);
-                    const task = nextTasks.find(t => t.id === taskId);
+            activeUploads.forEach(taskId => {
+                const task = tasks.find(t => t.id === taskId);
+                if (!task || task.status !== 'uploading') return;
 
-                    if (task && task.status === 'uploading' && lastMs && (now - lastMs > FREEZE_TIMEOUT_MS)) {
-                        console.warn(`Upload ID ${taskId} frozen! Aborting and moving to back of queue.`);
+                const lastMs = lastProgressMs.current.get(taskId) ?? 0;
+                const lastBytes = lastProgressBytes.current.get(taskId) ?? 0;
+                const progressBytes = Math.round((task.currentChunk / task.totalChunks) * task.size);
 
-                        if (abortControllers.current.has(taskId)) {
-                            abortControllers.current.get(taskId)?.abort();
-                            abortControllers.current.delete(taskId);
-                        }
+                // Byte progress increased since the last tick → upload is alive, just slow.
+                const madeProgress = progressBytes > lastBytes;
+                if (madeProgress) {
+                    lastProgressBytes.current.set(taskId, progressBytes);
+                    lastProgressMs.current.set(taskId, now);
+                    return;
+                }
 
-                        changed = true;
-
-                        nextTasks = nextTasks.filter(t => t.id !== taskId);
-                        nextTasks.push({
-                            ...task,
-                            status: 'frozen',
-                            errorMessage: 'Connection froze. Will retry.'
-                        });
-
-                        setActiveUploads(prevActive => {
-                            const n = new Set(prevActive);
-                            n.delete(taskId);
-                            return n;
-                        });
-                    }
-                });
-                return changed ? nextTasks : prev;
+                if (now - lastMs > FREEZE_TIMEOUT_MS) {
+                    frozen.push({ taskId, task });
+                }
             });
+
+            if (frozen.length === 0) return;
+
+            // Apply freeze transitions (pure state update — no side effects inside updater)
+            setTasks(prev => {
+                let next = prev;
+                for (const { taskId, task } of frozen) {
+                    const nextRetryCount = task.retryCount + 1;
+                    const isFailed = nextRetryCount > MAX_AUTO_RETRIES;
+                    next = next.map(t => t.id === taskId
+                        ? {
+                            ...t,
+                            status: isFailed ? 'error' as UploadStatus : 'frozen' as UploadStatus,
+                            errorMessage: isFailed
+                                ? 'Upload failed after multiple retries.'
+                                : 'Connection stalled. Retrying…'
+                        }
+                        : t);
+                }
+                return next;
+            });
+
+            // Side effects (abort + schedule retry) happen OUTSIDE the state updater
+            for (const { taskId, task } of frozen) {
+                console.warn(`Upload ID ${taskId} frozen! Aborting and scheduling retry.`);
+                if (abortControllers.current.has(taskId)) {
+                    abortControllers.current.get(taskId)?.abort();
+                    abortControllers.current.delete(taskId);
+                }
+                lastProgressBytes.current.delete(taskId);
+
+                setActiveUploads(prevActive => {
+                    const n = new Set(prevActive);
+                    n.delete(taskId);
+                    return n;
+                });
+
+                // Auto-retry (if retries remain) — re-enqueue as pending after a delay
+                if (task.retryCount + 1 <= MAX_AUTO_RETRIES) {
+                    scheduleRetry(taskId);
+                }
+            }
         }, 5000);
 
         return () => clearInterval(interval);
-    }, [activeUploads]);
+    }, [tasks, activeUploads, scheduleRetry]);
+
+    // Cleanup all pending retry timers on unmount
+    useEffect(() => {
+        const timers = retryTimers.current;
+        return () => {
+            timers.forEach(timer => clearTimeout(timer));
+            timers.clear();
+        };
+    }, []);
 
     // Upload Execution logic
     const startUpload = async (task: UploadTask) => {
         setActiveUploads(prev => new Set(prev).add(task.id));
         setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'uploading' } : t));
         lastProgressMs.current.set(task.id, Date.now());
+        lastProgressBytes.current.set(task.id, Math.round((task.currentChunk / task.totalChunks) * task.size));
 
         const controller = new AbortController();
         abortControllers.current.set(task.id, controller);
@@ -364,6 +446,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
                     currentChunk++;
                     const progress = Math.round((currentChunk / task.totalChunks) * 100);
+                    lastProgressBytes.current.set(task.id, Math.round((currentChunk / task.totalChunks) * task.size));
 
                     if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
@@ -439,25 +522,35 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             // Finish
             setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t));
 
-        } catch (error: any) {
-            if (error.name === 'AbortError') {
+        } catch (error: unknown) {
+            const err = error as { name?: string; message?: string };
+            if (err.name === 'AbortError') {
                 return;
             }
 
-            setTasks(prev => {
-                const others = prev.filter(t => t.id !== task.id);
-                const failedTask = prev.find(t => t.id === task.id);
-                if (!failedTask) return prev;
+            const nextRetryCount = task.retryCount + 1;
+            const isFailed = nextRetryCount > MAX_AUTO_RETRIES;
 
-                return [...others, {
-                    ...failedTask,
-                    status: 'frozen' as UploadStatus,
-                    errorMessage: error.message
-                }];
-            });
+            setTasks(prev => prev.map(t =>
+                t.id === task.id
+                    ? {
+                        ...t,
+                        status: isFailed ? 'error' as UploadStatus : 'frozen' as UploadStatus,
+                        errorMessage: isFailed
+                            ? `Upload failed: ${err.message || 'Unknown error'}`
+                            : `Upload failed. Retrying… ${err.message || ''}`
+                    }
+                    : t
+            ));
+
+            // Auto-retry if retries remain
+            if (!isFailed) {
+                scheduleRetry(task.id);
+            }
         } finally {
             abortControllers.current.delete(task.id);
             lastProgressMs.current.delete(task.id);
+            lastProgressBytes.current.delete(task.id);
             setActiveUploads(prev => {
                 const next = new Set(prev);
                 next.delete(task.id);
