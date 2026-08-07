@@ -71,6 +71,10 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
             <div className="grid grid-cols-7 gap-px bg-ios-separator/50 border border-ios-separator/50 rounded-2xl overflow-hidden shadow-sm ring-1 ring-black/5">
                 {days.map((item, i) => {
                     const dayPosts = item.date ? getPostsForDay(item.date) : [];
+                    // NOTE: `new Date()` in render is safe here — MonthView is only
+                    // rendered after the page's `loading` gate, so it never runs during
+                    // SSR (no hydration mismatch). If that gate is ever removed, move
+                    // this into a state set in useEffect.
                     const isToday = item.date && item.date.toDateString() === new Date().toDateString();
 
                     return (
