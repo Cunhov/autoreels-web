@@ -1,11 +1,12 @@
 export async function createVideoThumbnailFile(file: File): Promise<File | null> {
-    try {
-        const video = document.createElement('video');
-        video.preload = 'metadata';
-        video.muted = true;
-        video.playsInline = true;
-        video.src = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    const objectUrl = URL.createObjectURL(file);
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+    video.src = objectUrl;
 
+    try {
         await new Promise<void>((resolve, reject) => {
             video.onloadedmetadata = () => resolve();
             video.onerror = () => reject(new Error('Failed to load video metadata'));
@@ -28,7 +29,6 @@ export async function createVideoThumbnailFile(file: File): Promise<File | null>
         if (!ctx) return null;
 
         ctx.drawImage(video, 0, 0, width, height);
-        URL.revokeObjectURL(video.src);
 
         const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/webp', 0.82));
         if (!blob) return null;
@@ -37,5 +37,8 @@ export async function createVideoThumbnailFile(file: File): Promise<File | null>
     } catch (error) {
         console.warn('Video thumbnail generation failed:', error);
         return null;
+    } finally {
+        // Always release the object URL, on both success and error paths.
+        URL.revokeObjectURL(objectUrl);
     }
 }
