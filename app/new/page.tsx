@@ -2,15 +2,15 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { getPublicUrl } from '@/lib/storage';
 import { Upload, X, Radio, Calendar as CalendarIcon } from 'lucide-react';
-import { IOSInputRow } from '@/components/IOSComponents';
 
 interface Channel {
     id: string;
     name: string;
     platform: string;
 }
+
+const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB — must match server-side chunk convention
 
 export default function NewPost() {
     const router = useRouter();
@@ -19,6 +19,7 @@ export default function NewPost() {
     const [selectedChannel, setSelectedChannel] = useState('');
     const [scheduledAt, setScheduledAt] = useState('');
     const [file, setFile] = useState<File | null>(null);
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [caption, setCaption] = useState('');
     const [uploading, setUploading] = useState(false);
     const [error, setError] = useState('');
@@ -27,17 +28,67 @@ export default function NewPost() {
         fetchChannels();
     }, []);
 
+    // Release the object URL when the preview changes or the page unmounts
+    useEffect(() => {
+        return () => {
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+        };
+    }, [previewUrl]);
+
     async function fetchChannels() {
-        const res = await fetch('/api/channels');
-        if (res.ok) {
-            const data = await res.json();
-            setChannels(data);
+        try {
+            const res = await fetch('/api/channels');
+            if (res.ok) {
+                const data = await res.json();
+                setChannels(data);
+            }
+        } catch (err) {
+            console.error('Failed to load channels:', err);
         }
     }
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (e.target.files && e.target.files[0]) {
-            setFile(e.target.files[0]);
+        const selected = e.target.files?.[0] || null;
+        if (previewUrl) URL.revokeObjectURL(previewUrl);
+        setFile(selected);
+        setPreviewUrl(selected ? URL.createObjectURL(selected) : null);
+        // Reset so selecting the same file again re-triggers onChange
+        e.target.value = '';
+    };
+
+    // Upload a file using the chunked local API (/api/upload-chunk) with retries
+    const uploadChunked = async (targetPath: string, fileToUpload: File) => {
+        const totalChunks = Math.ceil(fileToUpload.size / CHUNK_SIZE);
+        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+            const start = chunkIndex * CHUNK_SIZE;
+            const end = Math.min(start + CHUNK_SIZE, fileToUpload.size);
+            const chunk = fileToUpload.slice(start, end);
+
+            let retries = 0;
+            let success = false;
+            while (!success && retries < 3) {
+                try {
+                    const uploadRes = await fetch('/api/upload-chunk', {
+                        method: 'POST',
+                        headers: {
+                            'x-chunk-index': chunkIndex.toString(),
+                            'x-total-chunks': totalChunks.toString(),
+                            'x-file-name': targetPath,
+                            'Content-Type': 'application/octet-stream',
+                        },
+                        body: chunk,
+                    });
+                    if (!uploadRes.ok) {
+                        const err = await uploadRes.json().catch(() => ({})) as { error?: string };
+                        throw new Error(err.error || `Failed to upload chunk ${chunkIndex + 1}/${totalChunks}`);
+                    }
+                    success = true;
+                } catch (err) {
+                    retries++;
+                    if (retries >= 3) throw err;
+                    await new Promise(r => setTimeout(r, 1000 * retries));
+                }
+            }
         }
     };
 
@@ -50,59 +101,57 @@ export default function NewPost() {
 
         try {
             if (!session?.user) throw new Error('You must be logged in to create a post.');
-            const userId = (session.user as any).id;
+            const userId = (session.user as { id?: string }).id;
+            if (!userId) throw new Error('You must be logged in to create a post.');
 
-            // 1. Get Signed Upload URL
-            const fileExt = file.name.split('.').pop();
-            const fileName = `${userId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
+            // 1. Upload the file in chunks to the local filesystem (data/uploads)
+            const folderPath = 'admin';
+            const targetPath = `${folderPath}/${file.name}`;
+            await uploadChunked(targetPath, file);
 
-            const urlRes = await fetch('/api/upload-url', {
+            // 2. Finalize metadata (creates the ContentItem record)
+            const formData = new FormData();
+            formData.append('filename', file.name);
+            formData.append('size', file.size.toString());
+            formData.append('path', targetPath);
+            formData.append('folderPath', folderPath);
+            formData.append('type', 'video');
+
+            const metaRes = await fetch('/api/upload-chunk/complete', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path: fileName, bucket: 'instagram-videos' })
+                body: formData,
             });
-
-            if (!urlRes.ok) {
-                const urlErr = await urlRes.json();
-                throw new Error(urlErr.error || 'Failed to get upload URL');
+            if (!metaRes.ok) {
+                const metaErr = await metaRes.json().catch(() => ({})) as { error?: string };
+                throw new Error(metaErr.error || 'Failed to save file metadata');
             }
+            const metaData = await metaRes.json();
+            const videoUrl = metaData?.item?.url || `/api/file/${userId}/${folderPath}/${encodeURIComponent(file.name)}`;
 
-            const { signedUrl, token } = await urlRes.json();
-
-            // 2. Upload file to signed URL
-            const uploadRes = await fetch(signedUrl, {
-                method: 'PUT',
-                headers: {
-                    'Authorization': `Bearer ${token}`
-                },
-                body: file
-            });
-
-            if (!uploadRes.ok) throw new Error('Failed to upload video');
-
-            // 3. Get Public URL (doesn't require auth)
-            const videoUrl = getPublicUrl(fileName);
-
-            // 4. Insert into Database
-
+            // 3. Create the post record (scheduled_at as ISO; publish now if empty)
             const res = await fetch('/api/posts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     video_url: videoUrl,
                     caption: caption,
+                    media_type: 'REELS',
                     status: 'pending',
                     channel_id: selectedChannel || null,
-                    scheduled_at: scheduledAt || null
+                    scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : new Date().toISOString()
                 })
             });
 
-            if (!res.ok) throw new Error('Failed to create post record');
+            if (!res.ok) {
+                const postErr = await res.json().catch(() => ({})) as { error?: string };
+                throw new Error(postErr.error || 'Failed to create post record');
+            }
 
             router.push('/');
-        } catch (err: any) {
+        } catch (err: unknown) {
+            const message = (err as { message?: string })?.message || 'An error occurred during upload.';
             console.error(err);
-            setError(err.message || 'An error occurred during upload.');
+            setError(message);
         } finally {
             setUploading(false);
         }
@@ -119,7 +168,7 @@ export default function NewPost() {
                     <label htmlFor="file-upload" className={`block w-full aspect-[9/16] max-w-[200px] mx-auto rounded-xl border-2 border-dashed transition-all relative overflow-hidden bg-ios-card ${file ? 'border-ios-blue' : 'border-ios-separator hover:border-ios-blue/50'}`}>
                         {file ? (
                             <div className="w-full h-full bg-black flex items-center justify-center relative">
-                                <video className="w-full h-full object-cover opacity-80" />
+                                <video key={previewUrl || undefined} className="w-full h-full object-cover opacity-80" src={previewUrl || undefined} muted playsInline />
                                 <div className="absolute inset-0 flex items-center justify-center">
                                     <span className="text-white text-sm font-medium bg-black/50 px-3 py-1 rounded-full">{file.name}</span>
                                 </div>
@@ -127,7 +176,9 @@ export default function NewPost() {
                                     type="button"
                                     onClick={(e) => {
                                         e.preventDefault();
+                                        if (previewUrl) URL.revokeObjectURL(previewUrl);
                                         setFile(null);
+                                        setPreviewUrl(null);
                                     }}
                                     className="absolute top-2 right-2 bg-white/20 backdrop-blur-md p-1 rounded-full text-white"
                                 >
