@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import {
     fetchWithTimeout,
@@ -8,6 +9,7 @@ import {
     resolveAccessToken,
 } from '@/lib/instagram';
 import { describeChannelHealth, resolvePlannerRuntime } from '@/lib/planner-runtime';
+import { sendNotification } from '@/lib/notify';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -72,8 +74,9 @@ function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
 /** Error marker for malformed persisted data (children_urls, instagram_child_ids...). */
 class MalformedDataError extends Error {}
 
-/** Posts older than this window that keep hitting transient errors are failed instead of retried forever. */
-const MAX_TRANSIENT_AGE_MS = 24 * 60 * 60 * 1000;
+/** Posts that exhaust transient retries are failed instead of retried forever. */
+const MAX_TRANSIENT_ATTEMPTS = 5;
+const MAX_TRANSIENT_AGE_MS = 48 * 60 * 60 * 1000;
 
 function isPostTooOld(post: { created_at?: Date | null }, now: Date): boolean {
     const created = post.created_at?.getTime() || 0;
@@ -112,6 +115,141 @@ function withIgStatus(message: string, status: number): Error & { igStatus: numb
     const e = new Error(message) as Error & { igStatus: number };
     e.igStatus = status;
     return e;
+}
+
+/** Fire a failure notification for a post (Telegram/webhook via AppConfig). Never throws. */
+async function notifyPostFailed(
+    post: { caption?: string | null; channel?: { name?: string | null } | null },
+    errMsg: string
+): Promise<void> {
+    const caption = (post.caption || 'No caption').replace(/\s+/g, ' ').trim().slice(0, 60);
+    const channel = post.channel?.name || 'canal desconhecido';
+    await sendNotification(`❌ Publicação falhou (${channel}): ${caption} — ${errMsg.slice(0, 200)}`);
+}
+
+/** Minimal shape of a Post that flows through retry/throttle helpers. */
+interface RetryablePost {
+    id: string;
+    caption?: string | null;
+    attempts?: number;
+    created_at?: Date | null;
+    channel?: { id?: string; name?: string | null; settings?: string | null } | null;
+}
+
+/** Minimal shape of the counters the retry helper updates. */
+interface PublishResults {
+    errors: number;
+    transient: number;
+    rate_limited: number;
+    throttled: number;
+}
+
+/**
+ * Record a retryable failure: bump attempts/last_attempt_at and either keep the
+ * post in a retryable status or fail it once retries are exhausted
+ * (MAX_TRANSIENT_ATTEMPTS attempts or MAX_TRANSIENT_AGE_MS since creation).
+ */
+async function handleRetryableFailure(opts: {
+    post: RetryablePost;
+    errMsg: string;
+    revertToStatus?: string | null; // null/undefined = keep the current status
+    countAs?: 'transient' | 'rate_limited';
+    plannerId: string;
+    now: Date;
+    results: PublishResults;
+}): Promise<void> {
+    const { post, errMsg, revertToStatus, countAs = 'transient', plannerId, now, results } = opts;
+    const attemptNumber = (post.attempts || 0) + 1;
+    const tooLong = attemptNumber >= MAX_TRANSIENT_ATTEMPTS || isPostTooOld(post, now);
+
+    const data: Prisma.PostUncheckedUpdateInput = { attempts: { increment: 1 }, last_attempt_at: now };
+    if (tooLong) {
+        data.status = 'failed';
+        data.error_message = errMsg;
+        data.failed_reason = 'Transient errors for too long';
+    } else if (revertToStatus) {
+        data.status = revertToStatus;
+    }
+
+    await prisma.post.update({ where: { id: post.id }, data });
+
+    if (tooLong) {
+        results.errors++;
+        await logPlanner(plannerId, `Post ${post.id} failed after ${attemptNumber} transient attempts: ${errMsg}`, 'error');
+        await notifyPostFailed(post, errMsg);
+    } else {
+        results[countAs]++;
+        await logPlanner(plannerId, `Post ${post.id} ${countAs === 'rate_limited' ? 'rate limited (429)' : 'transient error'}: ${errMsg} — retrying later (attempt ${attemptNumber})`, 'error');
+    }
+}
+
+// ─── Publish throttle (per channel + global) ───────────────────────────────────
+
+/** Global minimum interval between publishes, from AppConfig (seconds → ms). 0 = off. */
+async function getGlobalPublishIntervalMs(): Promise<number> {
+    try {
+        const row = await prisma.appConfig.findUnique({ where: { key: 'PUBLISH_MIN_INTERVAL_SECONDS' } });
+        const secs = Number(row?.value || 0);
+        return Number.isFinite(secs) && secs > 0 ? secs * 1000 : 0;
+    } catch {
+        return 0;
+    }
+}
+
+/** Per-channel interval from Channel.settings.max_posts_per_hour (ms). 0 = off. */
+async function getChannelIntervalMs(channel: { settings?: string | null } | null | undefined): Promise<number> {
+    const settings = safeJsonParse<{ max_posts_per_hour?: number } | null>(channel?.settings, null);
+    const perHour = Number(settings?.max_posts_per_hour);
+    if (Number.isFinite(perHour) && perHour > 0) return Math.round(3_600_000 / perHour);
+    return 0;
+}
+
+/** True when the channel published within the last `minIntervalMs` ms. */
+async function isChannelThrottled(channel: { id?: string } | null | undefined, now: Date, minIntervalMs: number): Promise<boolean> {
+    if (minIntervalMs <= 0 || !channel?.id) return false;
+    const last = await prisma.post.findFirst({
+        where: { channel_id: channel.id, status: 'published', published_at: { not: null } },
+        orderBy: { published_at: 'desc' },
+        select: { published_at: true },
+    });
+    if (!last?.published_at) return false;
+    return now.getTime() - last.published_at.getTime() < minIntervalMs;
+}
+
+// ─── Caption templates (P1) ────────────────────────────────────────────────────
+
+/**
+ * Resolve the variables available to caption templates for a planner run.
+ * The content item is looked up with an ownership guard (IDOR-safe).
+ */
+async function resolveCaptionTemplateVars(
+    selectedContent: { id?: string; title?: string | null; caption?: string | null; title_fallback?: string | null; caption_fallback?: string | null } | null | undefined,
+    planner: { user_id: string },
+    config: { timezone?: string },
+    channelName: string,
+    now: Date
+): Promise<Record<string, string>> {
+    let title = selectedContent?.title_fallback || selectedContent?.title || '';
+    let itemCaption = selectedContent?.caption_fallback || selectedContent?.caption || '';
+    if (selectedContent?.id) {
+        const libItem = await prisma.contentItem.findFirst({
+            where: { id: selectedContent.id, user_id: planner.user_id },
+            select: { title: true, caption: true },
+        });
+        if (libItem) {
+            title = libItem.title || title;
+            itemCaption = libItem.caption || itemCaption;
+        }
+    }
+    const tz = config.timezone || 'America/Sao_Paulo';
+    const dateStr = new Intl.DateTimeFormat('pt-BR', { timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric' }).format(now);
+    return {
+        '{post_title}': title || '',
+        '{post_caption}': itemCaption || '',
+        '{date}': dateStr,
+        '{channel_name}': channelName || '',
+        '{hashtags}': '',
+    };
 }
 
 /** Wall-clock "HH:MM" in a given IANA timezone, without fragile string re-parsing. */
@@ -225,7 +363,7 @@ async function handler(request: Request) {
             const results: any = {
                 pending: 0, processing: 0, published: 0, errors: 0,
                 cleaned: 0, tokens_refreshed: 0,
-                planners_processed: 0, claimed: 0, skipped: 0, transient: 0, rate_limited: 0,
+                planners_processed: 0, claimed: 0, skipped: 0, transient: 0, rate_limited: 0, throttled: 0,
             };
             const now = new Date();
             results.tokens_refreshed = await refreshDueChannelTokens(now, startTime, MAX_EXEC_MS);
@@ -233,11 +371,20 @@ async function handler(request: Request) {
             // ═══════════════════════════════════════════════════════════════════════
             // PHASE -1: Cleanup — instantly fail posts with no media
             // ═══════════════════════════════════════════════════════════════════════
-            const cleanup = await prisma.post.updateMany({
+            const cleanupPosts = await prisma.post.findMany({
                 where: { status: 'pending', video_url: null, image_url: null, children_urls: null },
-                data: { status: 'failed', error_message: 'No media URL — content item missing', failed_reason: 'Missing Media' },
+                select: { id: true, caption: true },
             });
-            results.cleaned = cleanup.count;
+            if (cleanupPosts.length > 0) {
+                await prisma.post.updateMany({
+                    where: { id: { in: cleanupPosts.map(p => p.id) }, status: 'pending' },
+                    data: { status: 'failed', error_message: 'No media URL — content item missing', failed_reason: 'Missing Media' },
+                });
+                results.cleaned = cleanupPosts.length;
+                for (const p of cleanupPosts) {
+                    await notifyPostFailed({ caption: p.caption, channel: null }, 'No media URL — content item missing');
+                }
+            }
 
             // ═══════════════════════════════════════════════════════════════════════
             // PHASE 0: Planner Processing — create Posts from active Planners
@@ -336,9 +483,38 @@ async function handler(request: Request) {
 
                     await logPlanner(planner.id, `[Phase0] Selected content[${selectedIndex}]: type=${selectedContent?.type}, id=${selectedContent?.id}, url=${mediaUrl || selectedContent?.url}`, 'info');
 
+                    // ── Caption templates (P1) ──
+                    // config.caption_templates: string[] + config.caption_rotation:
+                    // 'off' | 'sequential' | 'random'. The UI (PlannerWizard) writes these;
+                    // here we only read them. Variables: {post_title} {post_caption} {date}
+                    // {channel_name} {hashtags}. Sequential advances per planner cycle via
+                    // config.state.template_index (persisted with nextState).
+                    const captionTemplates = Array.isArray(config.caption_templates)
+                        ? config.caption_templates.filter((t: unknown) => typeof t === 'string' && t.trim().length > 0)
+                        : [];
+                    const captionRotation = config.caption_rotation || 'off';
+                    const useCaptionTemplates = captionTemplates.length > 0 && captionRotation !== 'off';
+                    const templateIndex = typeof config.state?.template_index === 'number'
+                        ? Number(config.state.template_index)
+                        : 0;
+                    const finalState = {
+                        ...nextState,
+                        ...(useCaptionTemplates && captionRotation === 'sequential'
+                            ? { template_index: templateIndex + 1 }
+                            : {}),
+                    };
+
                     const isVideoStory = mediaType === 'STORIES' && !!mediaUrl && mediaUrl.includes('.mp4');
                     let postsCreated = 0;
                     for (const channel of publishableChannels) {
+                        let finalCaption = caption;
+                        if (useCaptionTemplates) {
+                            const chosen = captionRotation === 'random'
+                                ? captionTemplates[Math.floor(Math.random() * captionTemplates.length)]
+                                : captionTemplates[templateIndex % captionTemplates.length];
+                            const vars = await resolveCaptionTemplateVars(selectedContent, planner, config, channel.name || '', now);
+                            finalCaption = chosen.replace(/\{post_title\}|\{post_caption\}|\{date\}|\{channel_name\}|\{hashtags\}/g, (m: string) => vars[m] ?? '');
+                        }
                         await prisma.post.create({
                             data: {
                                 user_id: planner.user_id,
@@ -358,7 +534,7 @@ async function handler(request: Request) {
                                 collaborators: collaborators,
                                 audio_configuration: audioConfiguration ? JSON.stringify(audioConfiguration) : null,
                                 user_tags: userTags,
-                                caption,
+                                caption: finalCaption,
                                 scheduled_at: now,
                                 planner_id: planner.id,
                             },
@@ -370,7 +546,7 @@ async function handler(request: Request) {
                     // last_run was already claimed above — only persist the state/config here
                     await prisma.planner.update({
                         where: { id: planner.id },
-                        data: { config: JSON.stringify({ ...config, state: nextState }) },
+                        data: { config: JSON.stringify({ ...config, state: finalState }) },
                     });
                     results.planners_processed++;
                 } catch (err: any) {
@@ -406,6 +582,8 @@ async function handler(request: Request) {
             });
             results.claimed = claimedPosts.length;
 
+            const globalPublishIntervalMs = await getGlobalPublishIntervalMs();
+
             for (const post of claimedPosts) {
                 if (Date.now() - startTime > MAX_EXEC_MS) { results.timeout = true; break; }
                 const plannerId = post.planner_id || 'unknown';
@@ -416,6 +594,24 @@ async function handler(request: Request) {
                     if (!hasMedia) {
                         await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: 'No media URL', failed_reason: 'Missing Media' } });
                         results.errors++;
+                        await notifyPostFailed(post, 'No media URL');
+                        continue;
+                    }
+
+                    // Publish throttle: skip (and revert the claim) when the channel published too recently
+                    const minIntervalMs = Math.max(globalPublishIntervalMs, await getChannelIntervalMs(post.channel));
+                    if (await isChannelThrottled(post.channel, now, minIntervalMs)) {
+                        results.throttled++;
+                        await prisma.post.updateMany({ where: { id: post.id, status: 'processing' }, data: { status: 'pending' } });
+                        continue;
+                    }
+
+                    // A previous attempt may have created an IG container already (e.g. the
+                    // response was lost after a successful POST). Reuse it instead of creating
+                    // a duplicate container.
+                    if (post.instagram_container_id) {
+                        await prisma.post.update({ where: { id: post.id }, data: { status: 'processing_upload' } });
+                        results.pending++;
                         continue;
                     }
 
@@ -499,7 +695,8 @@ async function handler(request: Request) {
                                 where: { id: post.id },
                                 data: {
                                     status: 'processing_children',
-                                    instagram_child_ids: JSON.stringify(successfulIds)
+                                    instagram_child_ids: JSON.stringify(successfulIds),
+                                    container_created_at: now,
                                 }
                             });
                             results.pending++;
@@ -566,7 +763,7 @@ async function handler(request: Request) {
                     const data = await apiRes.json();
 
                     if (data.id) {
-                        await prisma.post.update({ where: { id: post.id }, data: { status: 'processing_upload', instagram_container_id: data.id } });
+                        await prisma.post.update({ where: { id: post.id }, data: { status: 'processing_upload', instagram_container_id: data.id, container_created_at: now } });
                         results.pending++;
                     } else {
                         await logPlanner(plannerId, `Media creation failed for post ${post.id}`, 'error', data);
@@ -579,23 +776,14 @@ async function handler(request: Request) {
                     const errMsg = isAbort ? 'Instagram API timed out (5m)' : e.message;
 
                     if (kind === 'rate-limited') {
-                        results.rate_limited++;
                         // Revert claim so the post is retried on a later tick, and stop the batch
-                        await prisma.post.updateMany({ where: { id: post.id, status: 'processing' }, data: { status: 'pending' } });
-                        await logPlanner(plannerId, `[Phase1] Rate limited (429) for post ${post.id} — retrying later`, 'error');
+                        await handleRetryableFailure({ post, errMsg: `Rate limited (429): ${errMsg}`, revertToStatus: 'pending', countAs: 'rate_limited', plannerId, now, results });
                         break;
                     }
 
                     if (kind === 'transient') {
-                        if (isPostTooOld(post, now)) {
-                            await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: 'Transient errors for too long' } });
-                            results.errors++;
-                        } else {
-                            // Revert the claim — the post will be retried on the next tick
-                            await prisma.post.updateMany({ where: { id: post.id, status: 'processing' }, data: { status: 'pending' } });
-                            await logPlanner(plannerId, `[Phase1] Transient error post=${post.id}: ${errMsg} — retrying later`, 'error');
-                            results.transient++;
-                        }
+                        // Revert the claim — the post will be retried on the next tick
+                        await handleRetryableFailure({ post, errMsg, revertToStatus: 'pending', plannerId, now, results });
                         continue;
                     }
 
@@ -603,6 +791,7 @@ async function handler(request: Request) {
                     await logPlanner(plannerId, `Phase1 Error post=${post.id}: ${errMsg}`, 'error');
                     await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: e instanceof MalformedDataError ? 'Malformed Data' : 'Initialization Failed' } });
                     results.errors++;
+                    await notifyPostFailed(post, errMsg);
                 }
             }
 
@@ -652,6 +841,7 @@ async function handler(request: Request) {
                             await logPlanner(post.planner_id || 'unknown', msg, 'error', errored.body);
                             await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: msg, failed_reason: 'Processing Failed' } });
                             results.errors++;
+                            await notifyPostFailed(post, msg);
                             continue;
                         }
 
@@ -674,7 +864,7 @@ async function handler(request: Request) {
                             lastStatus = res.status;
                             const data = await res.json();
                             if (data.id) {
-                                await prisma.post.update({ where: { id: post.id }, data: { status: 'processing_upload', instagram_container_id: data.id } });
+                                await prisma.post.update({ where: { id: post.id }, data: { status: 'processing_upload', instagram_container_id: data.id, container_created_at: now } });
                             } else {
                                 const err = withIgStatus(data.error?.message || 'Carousel container creation failed', res.status);
                                 throw err;
@@ -686,13 +876,12 @@ async function handler(request: Request) {
                         lastStatus = res.status;
                         const data = await res.json();
                         if (data.status_code === 'FINISHED') {
-                            // Delay publishing for 3 minutes from creation. We don't have a
-                            // `container_created_at` column, so scheduled_at is the closest
-                            // safe baseline (Phase 0/1 set scheduled_at ≈ creation request time).
-                            // Limitation: for manual posts that were scheduled far in the past,
-                            // the delay is skipped — acceptable, the container is already finished.
-                            const timeSinceScheduled = Date.now() - (post.scheduled_at?.getTime() || 0);
-                            if (timeSinceScheduled > 3 * 60 * 1000) {
+                            // Delay publishing for 3 minutes from container creation
+                            // (container_created_at, set in Phase 1/2). Falls back to created_at
+                            // for legacy posts that predate the column.
+                            const createdRef = post.container_created_at ?? post.created_at;
+                            const timeSinceCreation = Date.now() - (createdRef?.getTime() || 0);
+                            if (timeSinceCreation > 3 * 60 * 1000) {
                                 await prisma.post.update({ where: { id: post.id }, data: { status: 'ready_to_publish' } });
                             } else {
                                 // Leave in processing state temporarily
@@ -703,6 +892,7 @@ async function handler(request: Request) {
                             await logPlanner(post.planner_id || 'unknown', msg, 'error', data);
                             await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: msg, failed_reason: 'Processing Failed' } });
                             results.errors++;
+                            await notifyPostFailed(post, msg);
                         }
                         // else: still processing — will retry next tick
                     }
@@ -713,20 +903,14 @@ async function handler(request: Request) {
                     const errMsg = isAbort ? 'Instagram API timed out (15s)' : e.message;
 
                     if (kind === 'rate-limited') {
-                        results.rate_limited++;
-                        await logPlanner(post.planner_id || 'unknown', `[Phase2] Rate limited (429) for post ${post.id} — retrying later`, 'error');
+                        // Keep processing_* status — retried on the next tick; stop the batch
+                        await handleRetryableFailure({ post, errMsg: `Rate limited (429): ${errMsg}`, countAs: 'rate_limited', plannerId: post.planner_id || 'unknown', now, results });
                         break;
                     }
 
                     if (kind === 'transient') {
-                        if (isPostTooOld(post, now)) {
-                            await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: 'Transient errors for too long' } });
-                            results.errors++;
-                        } else {
-                            // Keep the current processing_* status — retried on the next tick
-                            await logPlanner(post.planner_id || 'unknown', `Phase2 Transient post=${post.id}: ${errMsg} — retrying later`, 'error');
-                            results.transient++;
-                        }
+                        // Keep the current processing_* status — retried on the next tick
+                        await handleRetryableFailure({ post, errMsg, plannerId: post.planner_id || 'unknown', now, results });
                         continue;
                     }
 
@@ -734,6 +918,7 @@ async function handler(request: Request) {
                     await logPlanner(post.planner_id || 'unknown', `Phase2 Error post=${post.id}: ${errMsg}`, 'error');
                     await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: e instanceof MalformedDataError ? 'Malformed Data' : 'Processing Exception' } });
                     results.errors++;
+                    await notifyPostFailed(post, errMsg);
                 }
             }
 
@@ -744,8 +929,16 @@ async function handler(request: Request) {
             // ═══════════════════════════════════════════════════════════════════════
 
             const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+            // Dead-letter: prefer last_attempt_at (most accurate proxy for when the cron
+            // last touched the post); fall back to created_at for legacy rows.
             await prisma.post.updateMany({
-                where: { status: { in: ['processing_upload', 'processing_children'] }, created_at: { lte: twoHoursAgo } },
+                where: {
+                    status: { in: ['processing_upload', 'processing_children'] },
+                    OR: [
+                        { last_attempt_at: { lte: twoHoursAgo } },
+                        { last_attempt_at: null, created_at: { lte: twoHoursAgo } },
+                    ],
+                },
                 data: { status: 'failed', error_message: 'Timed out: still processing after 2 hours', failed_reason: 'Processing Timeout' },
             });
 
@@ -770,6 +963,13 @@ async function handler(request: Request) {
                 if (Date.now() - startTime > MAX_EXEC_MS) { results.timeout = true; break; }
                 let lastStatus = 0;
                 try {
+                    // Publish throttle: skip (keep ready_to_publish) when the channel published too recently
+                    const minIntervalMs = Math.max(globalPublishIntervalMs, await getChannelIntervalMs(post.channel));
+                    if (await isChannelThrottled(post.channel, now, minIntervalMs)) {
+                        results.throttled++;
+                        continue;
+                    }
+
                     const accessToken = await resolveAccessToken(post.channel?.access_token || null);
                     const baseUrl = getGraphBaseUrl(accessToken);
 
@@ -803,20 +1003,14 @@ async function handler(request: Request) {
                     const errMsg = isAbort ? 'Instagram API timed out (15s)' : e.message;
 
                     if (kind === 'rate-limited') {
-                        results.rate_limited++;
-                        await logPlanner(post.planner_id || 'unknown', `[Phase3] Rate limited (429) for post ${post.id} — retrying later`, 'error');
+                        // Keep ready_to_publish — retried on the next tick; stop the batch
+                        await handleRetryableFailure({ post, errMsg: `Rate limited (429): ${errMsg}`, countAs: 'rate_limited', plannerId: post.planner_id || 'unknown', now, results });
                         break;
                     }
 
                     if (kind === 'transient') {
-                        if (isPostTooOld(post, now)) {
-                            await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: 'Transient errors for too long' } });
-                            results.errors++;
-                        } else {
-                            // Keep ready_to_publish — retried on the next tick
-                            await logPlanner(post.planner_id || 'unknown', `Phase3 Transient post=${post.id}: ${errMsg} — retrying later`, 'error');
-                            results.transient++;
-                        }
+                        // Keep ready_to_publish — retried on the next tick
+                        await handleRetryableFailure({ post, errMsg, plannerId: post.planner_id || 'unknown', now, results });
                         continue;
                     }
 
@@ -824,7 +1018,13 @@ async function handler(request: Request) {
                     await logPlanner(post.planner_id || 'unknown', `Phase3 Error post=${post.id}: ${errMsg}`, 'error', { igStatus: lastStatus });
                     await prisma.post.update({ where: { id: post.id }, data: { status: 'failed', error_message: errMsg, failed_reason: 'Publishing Failed' } });
                     results.errors++;
+                    await notifyPostFailed(post, errMsg);
                 }
+            }
+
+            // Summarize failures — one digest notification instead of flooding per-post alerts
+            if (results.errors > 0) {
+                await sendNotification(`⚠️ ${results.errors} publicação(ões) falharam no último ciclo do publisher.`);
             }
 
             return NextResponse.json(results);
