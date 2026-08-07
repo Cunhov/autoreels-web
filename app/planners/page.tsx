@@ -43,6 +43,19 @@ function relativeTime(dateStr?: string): string {
     return `${Math.floor(h / 24)}d ago`;
 }
 
+// Config is persisted as a JSON string (possibly double-stringified by legacy
+// versions). Parse it once, defensively, so callers always get an object.
+function parsePlannerConfig(config: any): any {
+    if (config === null || config === undefined) return {};
+    if (typeof config !== 'string') return config;
+    try {
+        const parsed = JSON.parse(config);
+        return typeof parsed === 'string' ? parsePlannerConfig(parsed) : parsed;
+    } catch {
+        return {};
+    }
+}
+
 export default function PlannersPage() {
     const [planners, setPlanners] = useState<Planner[]>([]);
     const [loading, setLoading] = useState(true);
@@ -70,6 +83,10 @@ export default function PlannersPage() {
         try {
             const pr = await fetch('/api/planners');
             if (pr.ok) setPlanners(await pr.json());
+            else showToast('Failed to load planners', 'err');
+        } catch (e: any) {
+            console.error('Error fetching planners:', e);
+            showToast('Failed to load planners', 'err');
         } finally { setLoading(false); }
     }
 
@@ -117,6 +134,10 @@ export default function PlannersPage() {
         try {
             const res = await fetch(`/api/planners/logs/${plannerId}`);
             setLogs(res.ok ? await res.json() : []);
+        } catch (e: any) {
+            console.error('Error fetching logs:', e);
+            showToast('Failed to load logs', 'err');
+            setLogs([]);
         } finally { setLoadingLogs(false); }
     }
 
@@ -128,6 +149,9 @@ export default function PlannersPage() {
             const res = await fetch(`/api/planners/${plannerId}/preview`);
             const data = await res.json().catch(() => ({}));
             setPreviewData(res.ok ? data : { error: data.error || 'Failed to load preview' });
+        } catch (e: any) {
+            console.error('Error fetching preview:', e);
+            setPreviewData({ error: 'Failed to load preview' });
         } finally {
             setLoadingPreview(false);
         }
@@ -175,13 +199,7 @@ export default function PlannersPage() {
                 <div className="space-y-3">
                     {planners.map(p => {
                         // Ensure config is parsed if it's a string from DB
-                        const planner = { ...p };
-                        if (typeof planner.config === 'string') {
-                            try {
-                                const parsed = JSON.parse(planner.config);
-                                planner.config = typeof parsed === 'string' ? JSON.parse(parsed) : parsed;
-                            } catch { /* ignore */ }
-                        }
+                        const planner = { ...p, config: parsePlannerConfig(p.config) };
 
                         const stats = planner.stats ?? { total: 0, published: 0, failed: 0 };
                         const isRunning = runningId === planner.id;

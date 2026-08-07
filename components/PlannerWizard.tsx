@@ -29,6 +29,17 @@ const STEPS = [
     { id: 'sorting', title: 'Sorting' }
 ];
 
+// Shape of an entry in planner config.content (library items, legacy uploads, carousels).
+interface ContentEntry {
+    type?: string;
+    id?: string;
+    folder_id?: string;
+    url?: string;
+    children_urls?: Array<{ url?: string; id?: string; type?: string }>;
+    media_type?: string;
+    [key: string]: unknown;
+}
+
 export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData }: PlannerWizardProps) {
     const [step, setStep] = useState(0);
     const [loading, setLoading] = useState(false);
@@ -64,6 +75,10 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     const [audioId, setAudioId] = useState('');
     const [audioVolume, setAudioVolume] = useState(80);
     const [videoVolume, setVideoVolume] = useState(20);
+    const [formError, setFormError] = useState('');
+    // Count of existing content items that the UI cannot represent (legacy direct
+    // uploads). They are preserved as-is on save so editing a planner never loses them.
+    const [preservedCount, setPreservedCount] = useState(0);
 
     const selectedChannelNames = useMemo(() => {
         return selectedChannels
@@ -75,7 +90,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
         const frequency = `${frequencyValue} ${frequencyUnit}`;
         const sleep = sleepEnabled ? `${sleepStart} - ${sleepEnd}` : 'off';
         const start = startTime ? new Date(startTime).toLocaleString() : 'immediately';
-        const contentCount = files.length + selectedContentIds.length;
+        const contentCount = files.length + selectedContentIds.length + preservedCount;
         return {
             frequency,
             sleep,
@@ -83,7 +98,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
             contentCount,
             channels: selectedChannelNames.length,
         };
-    }, [frequencyValue, frequencyUnit, sleepEnabled, sleepStart, sleepEnd, startTime, files.length, selectedContentIds.length, selectedChannelNames.length]);
+    }, [frequencyValue, frequencyUnit, sleepEnabled, sleepStart, sleepEnd, startTime, files.length, selectedContentIds.length, preservedCount, selectedChannelNames.length]);
 
     useEffect(() => {
         if (isOpen) {
@@ -94,7 +109,16 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 setName(initialData.name || '');
                 setSelectedChannels(initialData.channel_ids || []);
 
-                const config = initialData.config || {};
+                // Defensive parse: config may arrive as a (double) JSON string from the API.
+                let config = initialData.config || {};
+                if (typeof config === 'string') {
+                    try {
+                        config = JSON.parse(config);
+                        if (typeof config === 'string') config = JSON.parse(config);
+                    } catch {
+                        config = {};
+                    }
+                }
                 setFrequencyValue(config.frequency?.value || 1);
                 setFrequencyUnit(config.frequency?.unit || 'hours');
                 setTimezone(config.timezone || 'America/Sao_Paulo');
@@ -114,11 +138,20 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 // Load existing content
                 const content = config.content || [];
                 if (content.length > 0) {
-                    const libIds = content
-                        .filter((c: any) => c.type === 'library_item')
-                        .map((c: any) => c.id);
+                    // Items the UI can represent: library items and folder-based carousels.
+                    // Everything else (legacy direct uploads, type:'config') is preserved as-is.
+                    const libIds: string[] = [];
+                    let legacyCount = 0;
+                    for (const c of content) {
+                        if (c.type === 'library_item' || c.folder_id) {
+                            libIds.push(c.id || c.folder_id);
+                        } else {
+                            legacyCount++;
+                        }
+                    }
                     setSelectedContentIds(libIds);
                     setFiles([]);
+                    setPreservedCount(legacyCount);
                     setContentTab(libIds.length > 0 ? 'library' : 'upload');
 
                     if (content[0]?.media_type === 'CAROUSEL') {
@@ -134,8 +167,11 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     setCaptionFallback(content[0]?.caption_fallback || '');
                     setTitleFallback(content[0]?.title_fallback || '');
                     setLocation(content[0]?.location_id || '');
-                    setCollaborators(content[0]?.collaborators || '');
-                    setUserTags(content[0]?.user_tags || '');
+                    // collaborators/user_tags may be stored as arrays (comma input => array of usernames)
+                    const storedCollabs = content[0]?.collaborators;
+                    setCollaborators(Array.isArray(storedCollabs) ? storedCollabs.join(', ') : (storedCollabs || ''));
+                    const storedTags = content[0]?.user_tags;
+                    setUserTags(Array.isArray(storedTags) ? storedTags.join(', ') : (storedTags || ''));
                     const audioConfig = content[0]?.audio_configuration || {};
                     setAudioId(audioConfig.audio_id || '');
                     setAudioVolume(audioConfig.audio_volume !== undefined ? audioConfig.audio_volume : 80);
@@ -143,6 +179,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 } else {
                     setSelectedContentIds([]);
                     setFiles([]);
+                    setPreservedCount(0);
                     setContentTab('upload');
                     setIsCarousel(false);
                     setMediaType('REELS');
@@ -161,6 +198,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 setSelectedChannels([]);
                 setSelectedContentIds([]);
                 setFiles([]);
+                setPreservedCount(0);
                 setFrequencyValue(1);
                 setFrequencyUnit('hours');
                 setTimezone('America/Sao_Paulo');
@@ -298,6 +336,20 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     };
 
     const handleSubmit = async () => {
+        setFormError('');
+
+        // Validate sleep schedule: a zero-length window silently disables the timer.
+        if (sleepEnabled && sleepStart === sleepEnd) {
+            setFormError('Sleep start and end must be different times.');
+            return;
+        }
+
+        // Validate frequency: NaN/0/negative would spam or silently kill the planner.
+        const freqValue = Number.isFinite(frequencyValue) && frequencyValue >= 1 ? frequencyValue : 10;
+        if (freqValue !== frequencyValue) {
+            setFormError('Invalid posting interval — using 10.');
+        }
+
         setLoading(true);
         setUploading(true);
         try {
@@ -306,8 +358,17 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
             // 1. Upload New Files
             const uploadedItems = await uploadFiles((session.user as any).id);
 
+            // Comma-separated usernames => array of username strings (the cron
+            // converts this to the Instagram Graph API object format).
+            const collaboratorsList = collaborators
+                ? collaborators.split(',').map(s => s.trim()).filter(Boolean)
+                : null;
+            const userTagsList = userTags
+                ? userTags.split(',').map(s => s.trim()).filter(Boolean)
+                : null;
+
             // 2. Prepare Content Array
-            let content = [];
+            let content: ContentEntry[] = [];
 
             if (isCarousel && selectedContentIds.length > 0) {
                 // Carousel from folders: Each folder becomes its own carousel post
@@ -320,8 +381,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                         caption_fallback: captionFallback,
                         title_fallback: titleFallback,
                         location_id: location,
-                        collaborators: collaborators || null,
-                        user_tags: userTags || null
+                        collaborators: collaboratorsList,
+                        user_tags: userTagsList
                     });
                 }
 
@@ -335,8 +396,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                         caption_fallback: captionFallback,
                         title_fallback: titleFallback,
                         location_id: location,
-                        collaborators: collaborators || null,
-                        user_tags: userTags || null
+                        collaborators: collaboratorsList,
+                        user_tags: userTagsList
                     });
                 }
             } else if (isCarousel && uploadedItems.length >= 2) {
@@ -349,8 +410,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     caption_fallback: captionFallback,
                     title_fallback: titleFallback,
                     location_id: location,
-                    collaborators: collaborators || null,
-                    user_tags: userTags || null
+                    collaborators: collaboratorsList,
+                    user_tags: userTagsList
                 }];
             } else {
                 // Separate Posts (Reels, Images, etc)
@@ -369,8 +430,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                         caption_fallback: captionFallback,
                         title_fallback: titleFallback,
                         location_id: location,
-                        collaborators: collaborators || null,
-                        user_tags: mediaType === 'IMAGE' ? userTags || null : null,
+                        collaborators: collaboratorsList,
+                        user_tags: mediaType === 'IMAGE' ? userTagsList : null,
                         audio_configuration: audioConfig
                     })),
                     ...selectedContentIds.map(id => ({
@@ -382,17 +443,43 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                         caption_fallback: captionFallback,
                         title_fallback: titleFallback,
                         location_id: location,
-                        collaborators: collaborators || null,
-                        user_tags: mediaType === 'IMAGE' ? userTags || null : null,
+                        collaborators: collaboratorsList,
+                        user_tags: mediaType === 'IMAGE' ? userTagsList : null,
                         audio_configuration: audioConfig
                     }))
                 ];
             }
 
+            // Preserve existing content items that the UI cannot represent (legacy
+            // direct uploads / type:'config'). Without this, editing a planner
+            // silently dropped those items from the posting queue.
+            const existingContentRaw = initialData?.config?.content || [];
+            let existingContent = existingContentRaw;
+            if (typeof existingContent === 'string') {
+                try { existingContent = JSON.parse(existingContent); } catch { /* ignore */ }
+            }
+            const legacyItems = (Array.isArray(existingContent) ? existingContent : []).filter((c: ContentEntry) => {
+                if (c.type === 'library_item') return false;      // represented via selection
+                if (c.folder_id) return false;                     // represented via folder selection
+                return true;                                       // legacy upload/config: preserve
+            });
+            content = [...legacyItems, ...content];
+
             // 3. Prepare Config in JSON
-            // Check if content has changed - if so, reset state to prevent incorrect indexing
-            const existingContent = initialData?.config?.content || [];
-            const contentChanged = JSON.stringify(content) !== JSON.stringify(existingContent);
+            // Compare CONTENT IDENTITY (which items, not settings like caption) —
+            // state (published_indexes/last_index) only needs resetting when the
+            // item composition actually changes. Editing a name/caption alone now
+            // preserves the planner's progress.
+            const contentIdentity = (list: ContentEntry[]) => list.map((c) => {
+                if (c.type === 'library_item') return `lib:${c.id}`;
+                if (c.folder_id) return `lib:${c.folder_id}`;
+                if (c.url) return `url:${c.url}`;
+                if (c.children_urls) return `carousel:${c.children_urls.map((u) => u.url || u.id).join('|')}`;
+                return JSON.stringify(c);
+            });
+            const existingContentList = Array.isArray(existingContent) ? existingContent : [];
+            const contentChanged =
+                JSON.stringify(contentIdentity(content)) !== JSON.stringify(contentIdentity(existingContentList));
             const existingState = initialData?.config?.state || {};
 
             // Reset state if content changed
@@ -400,11 +487,13 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
 
             const plannerConfig = {
                 frequency: {
-                    value: frequencyValue,
+                    value: freqValue,
                     unit: frequencyUnit
                 },
                 timezone,
-                start_time: startTime,
+                // Convert local datetime string to an absolute ISO timestamp so the
+                // server (UTC) interprets the user's local wall-clock correctly.
+                start_time: startTime ? new Date(startTime).toISOString() : '',
                 sleep_schedule: sleepEnabled ? { start: sleepStart, end: sleepEnd } : null,
                 sort_order: sortOrder,
                 content,
@@ -575,6 +664,11 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                     ? `${selectedContentIds.length} folder(s) selected for carousel.`
                                     : `${files.length} new files, ${selectedContentIds.length} library items selected.`
                                 }
+                                {preservedCount > 0 && (
+                                    <span className="text-amber-600 dark:text-amber-400">
+                                        {' '}· {preservedCount} legacy upload item(s) will be preserved on save.
+                                    </span>
+                                )}
                             </p>
 
                             {/* Post Configuration */}
@@ -599,7 +693,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div>
+                                    <div className={mediaType === 'REELS' ? '' : 'col-span-2'}>
                                         <label className="text-xs font-medium text-ios-text mb-1.5 block">Media Type</label>
                                         <select
                                             value={mediaType}
@@ -616,21 +710,6 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                             <option value="STORIES">Story</option>
                                         </select>
                                     </div>
-                                    {mediaType === 'IMAGE' && !isCarousel && (
-                                        <div>
-                                            <label className="text-xs font-medium text-ios-text mb-1.5 block">Aspect Ratio</label>
-                                            <select
-                                                className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
-                                                defaultValue="original"
-                                            >
-                                                <option value="original">Original</option>
-                                                <option value="1:1">1:1 (Square)</option>
-                                                <option value="3:4">3:4 (Portrait)</option>
-                                                <option value="16:9">16:9 (Landscape)</option>
-                                                <option value="9:16">9:16 (Vertical)</option>
-                                            </select>
-                                        </div>
-                                    )}
                                     {(mediaType === 'REELS' && !isCarousel) && (
                                         <div className="flex flex-col justify-center">
                                             <label className="text-xs font-medium text-ios-text mb-1.5 block">Options</label>
@@ -789,7 +868,11 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                         type="number"
                                         min="1"
                                         value={frequencyValue}
-                                        onChange={(e) => setFrequencyValue(parseInt(e.target.value))}
+                                        onChange={(e) => {
+                                            const v = parseInt(e.target.value, 10);
+                                            // Clamp: NaN / < 1 would silently break or spam the planner.
+                                            setFrequencyValue(Number.isFinite(v) && v >= 1 ? v : 1);
+                                        }}
                                         className="w-24 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue"
                                     />
                                     <select
@@ -839,7 +922,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                             <input
                                                 type="time"
                                                 value={sleepStart}
-                                                onChange={(e) => setSleepStart(e.target.value)}
+                                                onChange={(e) => { setSleepStart(e.target.value); setFormError(''); }}
                                                 className="w-full bg-ios-card border border-ios-separator rounded-xl px-4 py-2"
                                             />
                                         </div>
@@ -848,11 +931,20 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                             <input
                                                 type="time"
                                                 value={sleepEnd}
-                                                onChange={(e) => setSleepEnd(e.target.value)}
+                                                onChange={(e) => { setSleepEnd(e.target.value); setFormError(''); }}
                                                 className="w-full bg-ios-card border border-ios-separator rounded-xl px-4 py-2"
                                             />
                                         </div>
+                                        {sleepEnabled && sleepStart === sleepEnd && (
+                                            <p className="col-span-2 text-xs text-ios-red">
+                                                Sleep start and end must be different times.
+                                            </p>
+                                        )}
                                     </div>
+                                )}
+
+                                {formError && (
+                                    <p className="text-xs text-ios-red mt-2">{formError}</p>
                                 )}
                             </div>
                         </div>
@@ -953,7 +1045,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                             disabled={
                                 (step === 0 && !name) ||
                                 (step === 1 && selectedChannels.length === 0) ||
-                                (step === 2 && files.length === 0 && selectedContentIds.length === 0)
+                                (step === 2 && files.length === 0 && selectedContentIds.length === 0 && preservedCount === 0) ||
+                                (step === 3 && sleepEnabled && sleepStart === sleepEnd)
                             }
                         >
                             Next <ChevronRight size={18} className="ml-1" />
