@@ -1,12 +1,18 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { writeFile, mkdir } from "fs/promises";
+import { writeFile, mkdir, unlink } from "fs/promises";
 import { join, dirname } from "path";
+import { normalizeUploadPath } from "@/lib/upload-path";
+import { getErrorMessage, getSessionUserId } from "@/lib/api";
+import type { ReadableStream as NodeReadableStream } from "stream/web";
+
+const MAX_SIMPLE_UPLOAD_BYTES = 500 * 1024 * 1024; // 500MB
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    const userId = getSessionUserId(session);
+    if (!userId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -24,35 +30,44 @@ export async function POST(req: Request) {
                 if (!file || !path) {
                     return NextResponse.json({ error: "Missing file or path" }, { status: 400 });
                 }
+                if (file.size > MAX_SIMPLE_UPLOAD_BYTES) {
+                    return NextResponse.json({ error: "File too large (max 500MB)" }, { status: 413 });
+                }
 
-                // Security check
-                const userId = (session.user as any).id;
-                if (!path.startsWith(`${userId}/`)) {
-                    return NextResponse.json({ error: "Permission denied" }, { status: 403 });
+                // Security check: normalize + reject traversal ("..", absolute paths)
+                const safePath = normalizeUploadPath(userId, path);
+                if (!safePath) {
+                    return NextResponse.json({ error: "Invalid upload path" }, { status: 403 });
                 }
 
                 const bytes = await file.arrayBuffer();
                 const uploadDir = join(process.cwd(), "data", "uploads");
-                const filePath = join(uploadDir, path);
+                const filePath = join(uploadDir, safePath);
                 await mkdir(dirname(filePath), { recursive: true });
                 await writeFile(filePath, Buffer.from(bytes));
 
-                return NextResponse.json({ success: true, path });
-            } catch (e: any) {
+                return NextResponse.json({ success: true, path: safePath });
+            } catch {
                 return NextResponse.json({ error: "Failed to process form data" }, { status: 400 });
             }
         }
 
         // --- NEW STREAMING UPLOAD PATH (no memory buffering) ---
 
-        // Security check
-        const userId = (session.user as any).id;
-        if (!path.startsWith(`${userId}/`)) {
-            return NextResponse.json({ error: "Permission denied" }, { status: 403 });
+        // Reject oversized uploads before streaming
+        const contentLength = Number(req.headers.get("content-length") || "0");
+        if (Number.isFinite(contentLength) && contentLength > MAX_SIMPLE_UPLOAD_BYTES) {
+            return NextResponse.json({ error: "File too large (max 500MB)" }, { status: 413 });
+        }
+
+        // Security check: normalize + reject traversal
+        const safePath = normalizeUploadPath(userId, path);
+        if (!safePath) {
+            return NextResponse.json({ error: "Invalid upload path" }, { status: 403 });
         }
 
         const uploadDir = join(process.cwd(), "data", "uploads");
-        const filePath = join(uploadDir, path);
+        const filePath = join(uploadDir, safePath);
         await mkdir(dirname(filePath), { recursive: true });
 
         // Pipe request body stream directly to file
@@ -65,14 +80,20 @@ export async function POST(req: Request) {
         const { createWriteStream } = await import('fs');
         const { pipeline } = await import('stream/promises');
 
-        const readableStream = Readable.fromWeb(req.body as any);
+        const readableStream = Readable.fromWeb(req.body as unknown as NodeReadableStream<Uint8Array>);
         const writeStream = createWriteStream(filePath);
 
-        await pipeline(readableStream, writeStream);
+        try {
+            await pipeline(readableStream, writeStream);
+        } catch (err) {
+            // Clean up partial file on failure
+            await unlink(filePath).catch(() => { });
+            throw err;
+        }
 
-        return NextResponse.json({ success: true, path });
-    } catch (error: any) {
+        return NextResponse.json({ success: true, path: safePath });
+    } catch (error: unknown) {
         console.error('Local upload error:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
     }
 }

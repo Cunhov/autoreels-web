@@ -1,18 +1,22 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { safeEqual } from '@/lib/secret';
 
 /**
- * GET /api/admin/fix-planners?secret=CRON_SECRET
+ * GET /api/admin/fix-planners
+ * Header: x-admin-secret (or x-cron-auth) = CRON_SECRET
  *
  * Deep diagnostic: shows full config + recent posts for each planner.
  * Pass &fix=true to patch planners with wrong status to 'active'.
  */
 export async function GET(req: Request) {
     const url = new URL(req.url);
-    const secret = url.searchParams.get('secret');
     const fix = url.searchParams.get('fix') === 'true';
 
-    if (secret !== process.env.CRON_SECRET) {
+    // Secret via header only (never query string — it leaks into access logs)
+    const provided = req.headers.get('x-admin-secret') || req.headers.get('x-cron-auth');
+    const expected = process.env.CRON_SECRET;
+    if (!expected || !provided || !safeEqual(provided, expected)) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

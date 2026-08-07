@@ -4,6 +4,8 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 
+const VALID_PLANNER_STATUS = ["active", "paused"];
+
 const publicChannelSelect = {
     id: true,
     name: true,
@@ -73,6 +75,14 @@ export async function POST(req: Request) {
 
     try {
         const { name, config, channel_ids, status } = await req.json();
+
+        if (!name || typeof name !== "string" || name.trim().length === 0) {
+            return NextResponse.json({ error: "Planner name is required" }, { status: 400 });
+        }
+
+        // Restrict status to known values (default: active)
+        const safeStatus = VALID_PLANNER_STATUS.includes(status) ? status : "active";
+
         const safeChannelIds = Array.isArray(channel_ids) ? channel_ids : [];
         const ownedChannels = safeChannelIds.length > 0
             ? await prisma.channel.findMany({
@@ -83,8 +93,8 @@ export async function POST(req: Request) {
         const planner = await prisma.planner.create({
             data: {
                 name,
-                status: status || 'active',
-                config: typeof config === 'string' ? config : JSON.stringify(config),
+                status: safeStatus,
+                config: typeof config === 'string' ? config : JSON.stringify(config ?? {}),
                 user_id: userId,
                 channels: {
                     connect: ownedChannels.map(channel => ({ id: channel.id })),
@@ -93,6 +103,7 @@ export async function POST(req: Request) {
         });
         return NextResponse.json(planner);
     } catch (error: unknown) {
+        console.error('Create planner error:', error);
         return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
     }
 }

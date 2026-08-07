@@ -3,16 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
-import { posix } from "path";
-
-function cleanPathSegment(value: string | null) {
-    if (!value) return "";
-    const normalized = posix.normalize(value.replace(/\\/g, "/")).replace(/^\/+|\/+$/g, "");
-    if (normalized === "." || normalized.startsWith("../") || normalized.includes("/../")) {
-        return null;
-    }
-    return normalized;
-}
+import { cleanPathSegment } from "@/lib/upload-path";
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
@@ -33,15 +24,26 @@ export async function POST(req: Request) {
         const caption = formData.get("caption") as string | null;
         const thumbnailPath = formData.get("thumbnailPath") as string | null;
 
-        if (!filename || isNaN(size)) {
+        if (!filename || isNaN(size) || size < 0) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
         }
 
         const safeFolderPath = cleanPathSegment(folderPath);
         const safeFilename = cleanPathSegment(filename);
 
-        if (safeFolderPath === null || safeFilename === null || safeFilename.includes("/")) {
+        if (safeFolderPath === null || safeFilename === null || safeFilename.includes("/") || safeFilename === ".") {
             return NextResponse.json({ error: "Invalid file path" }, { status: 400 });
+        }
+
+        // Validate parent folder ownership (prevent attaching items to another user's folder)
+        if (parentId) {
+            const parent = await prisma.contentItem.findFirst({
+                where: { id: parentId, user_id: userId },
+                select: { id: true },
+            });
+            if (!parent) {
+                return NextResponse.json({ error: "Invalid parent folder" }, { status: 400 });
+            }
         }
 
         // Define clean URL for serving
