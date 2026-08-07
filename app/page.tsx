@@ -365,11 +365,16 @@ export default function CalendarPage() {
           onPostClick={(p) => {
             setSelectedPost(p);
           }}
+          onPostsChanged={() => fetchPosts()}
         />
       )}
 
       {selectedPost && selectedPost.status === 'failed' && (
-        <ErrorModal post={selectedPost} onClose={() => setSelectedPost(null)} />
+        <ErrorModal
+          post={selectedPost}
+          onClose={() => setSelectedPost(null)}
+          onPostsChanged={() => fetchPosts()}
+        />
       )}
 
       {selectedPost && selectedPost.status === 'published' && (
