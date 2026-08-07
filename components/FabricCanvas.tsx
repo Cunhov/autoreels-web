@@ -12,6 +12,13 @@ export default function FabricCanvas({ imageUrl, activeTool, onReady, onObjectMo
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const fabricCanvasRef = useRef<fabric.Canvas | null>(null);
 
+    // Keep the latest callbacks in refs so the setup effect (which runs only
+    // when imageUrl changes) never captures a stale closure from the first render.
+    const onReadyRef = useRef(onReady);
+    const onObjectModifiedRef = useRef(onObjectModified);
+    useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
+    useEffect(() => { onObjectModifiedRef.current = onObjectModified; }, [onObjectModified]);
+
     // Initial setup
     useEffect(() => {
         if (!canvasRef.current) return;
@@ -35,7 +42,7 @@ export default function FabricCanvas({ imageUrl, activeTool, onReady, onObjectMo
                 canvas.backgroundImage = img;
                 canvas.renderAll();
                 // Notify parent
-                onReady(canvas);
+                onReadyRef.current(canvas);
             } catch (error) {
                 console.error("Failed to load fabric image", error);
             }
@@ -44,7 +51,7 @@ export default function FabricCanvas({ imageUrl, activeTool, onReady, onObjectMo
 
         // Event listeners
         const handleModification = () => {
-            if (onObjectModified) onObjectModified(canvas);
+            if (onObjectModifiedRef.current) onObjectModifiedRef.current(canvas);
         };
         canvas.on('object:added', handleModification);
         canvas.on('object:modified', handleModification);

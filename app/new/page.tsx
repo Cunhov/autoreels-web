@@ -138,7 +138,10 @@ export default function NewPost() {
                     media_type: 'REELS',
                     status: 'pending',
                     channel_id: selectedChannel || null,
-                    scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : new Date().toISOString()
+                    // Convert local datetime string to absolute ISO so the server (UTC)
+                    // interprets the user's local wall-clock correctly. If empty, the
+                    // cron publisher picks it up on the next tick (it treats NULL as due).
+                    scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null
                 })
             });
 

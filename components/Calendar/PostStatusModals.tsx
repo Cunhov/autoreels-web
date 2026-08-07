@@ -1,5 +1,4 @@
 'use client';
-import { useState, useEffect } from 'react';
 import { X, AlertCircle } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import { Post } from '@/app/types';
@@ -56,69 +55,16 @@ export function ErrorModal({ post, onClose }: ErrorModalProps) {
 
 interface SuccessModalProps {
     post: Post;
-    accessToken?: string; // We might need this, or we handle it inside
     onClose: () => void;
 }
 
-export function SuccessModal({ post, accessToken, onClose }: SuccessModalProps) {
-    const [html, setHtml] = useState<string | null>(null);
-    const [insights, setInsights] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        if (post.video_url || post.instagram_media_id) {
-            loadData();
-        }
-    }, [post]);
-
-    async function loadData() {
-        setLoading(true);
-        try {
-            // Using server actions provided later, or direct fetch if we have token
-            // construct fetching here
-            const oEmbedUrl = `https://graph.facebook.com/v24.0/instagram_oembed?url=${encodeURIComponent(post.video_url)}&access_token=${accessToken}&omitscript=true`;
-
-            // Note: In real app, we should use a proxy to avoid exposing token if it's a client token
-            // But here we might be using the value passed from parent.
-            if (accessToken && post.video_url) {
-                // Fetch oEmbed
-                try {
-                    const res = await fetch(oEmbedUrl);
-                    const data = await res.json();
-                    if (data.html) setHtml(data.html);
-                } catch (e) {
-                    console.error("oEmbed error", e);
-                }
-            }
-
-            // Fetch Insights
-            if (accessToken && post.instagram_media_id) {
-                const metrics = 'engagement,impressions,reach,likes,comments,total_interactions';
-                const insightsUrl = `https://graph.facebook.com/v24.0/${post.instagram_media_id}/insights?metric=${metrics}&access_token=${accessToken}`;
-                try {
-                    const res = await fetch(insightsUrl);
-                    const data = await res.json();
-                    if (data.data) setInsights(data.data);
-                } catch (e) {
-                    console.error("Insights error", e);
-                }
-            }
-
-        } catch (error) {
-            console.error(error);
-        } finally {
-            setLoading(false);
-            // Process instagram embed script
-            if ((window as any).instgrm) {
-                (window as any).instgrm.Embeds.process();
-            } else {
-                const script = document.createElement('script');
-                script.src = "//www.instagram.com/embed.js";
-                script.async = true;
-                document.body.appendChild(script);
-            }
-        }
-    }
+export function SuccessModal({ post, onClose }: SuccessModalProps) {
+    // The IG oEmbed/Insights endpoints require an access token and don't allow
+    // browser CORS. Fetching them client-side is broken AND leaks the token.
+    // Preview is replaced with a deep link to the published post.
+    const instagramPostUrl = post.instagram_media_id
+        ? `https://www.instagram.com/p/${post.instagram_media_id}/`
+        : null;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
@@ -131,16 +77,18 @@ export function SuccessModal({ post, accessToken, onClose }: SuccessModalProps) 
 
                 {/* Left: Preview/Embed */}
                 <div className="w-full md:w-1/2 bg-black flex items-center justify-center overflow-y-auto p-4 custom-scrollbar">
-                    {loading ? (
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
-                    ) : html ? (
-                        <div dangerouslySetInnerHTML={{ __html: html }} className="flex justify-center w-full" />
-                    ) : (
-                        <div className="text-white/50 text-center">
-                            <p>Preview unavailable</p>
-                            <a href={post.video_url} target="_blank" className="text-blue-400 underline text-sm">Open in Instagram</a>
-                        </div>
-                    )}
+                    <div className="text-white/50 text-center space-y-3">
+                        <p>Preview unavailable in-app</p>
+                        {instagramPostUrl ? (
+                            <a href={instagramPostUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline text-sm block">
+                                View on Instagram
+                            </a>
+                        ) : post.video_url ? (
+                            <a href={post.video_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline text-sm block">
+                                Open media
+                            </a>
+                        ) : null}
+                    </div>
                 </div>
 
                 {/* Right: Insights */}
@@ -154,25 +102,10 @@ export function SuccessModal({ post, accessToken, onClose }: SuccessModalProps) 
 
                     <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-4">
                         <div className="grid grid-cols-2 gap-4">
-                            {insights.map((metric: any) => (
-                                <div key={metric.name} className="bg-ios-card p-4 rounded-xl border border-ios-separator shadow-sm">
-                                    <div className="text-xs text-ios-secondary uppercase font-bold tracking-wider mb-1">
-                                        {metric.title}
-                                    </div>
-                                    <div className="text-2xl font-bold text-ios-text">
-                                        {metric.values[0].value}
-                                    </div>
-                                    <div className="text-[10px] text-gray-400 mt-1">
-                                        {metric.description}
-                                    </div>
-                                </div>
-                            ))}
                         </div>
-                        {insights.length === 0 && !loading && (
-                            <div className="text-center py-10 text-gray-400 border-2 border-dashed border-gray-200 rounded-xl">
-                                No insights available yet.
-                            </div>
-                        )}
+                        <div className="text-center py-10 text-gray-400 border-2 border-dashed border-gray-200 rounded-xl">
+                            No insights available yet.
+                        </div>
                     </div>
 
                     <div className="mt-6 pt-4 border-t border-ios-separator">

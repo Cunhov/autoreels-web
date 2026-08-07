@@ -69,6 +69,9 @@ export default function WeekView({ currentDate, posts, onPostClick }: WeekViewPr
                 <div className="grid grid-cols-7 gap-px bg-ios-separator/50 border border-ios-separator/50 rounded-2xl overflow-hidden shadow-sm h-full min-h-[600px] ring-1 ring-black/5">
                     {days.map((date, i) => {
                         const dayPosts = getPostsForDay(date);
+                        // NOTE: `new Date()` in render is safe here — WeekView renders
+                        // only after the page's `loading` gate (no SSR => no hydration
+                        // mismatch). If that gate is ever removed, compute today in state.
                         const isToday = date.toDateString() === new Date().toDateString();
 
                         return (
@@ -84,12 +87,24 @@ export default function WeekView({ currentDate, posts, onPostClick }: WeekViewPr
                                              ${getBorderClass(p.status)}
                                         `}
                                     >
-                                        {/* No <video> — static placeholder to save RAM/CPU */}
-                                        <div className="w-full h-full bg-gray-900 flex items-center justify-center">
-                                            <div className="text-[9px] text-white/40 font-medium text-center">
-                                                {new Date(p.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                        {/* Static preview — no <video> to save RAM/CPU.
+                                            Mirrors the MonthView fallback: show the
+                                            image/thumbnail when available, else a label. */}
+                                        {p.image_url || p.thumbnail_url ? (
+                                            <img
+                                                src={p.image_url || p.thumbnail_url}
+                                                className="w-full h-full object-cover opacity-90"
+                                                alt="Post preview"
+                                                loading="lazy"
+                                                decoding="async"
+                                            />
+                                        ) : (
+                                            <div className="w-full h-full bg-gray-900 flex items-center justify-center">
+                                                <div className="text-[9px] text-white/40 font-medium text-center">
+                                                    {p.video_url ? 'Video' : 'No Media'}
+                                                </div>
                                             </div>
-                                        </div>
+                                        )}
                                         <div className="absolute top-2 right-2">
                                             <div className={`w-2.5 h-2.5 rounded-full border border-white/20 shadow-sm ${p.status === 'published' ? 'bg-ios-green' : p.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'}`} />
                                         </div>

@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { X, CheckCircle2, XCircle, Clock, CalendarClock } from 'lucide-react'
 
 import CalendarHeader from '@/components/Calendar/CalendarHeader'
@@ -65,8 +65,11 @@ export default function CalendarPage() {
 
   const router = useRouter();
 
+  const lastFetchRef = useRef(0);
+
   const fetchPosts = useCallback(async () => {
     setLoading(true);
+    lastFetchRef.current = Date.now();
     try {
       const { start, end } = getFetchWindow(currentDate, viewMode);
       const postsParams = new URLSearchParams({
@@ -87,6 +90,24 @@ export default function CalendarPage() {
 
   useEffect(() => {
     fetchPosts();
+  }, [fetchPosts]);
+
+  // Refetch when the tab regains focus / visibility — posts published by the
+  // cron (or by another tab) otherwise stay stale until a manual reload.
+  useEffect(() => {
+    const refetchIfStale = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      const now = Date.now();
+      if (now - lastFetchRef.current > 10_000) {
+        fetchPosts();
+      }
+    };
+    document.addEventListener('visibilitychange', refetchIfStale);
+    window.addEventListener('focus', refetchIfStale);
+    return () => {
+      document.removeEventListener('visibilitychange', refetchIfStale);
+      window.removeEventListener('focus', refetchIfStale);
+    };
   }, [fetchPosts]);
 
   useEffect(() => {
