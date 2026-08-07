@@ -29,6 +29,9 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
     // History for undo/redo (Fabric)
     const [history, setHistory] = useState<string[]>([]);
     const [historyIndex, setHistoryIndex] = useState(-1);
+    // Mirror of historyIndex that is safe to read inside stable callbacks
+    // (avoids stale-closure bugs where saveHistory captured the first render's index)
+    const historyIndexRef = useRef(-1);
 
     // Temp image for cropping phase
     const [currentImage, setCurrentImage] = useState(imageUrl);
@@ -41,6 +44,7 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
             setActiveTool('crop');
             // Reset history
             setHistory([]);
+            historyIndexRef.current = -1;
             setHistoryIndex(-1);
         }
     }, [isOpen, imageUrl, initialAspectRatio]);
@@ -49,28 +53,21 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
         setCroppedAreaPixels(croppedAreaPixels);
     }, []);
 
-    // Fabric initialization and tool switching handled in FabricCanvas component
-    // We just need to capture the ref when it's ready
-    const onFabricReady = useCallback((canvas: fabric.Canvas) => {
-        fabricCanvasRef.current = canvas;
-        setIsFabricReady(true);
-        saveHistory(canvas);
+    // Stable callback: always reads/writes historyIndexRef.current instead of a
+    // captured state value, so FabricCanvas (which registers the callback once)
+    // never gets a stale closure.
+    const saveHistory = useCallback((canvas: fabric.Canvas) => {
+        const json = JSON.stringify(canvas.toJSON());
+        setHistory(prev => [...prev.slice(0, historyIndexRef.current + 1), json]);
+        historyIndexRef.current += 1;
+        setHistoryIndex(historyIndexRef.current);
     }, []);
 
-    const saveHistory = (canvas: fabric.Canvas) => {
-        const json = JSON.stringify(canvas.toJSON());
-        setHistory(prev => {
-            const newHistory = prev.slice(0, historyIndex + 1);
-            newHistory.push(json);
-            return newHistory;
-        });
-        setHistoryIndex(prev => prev + 1);
-    };
-
-    // Fix handleUndo signature or usage if needed
-    const handleUndo = async () => {
-        if (historyIndex > 0 && fabricCanvasRef.current) {
-            const newIndex = historyIndex - 1;
+    const handleUndo = useCallback(async () => {
+        const idx = historyIndexRef.current;
+        if (idx > 0 && fabricCanvasRef.current) {
+            const newIndex = idx - 1;
+            historyIndexRef.current = newIndex;
             setHistoryIndex(newIndex);
 
             try {
@@ -80,7 +77,15 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
                 console.error("Undo failed", err);
             }
         }
-    };
+    }, [history]);
+
+    // Fabric initialization and tool switching handled in FabricCanvas component
+    // We just need to capture the ref when it's ready
+    const onFabricReady = useCallback((canvas: fabric.Canvas) => {
+        fabricCanvasRef.current = canvas;
+        setIsFabricReady(true);
+        saveHistory(canvas);
+    }, [saveHistory]);
 
     const handleApplyCrop = async () => {
         try {
@@ -94,6 +99,11 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
                     fabricCanvasRef.current.dispose();
                     fabricCanvasRef.current = null;
                 }
+                // Reset history: the next canvas init (new image) will push a
+                // fresh initial state at index 0, so undo never crosses images.
+                setHistory([]);
+                historyIndexRef.current = -1;
+                setHistoryIndex(-1);
             }
         } catch (e) {
             console.error('Crop failed', e);
