@@ -58,3 +58,4 @@ data/
 
 # Secrets
 .env
+.pi-subagents/
