@@ -2,22 +2,12 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
-import { mkdir, rename } from "fs/promises";
-import { join, dirname, posix } from "path";
+import { mkdir, rename, unlink } from "fs/promises";
+import { join, dirname } from "path";
+import { normalizeUploadPath } from "@/lib/upload-path";
 import type { ReadableStream as NodeReadableStream } from "stream/web";
 
-function normalizeUploadPath(userId: string, rawPath: string) {
-    const normalized = posix.normalize(rawPath.replace(/\\/g, "/")).replace(/^\/+/, "");
-    const withoutUserPrefix = normalized.startsWith(`${userId}/`)
-        ? normalized.slice(userId.length + 1)
-        : normalized;
-
-    if (!withoutUserPrefix || withoutUserPrefix === "." || withoutUserPrefix.startsWith("../") || withoutUserPrefix.includes("/../")) {
-        return null;
-    }
-
-    return `${userId}/${withoutUserPrefix}`;
-}
+const MAX_CHUNK_BYTES = 1024 * 1024 * 1024; // 1GB per chunk (defensive ceiling)
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
@@ -25,6 +15,8 @@ export async function POST(req: Request) {
     if (!userId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    let tempFilePath: string | null = null;
 
     try {
         const chunkIndex = parseInt(req.headers.get("x-chunk-index") || "0");
@@ -35,6 +27,18 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Missing x-file-name header" }, { status: 400 });
         }
 
+        // Validate numeric chunk metadata (NaN → 400, not silent breakage)
+        if (!Number.isInteger(chunkIndex) || !Number.isInteger(totalChunks) ||
+            chunkIndex < 0 || totalChunks < 1 || chunkIndex >= totalChunks) {
+            return NextResponse.json({ error: "Invalid chunk index or total" }, { status: 400 });
+        }
+
+        // Defensive size ceiling per chunk
+        const contentLength = Number(req.headers.get("content-length") || "0");
+        if (Number.isFinite(contentLength) && contentLength > MAX_CHUNK_BYTES) {
+            return NextResponse.json({ error: "Chunk too large" }, { status: 413 });
+        }
+
         const path = normalizeUploadPath(userId, rawPath);
         if (!path) {
             return NextResponse.json({ error: "Invalid upload path" }, { status: 400 });
@@ -42,7 +46,7 @@ export async function POST(req: Request) {
 
         const uploadDir = join(process.cwd(), "data", "uploads");
         const filePath = join(uploadDir, path);
-        const tempFilePath = `${filePath}.part`;
+        tempFilePath = `${filePath}.part`;
 
         // Ensure subdirectories exist
         await mkdir(dirname(filePath), { recursive: true });
@@ -63,7 +67,13 @@ export async function POST(req: Request) {
         const flags = chunkIndex === 0 ? 'w' : 'a';
         const writeStream = createWriteStream(tempFilePath, { flags });
 
-        await pipeline(readableStream, writeStream);
+        try {
+            await pipeline(readableStream, writeStream);
+        } catch (err) {
+            // Clean up the partial .part file on failure
+            await unlink(tempFilePath).catch(() => { });
+            throw err;
+        }
 
         // If this is the last chunk, rename the temporary file to its final destination
         if (chunkIndex === totalChunks - 1) {

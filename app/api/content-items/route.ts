@@ -3,6 +3,24 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { getErrorMessage, getSessionUserId } from "@/lib/api";
+import { cleanPathSegment } from "@/lib/upload-path";
+
+// Fields a client may set when creating a content item. Server-owned fields
+// (id, user_id, created_at, path) are excluded to prevent mass assignment.
+const POST_ALLOWED_FIELDS = [
+    "name", "title", "caption", "tags", "type", "size", "duration",
+    "parent_id", "url", "thumbnail_url",
+] as const;
+
+/** Validate that a stored URL is either our own /api/file/ path or http(s). */
+function isSafeStoredUrl(value: string | null | undefined): boolean {
+    if (!value) return true;
+    if (value.startsWith("/api/file/")) {
+        return cleanPathSegment(value.slice("/api/file/".length)) !== null;
+    }
+    return /^https?:\/\//.test(value);
+}
 
 /**
  * Build the Prisma `where` clause from query params.
@@ -12,7 +30,11 @@ export function buildContentWhere(
     userId: string,
     searchParams: URLSearchParams
 ): Prisma.ContentItemWhereInput {
-    const parent_id = searchParams.get('parent_id') || null;
+    // Treat "null"/"undefined"/"" as "root folder" (frontends may send these)
+    const rawParentId = searchParams.get('parent_id');
+    const parent_id = (rawParentId && rawParentId !== 'null' && rawParentId !== 'undefined')
+        ? rawParentId
+        : null;
     const types = searchParams.get('types')?.split(',').filter(Boolean) || undefined;
     const search = searchParams.get('search')?.trim().toLowerCase() || undefined;
     const includeTags = searchParams.get('include_tags')?.split(',').map(t => t.trim()).filter(Boolean) || [];
@@ -69,15 +91,18 @@ export function buildContentWhere(
 
 export async function GET(req: Request) {
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    const userId = getSessionUserId(session);
+    if (!userId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const { searchParams } = new URL(req.url);
-    const userId = (session.user as any).id;
 
-    const limit = Math.min(parseInt(searchParams.get('limit') || '100', 10), 500);
-    const offset = parseInt(searchParams.get('offset') || '0', 10);
+    // Validate limit/offset (NaN would propagate as take:NaN → 500)
+    const rawLimit = parseInt(searchParams.get('limit') || '100', 10);
+    const rawOffset = parseInt(searchParams.get('offset') || '0', 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 100;
+    const offset = Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0;
     const sortBy = searchParams.get('sort_by') || 'name-asc';
 
     const where = buildContentWhere(userId, searchParams);
@@ -130,20 +155,59 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
-    if (!session?.user) {
+    const userId = getSessionUserId(session);
+    if (!userId) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     try {
         const data = await req.json();
+
+        // Whitelist: drop any field not in the allowed list (prevents mass assignment)
+        const payload: Record<string, unknown> = {};
+        for (const field of POST_ALLOWED_FIELDS) {
+            if (data[field] !== undefined) payload[field] = data[field];
+        }
+
+        // Sanitize name (must not contain path separators / traversal)
+        if (payload.name !== undefined) {
+            const cleanName = cleanPathSegment(String(payload.name));
+            if (cleanName === null || cleanName.includes("/") || cleanName === "." || cleanName === "") {
+                return NextResponse.json({ error: "Invalid name" }, { status: 400 });
+            }
+            payload.name = cleanName;
+        }
+
+        // Sanitize URLs (must be our own /api/file/ path or http(s))
+        if (!isSafeStoredUrl(payload.url as string) || !isSafeStoredUrl(payload.thumbnail_url as string)) {
+            return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+        }
+
+        // Validate parent folder ownership
+        if (payload.parent_id && payload.parent_id !== null) {
+            const parent = await prisma.contentItem.findFirst({
+                where: { id: String(payload.parent_id), user_id: userId },
+                select: { id: true },
+            });
+            if (!parent) {
+                return NextResponse.json({ error: "Invalid parent folder" }, { status: 400 });
+            }
+        }
+
+        // Tags: store as JSON string
+        if (payload.tags !== undefined && typeof payload.tags !== "string") {
+            payload.tags = JSON.stringify(payload.tags);
+        }
+
         const contentItem = await prisma.contentItem.create({
             data: {
-                ...data,
-                user_id: (session.user as any).id,
-            },
+                ...payload,
+                user_id: userId,
+            } as Prisma.ContentItemUncheckedCreateInput,
         });
         return NextResponse.json(contentItem);
-    } catch (error: any) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
+    } catch (error: unknown) {
+        console.error('Create content item error:', error);
+        return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
     }
 }

@@ -38,7 +38,7 @@ type ChannelLike = {
 
 type PrismaLike = {
     contentItem: {
-        findUnique: (args: any) => Promise<any>;
+        findFirst: (args: any) => Promise<any>;
         findMany: (args: any) => Promise<any[]>;
     };
 };
@@ -180,7 +180,8 @@ export async function resolvePlannerRuntime(prisma: PrismaLike, planner: any, no
     const userTags = selectedContent.user_tags || null;
 
     if (selectedContent.type === 'library_item' || (selectedContent.type === 'config' && selectedContent.id) || (!selectedContent.type && selectedContent.id)) {
-        const libItem = await prisma.contentItem.findUnique({ where: { id: selectedContent.id } });
+        // IDOR guard: only resolve content items owned by the planner's user
+        const libItem = await prisma.contentItem.findFirst({ where: { id: selectedContent.id, user_id: planner.user_id } });
         if (libItem) {
             mediaUrl = libItem.url || '';
             thumbnailUrl = libItem.thumbnail_url || thumbnailUrl;
