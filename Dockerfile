@@ -25,6 +25,10 @@ ENV NODE_OPTIONS="--max-old-space-size=1024"
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# Ensure scripts/ exists even when .dockerignore excludes its legacy files
+# (db-migrate.sh from the DB workstream lives here and is needed in the runner)
+RUN mkdir -p /app/scripts
+
 # Make DATABASE_URL available during build (needed by prisma.config.ts for prisma generate)
 ARG DATABASE_URL
 ENV DATABASE_URL=$DATABASE_URL
@@ -62,27 +66,27 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 # persistent volume. Copy the CLI and its full transitive dependency closure.
 # NOTE: these packages are copied from the BUILDER stage (Linux), so the
 # platform-specific schema engine inside @prisma/engines matches the runner.
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 # Transitive deps of the Prisma CLI (resolved empirically with prisma@7.4.2)
-COPY --from=builder /app/node_modules/mysql2 ./node_modules/mysql2
-COPY --from=builder /app/node_modules/postgres ./node_modules/postgres
-COPY --from=builder /app/node_modules/iconv-lite ./node_modules/iconv-lite
-COPY --from=builder /app/node_modules/graphmatch ./node_modules/graphmatch
-COPY --from=builder /app/node_modules/grammex ./node_modules/grammex
-COPY --from=builder /app/node_modules/graceful-fs ./node_modules/graceful-fs
-COPY --from=builder /app/node_modules/retry ./node_modules/retry
-COPY --from=builder /app/node_modules/fast-check ./node_modules/fast-check
-COPY --from=builder /app/node_modules/pure-rand ./node_modules/pure-rand
-COPY --from=builder /app/node_modules/exsolve ./node_modules/exsolve
-COPY --from=builder /app/node_modules/jiti ./node_modules/jiti
-COPY --from=builder /app/node_modules/rc9 ./node_modules/rc9
-COPY --from=builder /app/node_modules/destr ./node_modules/destr
-COPY --from=builder /app/node_modules/defu ./node_modules/defu
-COPY --from=builder /app/node_modules/pkg-types ./node_modules/pkg-types
-COPY --from=builder /app/node_modules/confbox ./node_modules/confbox
-COPY --from=builder /app/node_modules/dotenv ./node_modules/dotenv
-COPY --from=builder /app/node_modules/perfect-debounce ./node_modules/perfect-debounce
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/mysql2 ./node_modules/mysql2
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/postgres ./node_modules/postgres
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/iconv-lite ./node_modules/iconv-lite
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/graphmatch ./node_modules/graphmatch
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/grammex ./node_modules/grammex
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/graceful-fs ./node_modules/graceful-fs
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/retry ./node_modules/retry
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/fast-check ./node_modules/fast-check
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/pure-rand ./node_modules/pure-rand
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/exsolve ./node_modules/exsolve
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/jiti ./node_modules/jiti
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/rc9 ./node_modules/rc9
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/destr ./node_modules/destr
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/defu ./node_modules/defu
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/pkg-types ./node_modules/pkg-types
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/confbox ./node_modules/confbox
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/dotenv ./node_modules/dotenv
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/perfect-debounce ./node_modules/perfect-debounce
 
 # Copy Prisma schema and config for runtime DB operations.
 # prisma.config.ts is REQUIRED by `prisma migrate deploy` in Prisma 7 (the CLI
