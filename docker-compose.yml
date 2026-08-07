@@ -21,7 +21,13 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 15s
+      # Entrypoint runs migrations + WAL setup before boot — give it room
+      start_period: 90s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # ── Publisher Worker ───────────────────────────────────────────────────────────
   # Calls /api/cron/publisher on a fixed interval — no external cron needed.
@@ -40,6 +46,11 @@ services:
       app:
         condition: service_healthy
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   autoreels-data:
