@@ -67,6 +67,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     const [shareToFeed, setShareToFeed] = useState(true);
     const [isCarousel, setIsCarousel] = useState(false);
     const [caption, setCaption] = useState('');
+    const [captionTemplates, setCaptionTemplates] = useState('');
+    const [captionRotation, setCaptionRotation] = useState<'off' | 'sequential' | 'random'>('off');
     const [location, setLocation] = useState('');
     const [captionFallback, setCaptionFallback] = useState('');
     const [titleFallback, setTitleFallback] = useState('');
@@ -167,6 +169,13 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     setCaptionFallback(content[0]?.caption_fallback || '');
                     setTitleFallback(content[0]?.title_fallback || '');
                     setLocation(content[0]?.location_id || '');
+                    // Caption templates (one per line) + rotation mode
+                    setCaptionTemplates(Array.isArray(config.caption_templates)
+                        ? config.caption_templates.join('\n')
+                        : '');
+                    setCaptionRotation(config.caption_rotation === 'sequential' || config.caption_rotation === 'random'
+                        ? config.caption_rotation
+                        : 'off');
                     // collaborators/user_tags may be stored as arrays (comma input => array of usernames)
                     const storedCollabs = content[0]?.collaborators;
                     setCollaborators(Array.isArray(storedCollabs) ? storedCollabs.join(', ') : (storedCollabs || ''));
@@ -176,6 +185,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     setAudioId(audioConfig.audio_id || '');
                     setAudioVolume(audioConfig.audio_volume !== undefined ? audioConfig.audio_volume : 80);
                     setVideoVolume(audioConfig.video_volume !== undefined ? audioConfig.video_volume : 20);
+                    setCaptionTemplates('');
+                    setCaptionRotation('off');
                 } else {
                     setSelectedContentIds([]);
                     setFiles([]);
@@ -208,6 +219,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 setSleepEnd('06:00');
                 setSortOrder('random_loop');
                 setCaption('');
+                setCaptionTemplates('');
+                setCaptionRotation('off');
                 setIsCarousel(false);
                 setMediaType('REELS');
                 setShareToFeed(true);
@@ -496,6 +509,8 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 start_time: startTime ? new Date(startTime).toISOString() : '',
                 sleep_schedule: sleepEnabled ? { start: sleepStart, end: sleepEnd } : null,
                 sort_order: sortOrder,
+                caption_templates: captionTemplates.split('\n').map(s => s.trim()).filter(Boolean),
+                caption_rotation: captionRotation,
                 content,
                 state: preservedState
             };
@@ -750,6 +765,43 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                         className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
                                         placeholder="Write a caption... Use tags for dynamic content."
                                     />
+                                </div>
+
+                                {/* Caption Templates */}
+                                <div className="space-y-3 pt-4 border-t border-ios-separator">
+                                    <div className="flex items-center justify-between">
+                                        <label className="text-xs font-medium text-ios-text block">Caption Templates</label>
+                                        <select
+                                            value={captionRotation}
+                                            onChange={(e) => setCaptionRotation(e.target.value as 'off' | 'sequential' | 'random')}
+                                            className="bg-ios-background border border-ios-separator rounded-lg px-2 py-1 text-xs focus:border-ios-blue outline-none"
+                                        >
+                                            <option value="off">Rotation: Off</option>
+                                            <option value="sequential">Rotation: Sequential</option>
+                                            <option value="random">Rotation: Random</option>
+                                        </select>
+                                    </div>
+                                    <textarea
+                                        value={captionTemplates}
+                                        onChange={(e) => setCaptionTemplates(e.target.value)}
+                                        className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-20 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
+                                        placeholder={'One template per line\nTemplate 1\nTemplate 2'}
+                                    />
+                                    <div>
+                                        <p className="text-[11px] text-gray-400 mb-1">Available variables:</p>
+                                        <div className="flex flex-wrap gap-1">
+                                            {['{post_title}', '{post_caption}', '{date}', '{channel_name}', '{hashtags}'].map(v => (
+                                                <button
+                                                    key={v}
+                                                    onClick={() => setCaptionTemplates(prev => prev + (prev && !prev.endsWith('\n') ? '\n' : '') + v)}
+                                                    className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
+                                                >
+                                                    + {v}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <p className="text-[11px] text-gray-400">When rotation is active, templates replace the caption above. {'{date}'} uses the post date; {'{hashtags}'} is empty unless the selected content has tags.</p>
                                 </div>
 
                                 <div className="space-y-4 pt-4 border-t border-ios-separator">
