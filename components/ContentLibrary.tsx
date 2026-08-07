@@ -9,7 +9,7 @@ import {
     Upload, Plus, ArrowLeft, Check, Trash2, Edit2, Search,
     ChevronRight, Move, Filter, X, Grid as GridIcon, List as ListIcon,
     ArrowDownAZ, ArrowUpAZ, ArrowDown01, ArrowUp01, TextCursorInput,
-    ExternalLink, Eye, CornerDownRight, AlertCircle
+    ExternalLink, Eye, CornerDownRight, AlertCircle, Globe
 } from 'lucide-react';
 import IOSButton from './IOSButton';
 import { useDropzone } from 'react-dropzone';
@@ -20,6 +20,7 @@ import IOSToast, { ToastType } from './IOSToast';
 import { useRef } from 'react';
 import EditContentModal from './EditContentModal';
 import ImageEditorModal from './ImageEditorModal';
+import ImportUrlModal from './ImportUrlModal';
 import { Palette } from 'lucide-react';
 
 const formatBytes = (bytes: number) => {
@@ -359,6 +360,9 @@ export default function ContentLibrary({
     // Image Editor State
     const [imageEditorItem, setImageEditorItem] = useState<ContentItem | null>(null);
     const [isImageEditorOpen, setIsImageEditorOpen] = useState(false);
+
+    // Import URL Modal State
+    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
     // Global Upload Queue
     const { addFiles, addFolderFiles } = useUpload();
@@ -1101,6 +1105,14 @@ export default function ContentLibrary({
                             <Plus size={16} /> Folder
                         </IOSButton>
 
+                        <IOSButton
+                            variant="secondary"
+                            onClick={() => setIsImportModalOpen(true)}
+                            className="!py-1.5 !px-3 text-sm flex items-center gap-1"
+                        >
+                            <Globe size={16} /> Import
+                        </IOSButton>
+
                         <div className="relative">
                             <IOSButton variant="primary" onClick={() => fileInputRef.current?.click()} className="!py-1.5 !px-3 text-sm flex items-center gap-1">
                                 <Upload size={16} /> Upload
@@ -1606,6 +1618,17 @@ export default function ContentLibrary({
                 itemsToEdit={itemsToEdit}
                 onEditComplete={onEditComplete}
             />
+
+            {isImportModalOpen && (
+                <ImportUrlModal
+                    currentFolderId={currentFolderId}
+                    onClose={() => setIsImportModalOpen(false)}
+                    onImported={(name) => {
+                        setToast({ msg: `${name} importado com sucesso`, type: 'success', show: true });
+                        fetchContent(currentFolderId);
+                    }}
+                />
+            )}
 
             {
                 imageEditorItem && (
