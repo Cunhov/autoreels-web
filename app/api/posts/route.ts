@@ -34,12 +34,17 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status");
+    const channelId = searchParams.get("channel_id");
     const start = searchParams.get("start");
     const end = searchParams.get("end");
     const requestedLimit = Number(searchParams.get("limit") || "1000");
     const limit = Number.isFinite(requestedLimit)
         ? Math.min(Math.max(requestedLimit, 1), 2000)
         : 1000;
+    const requestedOffset = Number(searchParams.get("offset") || "0");
+    const offset = Number.isFinite(requestedOffset) && requestedOffset >= 0
+        ? Math.floor(requestedOffset)
+        : 0;
 
     const where: Prisma.PostWhereInput = { user_id: userId };
 
@@ -47,6 +52,8 @@ export async function GET(req: Request) {
         const statuses = status.split(",").map(item => item.trim()).filter(Boolean);
         if (statuses.length > 0) where.status = { in: statuses };
     }
+
+    if (channelId) where.channel_id = channelId;
 
     if (start || end) {
         where.scheduled_at = {};
@@ -65,6 +72,7 @@ export async function GET(req: Request) {
         orderBy: {
             created_at: "desc",
         },
+        skip: offset,
         take: limit,
     });
 
