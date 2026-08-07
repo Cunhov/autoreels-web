@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Calendar, BarChart2, Radio, Sliders, PlusSquare, Folder, LogOut, Search, CloudUpload } from 'lucide-react';
+import { Calendar, BarChart2, Radio, Sliders, PlusSquare, Folder, LogOut, Search, CloudUpload, Settings } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
@@ -46,6 +46,7 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
         { name: 'Planners', path: '/planners', icon: Sliders, badge: badges.activePlanners > 0 ? badges.activePlanners : 0, badgeColor: 'bg-ios-green' },
         { name: 'Library', path: '/content', icon: Folder, badge: 0, badgeColor: '' },
         { name: 'Uploads', path: '/upload', icon: CloudUpload, badge: activeUploads, badgeColor: 'bg-ios-blue' },
+        { name: 'Settings', path: '/settings', icon: Settings, badge: 0, badgeColor: '' },
     ];
 
     const userEmail = session?.user?.email ?? '';

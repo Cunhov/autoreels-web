@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Calendar, BarChart2, Radio, Sliders, Folder, Plus, X } from 'lucide-react';
+import { Calendar, BarChart2, Radio, Sliders, Folder, Plus, X, Settings } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 
@@ -35,6 +35,7 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
         { name: 'Channels', path: '/channels', icon: Radio, badge: 0, badgeColor: '' },
         { name: 'Planners', path: '/planners', icon: Sliders, badge: activePlanners > 0 ? activePlanners : 0, badgeColor: 'bg-ios-green' },
         { name: 'Library', path: '/content', icon: Folder, badge: 0, badgeColor: '' },
+        { name: 'Settings', path: '/settings', icon: Settings, badge: 0, badgeColor: '' },
     ];
 
     const fabActions = [
