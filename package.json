@@ -7,13 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "setup": "npx prisma migrate deploy && npx prisma db push",
-    "seed": "npx ts-node --compiler-options '{\"module\":\"commonjs\"}' prisma/seed.ts"
+    "setup": "npx prisma migrate deploy && npx prisma db push"
   },
   "dependencies": {
     "@prisma/adapter-better-sqlite3": "^7.4.2",
     "@prisma/client": "^7.4.2",
-    "@types/react-virtualized-auto-sizer": "^1.0.4",
     "@upstash/redis": "^1.36.3",
     "better-sqlite3": "^12.6.2",
     "fabric": "^7.1.0",
@@ -25,18 +23,16 @@
     "react-dropzone": "^14.3.8",
     "react-easy-crop": "^5.5.6",
     "react-virtualized-auto-sizer": "^2.0.3",
-    "react-window": "^2.2.7",
-    "uuid": "^13.0.0"
+    "react-window": "^2.2.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/react-virtualized-auto-sizer": "^1.0.4",
     "@types/react-window": "^1.8.8",
-    "@types/uuid": "^10.0.0",
     "eslint": "^9",
     "eslint-config-next": "16.0.10",
     "prisma": "^7.4.2",

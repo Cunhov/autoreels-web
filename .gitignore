@@ -49,3 +49,12 @@ next-env.d.ts
 *.db
 *.db-journal
 
+
+# VPS deploy legacy (Supabase self-hosted)
+vps-deploy/
+
+# Uploads locais
+data/
+
+# Secrets
+.env
