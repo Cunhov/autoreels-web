@@ -89,6 +89,7 @@ model Channel {
 
   @@map("channels")
   @@index([user_id, status])
+  @@index([platform, status])
   @@unique([user_id, account_id])
 }
 
@@ -149,6 +150,7 @@ model ContentItem {
   @@map("content_items")
   @@index([parent_id])
   @@index([user_id, parent_id, name])
+  @@index([user_id, parent_id, created_at])
   @@index([user_id, type])
 }
 
@@ -168,7 +170,7 @@ model Post {
   collaborators          String?   // JSON or comma-separated list of collaborators
   audio_configuration    String?   // JSON object for Reels audio
   user_tags              String?   // JSON or comma-separated list of tagged users
-  status                 String    @default("scheduled")
+  status                 String    @default("pending")
   scheduled_at           DateTime?
   published_at           DateTime?
   error_message          String?
@@ -186,6 +188,7 @@ model Post {
   @@index([user_id, status])
   @@index([user_id, scheduled_at])
   @@index([user_id, created_at])
+  @@index([status, scheduled_at])
   @@index([channel_id])
   @@index([planner_id])
 }
