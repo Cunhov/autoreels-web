@@ -37,8 +37,10 @@ export default function MoveContentModal({ isOpen, onClose, itemsToMove, onMoveC
         setLoading(true);
         try {
             const params = new URLSearchParams({ type: 'carousel_folder' });
+            // Root level: omit parent_id entirely (the API treats a missing
+            // param as NULL). Sending the literal string 'null' filtered by
+            // parent_id='null', which never matches — root folders were hidden.
             if (parentId) params.set('parent_id', parentId);
-            else params.set('parent_id', 'null');
 
             const res = await fetch(`/api/content-items?${params.toString()}`);
             if (!res.ok) throw new Error('Failed to fetch folders');
