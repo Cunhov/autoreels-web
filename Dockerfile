@@ -90,6 +90,11 @@ COPY --from=builder /app/node_modules/perfect-debounce ./node_modules/perfect-de
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=builder --chown=nextjs:nodejs /app/prisma.config.ts ./prisma.config.ts
 
+# Copy the DB migration helper (baseline for legacy DBs + migrate deploy).
+# Created by the monolith DB workstream; entrypoint falls back to a plain
+# `prisma migrate deploy` if this file is absent.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
+
 # Create data directories for SQLite and uploads (single persistent volume)
 RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
 RUN mkdir -p /app/data/uploads && chown -R nextjs:nodejs /app/data/uploads
