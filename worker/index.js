@@ -29,7 +29,9 @@ if (!Number.isFinite(INTERVAL_SEC) || INTERVAL_SEC < 5) {
 const INTERVAL_MS = INTERVAL_SEC * 1000;
 const ENDPOINT = `${APP_URL}/api/cron/publisher`;
 const BACKUP_ENDPOINT = `${APP_URL}/api/cron/backup`;
+const MAINTENANCE_ENDPOINT = `${APP_URL}/api/cron/maintenance`;
 const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // attempt backup roughly every 6h
+const MAINTENANCE_INTERVAL_MS = 24 * 60 * 60 * 1000; // retention/cleanup roughly once a day
 
 // ── Coloured log helpers ───────────────────────────────────────────────────────
 const ts = () => new Date().toISOString();
@@ -101,12 +103,37 @@ async function maybeRunBackup() {
     }
 }
 
+// ── Daily maintenance (retention/cleanup — idempotent route, self-gating) ──────
+let lastMaintenanceAt = 0;
+
+async function maybeRunMaintenance() {
+    if (Date.now() - lastMaintenanceAt < MAINTENANCE_INTERVAL_MS) return;
+    lastMaintenanceAt = Date.now();
+
+    log('▶ Running daily maintenance...');
+    try {
+        const res = await fetch(MAINTENANCE_ENDPOINT, {
+            method: 'POST',
+            headers: { 'x-cron-auth': CRON_SECRET },
+        });
+        const body = await res.text().catch(() => '(no body)');
+        if (res.ok) {
+            log('✅ Maintenance:', body);
+        } else {
+            err(`Maintenance HTTP ${res.status}: ${body}`);
+        }
+    } catch (e) {
+        err('Maintenance failed:', e.message);
+    }
+}
+
 // ── Main loop ──────────────────────────────────────────────────────────────────
 // Recursive setTimeout: the next run is only scheduled AFTER the previous one
 // finishes, so long runs never overlap.
 async function loop() {
     await runPublisher();
     await maybeRunBackup();
+    await maybeRunMaintenance();
     setTimeout(loop, INTERVAL_MS);
 }
 
