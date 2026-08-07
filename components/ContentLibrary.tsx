@@ -9,7 +9,7 @@ import {
     Upload, Plus, ArrowLeft, Check, Trash2, Edit2, Search,
     ChevronRight, Move, Filter, X, Grid as GridIcon, List as ListIcon,
     ArrowDownAZ, ArrowUpAZ, ArrowDown01, ArrowUp01, TextCursorInput,
-    ExternalLink, Eye, CornerDownRight
+    ExternalLink, Eye, CornerDownRight, AlertCircle
 } from 'lucide-react';
 import IOSButton from './IOSButton';
 import { useDropzone } from 'react-dropzone';
@@ -329,8 +329,11 @@ export default function ContentLibrary({
     const [loadingMore, setLoadingMore] = useState(false);
     const [selectAllServer, setSelectAllServer] = useState(false);
     const [bulkLoading, setBulkLoading] = useState(false);
+    const [fetchError, setFetchError] = useState<string | null>(null);
     const PAGE_SIZE = 100;
     const scrollContainerRef = useRef<HTMLDivElement>(null);
+    // Abort in-flight content fetches when a newer one starts (prevents stale overwrites)
+    const contentFetchAbortRef = useRef<AbortController | null>(null);
 
     // Drag-drop items into folders
     const [draggedItems, setDraggedItems] = useState<string[]>([]);
@@ -452,36 +455,56 @@ export default function ContentLibrary({
 
 
     const fetchContent = async (folderId: string | null) => {
+        // Abort any in-flight request from a previous navigation/filter change
+        contentFetchAbortRef.current?.abort();
+        const controller = new AbortController();
+        contentFetchAbortRef.current = controller;
+
         setLoading(true);
+        setFetchError(null);
         setCurrentOffset(0);
         setSelectAllServer(false);
         setSelectedIds([]);
         setSelectionOrder([]);
         try {
-            const res = await fetch(`/api/content-items?${buildQueryParams(folderId, 0).toString()}`);
+            const res = await fetch(`/api/content-items?${buildQueryParams(folderId, 0).toString()}`, { signal: controller.signal });
             if (!res.ok) throw new Error('Failed to fetch items');
             const json = await res.json();
             const data = json.items || json;
+
+            // Ignore responses from requests that were superseded
+            if (controller.signal.aborted) return;
 
             setItems((data as any[]).map(normalizeItem));
             setTotalCount(json.totalCount ?? data.length);
             setHasMore(json.hasMore ?? false);
             setCurrentOffset(PAGE_SIZE);
-        } catch (error) {
+        } catch (error: unknown) {
+            if ((error as { name?: string })?.name === 'AbortError') return;
             console.error('Error fetching content:', error);
+            setItems([]);
+            setFetchError('Não foi possível carregar a biblioteca. Verifique sua conexão.');
         } finally {
             setLoading(false);
+            if (contentFetchAbortRef.current === controller) {
+                contentFetchAbortRef.current = null;
+            }
         }
     };
 
     const loadMore = useCallback(async () => {
         if (loadingMore || !hasMore) return;
         setLoadingMore(true);
+        // Capture the folder at request time so a navigation mid-flight is ignored
+        const folderAtStart = currentFolderId;
         try {
             const res = await fetch(`/api/content-items?${buildQueryParams(currentFolderId, currentOffset).toString()}`);
             if (!res.ok) throw new Error('Failed to fetch more items');
             const json = await res.json();
             const data = json.items || json;
+
+            // Stale response after navigating away — discard it
+            if (folderAtStart !== currentFolderId) return;
 
             setItems(prev => [...prev, ...(data as any[]).map(normalizeItem)]);
             setTotalCount(json.totalCount ?? (items.length + data.length));
@@ -680,16 +703,25 @@ export default function ContentLibrary({
             fetchContent(currentFolderId);
             // If we deleted selected items, cleanup
             setSelectedIds(selectedIds.filter(id => id !== item.id));
+            setToast({ msg: 'Item deleted', type: 'success', show: true });
         } catch (error) {
             console.error('Delete failed:', error);
+            setToast({ msg: 'Failed to delete item', type: 'error', show: true });
         }
     };
 
     // Robust delete function
     const doDelete = async (item: ContentItem) => {
-        // If file, delete from storage
+        // If file, delete from storage (best effort — a storage failure must not block the record delete)
         if (item.path) {
-            await fetch(`/api/storage?path=${encodeURIComponent(item.path)}`, { method: 'DELETE' });
+            try {
+                const storageRes = await fetch(`/api/storage?path=${encodeURIComponent(item.path)}`, { method: 'DELETE' });
+                if (!storageRes.ok) {
+                    console.warn(`Storage delete failed for ${item.path} (${storageRes.status}); file may remain orphaned.`);
+                }
+            } catch (error) {
+                console.warn('Storage delete threw:', error);
+            }
         }
 
         // Use RPC or Client-side recursion?
@@ -1078,6 +1110,8 @@ export default function ContentLibrary({
                                 id="file-upload" type="file" multiple className="hidden"
                                 onChange={(e) => {
                                     if (e.target.files?.length) onDrop(Array.from(e.target.files));
+                                    // Reset so selecting the same file again re-triggers onChange
+                                    e.target.value = '';
                                 }}
                             />
                         </div>
@@ -1232,6 +1266,22 @@ export default function ContentLibrary({
                 {loading ? (
                     <div className="flex justify-center p-12">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ios-blue"></div>
+                    </div>
+                ) : fetchError ? (
+                    <div className="text-center py-20 text-ios-secondary flex flex-col items-center gap-4">
+                        <div className="w-16 h-16 bg-red-50 dark:bg-red-900/20 rounded-full flex items-center justify-center">
+                            <AlertCircle size={32} className="text-ios-red" />
+                        </div>
+                        <div>
+                            <p className="font-medium text-lg">Erro ao carregar a biblioteca</p>
+                            <p className="text-sm mt-1 opacity-70">{fetchError}</p>
+                        </div>
+                        <button
+                            onClick={() => fetchContent(currentFolderId)}
+                            className="px-4 py-2 bg-ios-blue text-white text-sm font-medium rounded-xl hover:bg-ios-blue/90 transition-colors"
+                        >
+                            Tentar novamente
+                        </button>
                     </div>
                 ) : sortedItems.length === 0 ? (
                     <div className="text-center py-20 text-ios-secondary flex flex-col items-center gap-4">
@@ -1483,6 +1533,10 @@ export default function ContentLibrary({
                                 const columnWidth = w / columnCount;
                                 const rowHeight = columnWidth; // aspect-square
 
+                                // Reserve space for the load-more footer inside the AutoSizer so the
+                                // grid scrolls internally and onScroll fires on the grid itself.
+                                const footerHeight = hasMore || loadingMore ? 56 : 0;
+
                                 const itemData = {
                                     columnCount,
                                     sortedItems,
@@ -1515,21 +1569,18 @@ export default function ContentLibrary({
                                             columnWidth={columnWidth}
                                             rowCount={rowCount}
                                             rowHeight={rowHeight}
-                                            style={{ height: h, width: w }}
+                                            style={{ height: Math.max(0, h - footerHeight), width: w }}
+                                            onScroll={handleScroll}
                                             cellComponent={GridCell}
                                             cellProps={{ data: itemData }}
-                                        >
-                                        </GridComponent>
-                                        {loadingMore && (
-                                            <div className="flex justify-center py-4">
+                                        />
+                                        <div style={{ height: footerHeight }} className="flex items-center justify-center">
+                                            {loadingMore ? (
                                                 <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-ios-blue" />
-                                            </div>
-                                        )}
-                                        {hasMore && !loadingMore && (
-                                            <div className="text-center py-3">
+                                            ) : hasMore ? (
                                                 <button onClick={loadMore} className="text-sm text-ios-blue hover:underline">Load more ({items.length} of {totalCount})</button>
-                                            </div>
-                                        )}
+                                            ) : null}
+                                        </div>
                                     </>
                                 );
                             }}

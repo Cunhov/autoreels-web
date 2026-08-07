@@ -16,6 +16,8 @@ export default function MediaUploader({ files, onFilesChange }: MediaUploaderPro
             const newFiles = Array.from(e.target.files);
             onFilesChange([...files, ...newFiles]);
         }
+        // Reset so selecting the same file again re-triggers onChange
+        e.target.value = '';
     };
 
     const handleDrop = (e: React.DragEvent) => {

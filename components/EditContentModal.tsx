@@ -8,8 +8,23 @@ interface ContentItem {
     name: string;
     title?: string;
     caption?: string;
-    tags?: string[];
+    tags?: string[] | string;
     type: string;
+}
+
+/** Tags are stored as JSON string in DB; the API may return raw or normalized. */
+function normalizeTags(raw: unknown): string[] {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw as string[];
+    if (typeof raw === 'string') {
+        try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+    return [];
 }
 
 interface EditContentModalProps {
@@ -49,7 +64,7 @@ export default function EditContentModal({
                 setName(item.name || '');
                 setTitle(item.title || '');
                 setCaption(item.caption || '');
-                setTags(item.tags || []);
+                setTags(normalizeTags(item.tags));
             }
         }
     }, [isOpen, itemsToEdit, isBulk]);
