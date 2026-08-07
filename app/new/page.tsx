@@ -93,7 +93,9 @@ export default function NewPost() {
                     caption: caption,
                     status: 'pending',
                     channel_id: selectedChannel || null,
-                    scheduled_at: scheduledAt || null
+                    // Convert local datetime string to absolute ISO so the server (UTC)
+                    // interprets the user's local wall-clock correctly.
+                    scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null
                 })
             });
 
