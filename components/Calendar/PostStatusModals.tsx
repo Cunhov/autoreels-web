@@ -1,14 +1,42 @@
 'use client';
-import { X, AlertCircle } from 'lucide-react';
+import { useState } from 'react';
+import { X, AlertCircle, RotateCcw } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import { Post } from '@/app/types';
 
 interface ErrorModalProps {
     post: Post;
     onClose: () => void;
+    /** Called after a successful retry so the parent can refetch the post list. */
+    onPostsChanged?: () => void;
 }
 
-export function ErrorModal({ post, onClose }: ErrorModalProps) {
+export function ErrorModal({ post, onClose, onPostsChanged }: ErrorModalProps) {
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const handleRetry = async () => {
+        setBusy(true);
+        setError(null);
+        try {
+            const res = await fetch(`/api/posts/${post.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: 'pending' }),
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error((data as { error?: string }).error || 'Falha ao re-enfileirar');
+            }
+            onClose();
+            onPostsChanged?.();
+        } catch (e) {
+            setError((e as Error).message);
+        } finally {
+            setBusy(false);
+        }
+    };
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
             <div className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-2xl overflow-hidden shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
@@ -42,7 +70,13 @@ export function ErrorModal({ post, onClose }: ErrorModalProps) {
                         </div>
                     </div>
 
-                    <div className="mt-8">
+                    <div className="mt-4 flex flex-col gap-2">
+                        {error && (
+                            <p className="text-xs text-red-500 text-center">{error}</p>
+                        )}
+                        <IOSButton onClick={handleRetry} variant="primary" disabled={busy} className="w-full justify-center py-3">
+                            <RotateCcw size={16} className="mr-2" /> Tentar novamente
+                        </IOSButton>
                         <IOSButton onClick={onClose} variant="secondary" className="w-full justify-center py-3">
                             Close
                         </IOSButton>
