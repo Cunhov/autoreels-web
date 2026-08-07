@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { X, Save, Edit2 } from 'lucide-react';
+import { X, Scissors, Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 import IOSButton from './IOSButton';
 
 interface ContentItem {
@@ -10,6 +10,11 @@ interface ContentItem {
     caption?: string;
     tags?: string[] | string;
     type: string;
+    url?: string;
+    video_url?: string;
+    path?: string;
+    duration?: number;
+    thumbnail_url?: string;
 }
 
 /** Tags are stored as JSON string in DB; the API may return raw or normalized. */
@@ -25,6 +30,13 @@ function normalizeTags(raw: unknown): string[] {
         }
     }
     return [];
+}
+
+function formatSeconds(total: number): string {
+    if (!Number.isFinite(total) || total < 0) return '0:00';
+    const m = Math.floor(total / 60);
+    const s = Math.floor(total % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 interface EditContentModalProps {
@@ -49,7 +61,22 @@ export default function EditContentModal({
     const [tags, setTags] = useState<string[]>([]);
     const [tagInput, setTagInput] = useState('');
 
+    // Video editing states (single video item only)
+    const [videoDuration, setVideoDuration] = useState(0);
+    const [thumbTime, setThumbTime] = useState(0.5);
+    const [trimStart, setTrimStart] = useState(0);
+    const [trimEnd, setTrimEnd] = useState(0);
+    const [videoBusy, setVideoBusy] = useState(false);
+    const [videoMsg, setVideoMsg] = useState<string | null>(null);
+    const [videoMsgType, setVideoMsgType] = useState<'success' | 'error'>('success');
+
     const isBulk = itemsToEdit.length > 1;
+    const singleItem = isBulk ? null : itemsToEdit[0] ?? null;
+    const isVideoItem = Boolean(singleItem && singleItem.type === 'video');
+    const videoSrc = singleItem?.video_url || singleItem?.url || '';
+    const videoPath = singleItem && singleItem.name
+        ? [singleItem.path, singleItem.name].filter(Boolean).join('/')
+        : '';
 
     useEffect(() => {
         if (isOpen && itemsToEdit.length > 0) {
@@ -65,7 +92,12 @@ export default function EditContentModal({
                 setTitle(item.title || '');
                 setCaption(item.caption || '');
                 setTags(normalizeTags(item.tags));
+                setVideoDuration(item.duration || 0);
+                setThumbTime(0.5);
+                setTrimStart(0);
+                setTrimEnd(item.duration || 0);
             }
+            setVideoMsg(null);
         }
     }, [isOpen, itemsToEdit, isBulk]);
 
@@ -87,16 +119,7 @@ export default function EditContentModal({
     const handleSave = async () => {
         setLoading(true);
         try {
-            const updates: any = {};
-
-            // For Bulk Edit: Only update fields that have content? 
-            // Or does the user want to clear them? 
-            // Usually in bulk edit, you only update what you change.
-            // Let's assume non-empty string means update. 
-            // If user wants to clear, maybe they type a space? 
-            // For now, let's say if (value) update it. 
-            // Except for 'Name' - usually we don't bulk edit name to be identical, unless requested.
-            // But let's allow it if they really want.
+            const updates: Record<string, unknown> = {};
 
             if (isBulk) {
                 if (title) updates.title = title;
@@ -117,7 +140,7 @@ export default function EditContentModal({
             const ids = itemsToEdit.map(i => i.id);
 
             // Serialize tags as JSON string for Prisma
-            const payload: any = { ...updates };
+            const payload: Record<string, unknown> = { ...updates };
             if (payload.tags) payload.tags = JSON.stringify(payload.tags);
 
             for (const id of ids) {
@@ -136,6 +159,73 @@ export default function EditContentModal({
             alert('Failed to update items');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const setVideoMessage = (msg: string, type: 'success' | 'error' = 'success') => {
+        setVideoMsg(msg);
+        setVideoMsgType(type);
+    };
+
+    /** Extract a frame from the video and set it as the item's thumbnail. */
+    const handleExtractThumbnail = async () => {
+        if (!singleItem || !videoPath || videoBusy) return;
+        setVideoBusy(true);
+        setVideoMsg(null);
+        try {
+            const res = await fetch('/api/video/thumbnail', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ item_id: singleItem.id, path: videoPath, time: thumbTime })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data?.error || 'Failed to extract thumbnail');
+            }
+            setVideoMessage('Capa atualizada com sucesso');
+            onEditComplete(); // refresh the library so the new thumbnail shows
+        } catch (error) {
+            console.error('Thumbnail extraction error:', error);
+            setVideoMessage((error as Error).message || 'Erro ao extrair capa', 'error');
+        } finally {
+            setVideoBusy(false);
+        }
+    };
+
+    /** Trim the video and create a NEW content item in the library. */
+    const handleTrim = async () => {
+        if (!videoPath || videoBusy) return;
+        if (!Number.isFinite(trimStart) || !Number.isFinite(trimEnd)) {
+            setVideoMessage('Informe valores válidos de início e fim', 'error');
+            return;
+        }
+        if (trimEnd <= trimStart) {
+            setVideoMessage('O fim deve ser maior que o início', 'error');
+            return;
+        }
+        if (videoDuration > 0 && trimEnd > videoDuration) {
+            setVideoMessage(`O fim (${formatSeconds(trimEnd)}) excede a duração do vídeo (${formatSeconds(videoDuration)})`, 'error');
+            return;
+        }
+        setVideoBusy(true);
+        setVideoMsg(null);
+        try {
+            const res = await fetch('/api/video/trim', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path: videoPath, start: trimStart, end: trimEnd })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(data?.error || 'Failed to trim video');
+            }
+            setVideoMessage(`Corte criado na biblioteca (${formatSeconds(trimEnd - trimStart)})`);
+            onEditComplete(); // refresh the library so the new item appears
+        } catch (error) {
+            console.error('Video trim error:', error);
+            setVideoMessage((error as Error).message || 'Erro ao cortar vídeo', 'error');
+        } finally {
+            setVideoBusy(false);
         }
     };
 
@@ -160,7 +250,7 @@ export default function EditContentModal({
                 </div>
 
                 {/* Content */}
-                <div className="p-6 space-y-4">
+                <div className="p-6 space-y-4 overflow-y-auto custom-scrollbar">
                     {!isBulk && (
                         <div>
                             <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
@@ -225,6 +315,120 @@ export default function EditContentModal({
                             />
                         </div>
                     </div>
+
+                    {/* ── Video tools (single video item only) ─────────────────────── */}
+                    {isVideoItem && (
+                        <div className="rounded-2xl border border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-white/5 p-4 space-y-4">
+                            <div className="flex items-center gap-2">
+                                <VideoIcon size={16} className="text-blue-500" />
+                                <h3 className="text-[13px] font-semibold text-gray-900 dark:text-white uppercase tracking-wide">
+                                    Video
+                                </h3>
+                                {videoDuration > 0 && (
+                                    <span className="text-[11px] text-gray-500 dark:text-gray-400 ml-auto">
+                                        {formatSeconds(videoDuration)}
+                                    </span>
+                                )}
+                            </div>
+
+                            {/* Preview */}
+                            {videoSrc && (
+                                <video
+                                    key={videoSrc}
+                                    src={videoSrc}
+                                    controls
+                                    preload="metadata"
+                                    className="w-full aspect-video bg-black rounded-xl"
+                                    onLoadedMetadata={(e) => {
+                                        const d = e.currentTarget.duration;
+                                        if (Number.isFinite(d) && d > 0) {
+                                            setVideoDuration(d);
+                                            setTrimEnd(d);
+                                        }
+                                    }}
+                                />
+                            )}
+
+                            {/* Extract thumbnail */}
+                            <div className="space-y-2">
+                                <label className="flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
+                                    <ImageIcon size={13} />
+                                    Extrair capa (thumbnail)
+                                </label>
+                                <div className="flex items-center gap-3">
+                                    <input
+                                        type="range"
+                                        min={0}
+                                        max={videoDuration > 0 ? videoDuration : 1}
+                                        step={0.1}
+                                        value={Math.min(thumbTime, videoDuration > 0 ? videoDuration : 1)}
+                                        onChange={(e) => setThumbTime(Number(e.target.value))}
+                                        disabled={videoBusy}
+                                        className="flex-1 accent-blue-500"
+                                    />
+                                    <span className="text-[12px] text-gray-600 dark:text-gray-300 tabular-nums w-12 text-right">
+                                        {formatSeconds(thumbTime)}
+                                    </span>
+                                </div>
+                                <IOSButton
+                                    variant="secondary"
+                                    onClick={handleExtractThumbnail}
+                                    disabled={videoBusy || videoDuration <= 0}
+                                    className="w-full justify-center text-sm py-2"
+                                >
+                                    {videoBusy ? 'Processando...' : 'Usar este frame como capa'}
+                                </IOSButton>
+                            </div>
+
+                            {/* Trim */}
+                            <div className="space-y-2 pt-1 border-t border-gray-200 dark:border-white/10">
+                                <label className="flex items-center gap-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
+                                    <Scissors size={13} />
+                                    Cortar vídeo (segundos)
+                                </label>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        step={0.1}
+                                        value={trimStart}
+                                        onChange={(e) => setTrimStart(Number(e.target.value))}
+                                        disabled={videoBusy}
+                                        placeholder="Início"
+                                        className="w-1/2 bg-white dark:bg-white/10 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2 text-[14px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                    />
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        step={0.1}
+                                        value={trimEnd}
+                                        onChange={(e) => setTrimEnd(Number(e.target.value))}
+                                        disabled={videoBusy}
+                                        placeholder="Fim"
+                                        className="w-1/2 bg-white dark:bg-white/10 border border-gray-200 dark:border-white/10 rounded-lg px-3 py-2 text-[14px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                    />
+                                </div>
+                                <IOSButton
+                                    variant="primary"
+                                    onClick={handleTrim}
+                                    disabled={videoBusy}
+                                    className="w-full justify-center text-sm py-2"
+                                >
+                                    {videoBusy ? 'Processando...' : 'Criar corte'}
+                                </IOSButton>
+                                <p className="text-[11px] text-gray-400 dark:text-gray-500">
+                                    Cria um novo item na biblioteca com o trecho selecionado.
+                                </p>
+                            </div>
+
+                            {/* Result message */}
+                            {videoMsg && (
+                                <p className={`text-[12px] font-medium ${videoMsgType === 'success' ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                                    {videoMsg}
+                                </p>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Footer */}

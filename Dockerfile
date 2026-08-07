@@ -44,6 +44,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# ffmpeg for server-side video trimming and thumbnail (frame) extraction
+RUN apk add --no-cache ffmpeg
+
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
