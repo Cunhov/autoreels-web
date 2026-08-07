@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
     Sliders, Plus, Play, Pause, Trash2, Calendar, Terminal, Eye,
     X, RefreshCw, Zap, CheckCircle2, XCircle, Clock, Instagram
@@ -43,6 +43,30 @@ function relativeTime(dateStr?: string): string {
     return `${Math.floor(h / 24)}d ago`;
 }
 
+/**
+ * Format a PlannerLog `details` column for display.
+ * The cron stores it as a JSON string; older versions may have stored objects.
+ * Returns pretty-printed JSON when parseable, otherwise the raw value.
+ */
+function formatLogDetails(details: any): string {
+    if (details === null || details === undefined) return '';
+    let parsed: any = details;
+    if (typeof details === 'string') {
+        try {
+            parsed = JSON.parse(details);
+            // Some legacy rows are double-stringified
+            if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+        } catch {
+            return details;
+        }
+    }
+    try {
+        return JSON.stringify(parsed, null, 2);
+    } catch {
+        return typeof details === 'string' ? details : String(details);
+    }
+}
+
 // Config is persisted as a JSON string (possibly double-stringified by legacy
 // versions). Parse it once, defensively, so callers always get an object.
 function parsePlannerConfig(config: any): any {
@@ -63,6 +87,7 @@ export default function PlannersPage() {
     const [editingPlanner, setEditingPlanner] = useState<Planner | null>(null);
     const [viewingLogs, setViewingLogs] = useState<Planner | null>(null);
     const [logs, setLogs] = useState<any[]>([]);
+    const [logFilter, setLogFilter] = useState<'all' | 'info' | 'error'>('all');
     const [loadingLogs, setLoadingLogs] = useState(false);
     const [viewingPreview, setViewingPreview] = useState<Planner | null>(null);
     const [previewData, setPreviewData] = useState<any>(null);
@@ -142,6 +167,11 @@ export default function PlannersPage() {
     }
 
     useEffect(() => { if (viewingLogs) fetchLogs(viewingLogs.id); }, [viewingLogs]);
+
+    const filteredLogs = useMemo(() => {
+        if (logFilter === 'all') return logs;
+        return logs.filter(log => log.level === logFilter);
+    }, [logs, logFilter]);
 
     async function fetchPreview(plannerId: string) {
         setLoadingPreview(true);
@@ -348,6 +378,18 @@ export default function PlannersPage() {
                                 <p className="text-[12px] text-ios-text-secondary">Execution history</p>
                             </div>
                             <div className="flex items-center gap-2">
+                                {/* Level filter */}
+                                <div className="flex rounded-lg border border-ios-separator overflow-hidden">
+                                    {(['all', 'info', 'error'] as const).map(lv => (
+                                        <button
+                                            key={lv}
+                                            onClick={() => setLogFilter(lv)}
+                                            className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition-colors ${logFilter === lv ? 'bg-ios-blue text-white' : 'text-ios-text-secondary hover:bg-ios-gray-5'}`}
+                                        >
+                                            {lv}
+                                        </button>
+                                    ))}
+                                </div>
                                 <button onClick={() => fetchLogs(viewingLogs.id)} className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors" disabled={loadingLogs}>
                                     <RefreshCw size={18} className={loadingLogs ? 'animate-spin' : ''} />
                                 </button>
@@ -357,13 +399,13 @@ export default function PlannersPage() {
                             </div>
                         </div>
                         <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar bg-ios-background">
-                            {logs.length === 0 ? (
+                            {filteredLogs.length === 0 ? (
                                 <div className="text-center py-12 text-ios-text-secondary">
                                     <Terminal size={32} className="mx-auto mb-2 opacity-20" />
-                                    <p>No logs found for this planner.</p>
+                                    <p>{logs.length === 0 ? 'No logs found for this planner.' : `No ${logFilter} logs.`}</p>
                                 </div>
                             ) : (
-                                logs.map(log => (
+                                filteredLogs.map(log => (
                                     <div key={log.id} className="bg-ios-card p-3 rounded-xl border border-ios-separator text-sm">
                                         <div className="flex items-center justify-between mb-1">
                                             <span className={`font-bold uppercase text-[10px] px-1.5 py-0.5 rounded ${log.level === 'error' ? 'bg-ios-red/10 text-ios-red' : 'bg-ios-blue/10 text-ios-blue'}`}>
@@ -371,10 +413,10 @@ export default function PlannersPage() {
                                             </span>
                                             <span className="text-[10px] text-ios-text-secondary">{new Date(log.created_at).toLocaleString()}</span>
                                         </div>
-                                        <p className="text-ios-text font-medium">{log.message}</p>
-                                        {log.details && (
-                                            <pre className="mt-2 text-[10px] bg-ios-background p-2 rounded border border-ios-separator overflow-x-auto text-ios-text-secondary max-h-32">
-                                                {JSON.stringify(log.details, null, 2)}
+                                        <p className="text-ios-text font-medium break-words">{log.message}</p>
+                                        {formatLogDetails(log.details) && (
+                                            <pre className="mt-2 text-[10px] bg-ios-background p-2 rounded border border-ios-separator overflow-x-auto text-ios-text-secondary max-h-32 whitespace-pre-wrap break-words">
+                                                {formatLogDetails(log.details)}
                                             </pre>
                                         )}
                                     </div>
