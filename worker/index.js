@@ -9,16 +9,27 @@
  * Environment Variables:
  *   APP_URL          - Base URL of the Next.js app  (default: http://app:80)
  *   CRON_SECRET      - Must match the app's CRON_SECRET env var
- *   WORKER_INTERVAL  - Interval between runs in seconds (default: 60)
+ *   WORKER_INTERVAL  - Interval between runs in seconds (default: 60, min 5)
+ *
+ * Also calls /api/cron/backup (idempotent — the route decides whether it is
+ * time to run) roughly every 6 hours.
  */
 
 'use strict';
 
 const APP_URL = (process.env.APP_URL || 'http://app:80').replace(/\/$/, '');
 const CRON_SECRET = process.env.CRON_SECRET || '';
-const INTERVAL_SEC = parseInt(process.env.WORKER_INTERVAL || '60', 10);
+
+const RAW_INTERVAL = process.env.WORKER_INTERVAL || '60';
+let INTERVAL_SEC = parseInt(RAW_INTERVAL, 10);
+if (!Number.isFinite(INTERVAL_SEC) || INTERVAL_SEC < 5) {
+    console.error(`[${new Date().toISOString()}] ❌ Invalid WORKER_INTERVAL "${RAW_INTERVAL}" — falling back to 60s (min 5s).`);
+    INTERVAL_SEC = 60;
+}
 const INTERVAL_MS = INTERVAL_SEC * 1000;
 const ENDPOINT = `${APP_URL}/api/cron/publisher`;
+const BACKUP_ENDPOINT = `${APP_URL}/api/cron/backup`;
+const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // attempt backup roughly every 6h
 
 // ── Coloured log helpers ───────────────────────────────────────────────────────
 const ts = () => new Date().toISOString();
@@ -28,6 +39,7 @@ const err = (...args) => console.error(`[${ts()}] ❌`, ...args);
 // ── Single publisher run ───────────────────────────────────────────────────────
 async function runPublisher() {
     log('▶ Running publisher...');
+    const startedAt = Date.now();
     try {
         const controller = new AbortController();
         // Abort if the request takes longer than the interval itself
@@ -51,17 +63,53 @@ async function runPublisher() {
         }
 
         const data = await res.json();
-        log('✅ Result:', JSON.stringify(data));
+        const durationSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+        log(`✅ Result (${durationSec}s):`, JSON.stringify(data));
+        if (data && data.timeout) {
+            err('Publisher hit its execution budget — consider a shorter WORKER_INTERVAL or faster runs.');
+        }
     } catch (e) {
         if (e.name === 'AbortError') {
-            err('Request timed out (exceeded interval minus 5s)');
+            err(`Request timed out (exceeded interval minus 5s)`);
         } else {
             err('Fetch failed:', e.message);
         }
     }
 }
 
+// ── Daily backup (idempotent route, self-gating) ───────────────────────────────
+let lastBackupAttemptAt = 0;
+
+async function maybeRunBackup() {
+    if (Date.now() - lastBackupAttemptAt < BACKUP_INTERVAL_MS) return;
+    lastBackupAttemptAt = Date.now();
+
+    log('▶ Running daily backup...');
+    try {
+        const res = await fetch(BACKUP_ENDPOINT, {
+            method: 'POST',
+            headers: { 'x-cron-auth': CRON_SECRET },
+        });
+        const body = await res.text().catch(() => '(no body)');
+        if (res.ok) {
+            log('✅ Backup:', body);
+        } else {
+            err(`Backup HTTP ${res.status}: ${body}`);
+        }
+    } catch (e) {
+        err('Backup failed:', e.message);
+    }
+}
+
 // ── Main loop ──────────────────────────────────────────────────────────────────
+// Recursive setTimeout: the next run is only scheduled AFTER the previous one
+// finishes, so long runs never overlap.
+async function loop() {
+    await runPublisher();
+    await maybeRunBackup();
+    setTimeout(loop, INTERVAL_MS);
+}
+
 async function main() {
     if (!CRON_SECRET) {
         err('CRON_SECRET is not set — worker will be rejected by the app. Exiting.');
@@ -73,10 +121,7 @@ async function main() {
     log(`   Endpoint : ${ENDPOINT}`);
     log(`   Interval : ${INTERVAL_SEC}s`);
 
-    // Run once immediately on start, then on interval
-    await runPublisher();
-
-    setInterval(runPublisher, INTERVAL_MS);
+    await loop();
 }
 
 main().catch(e => { err('Fatal:', e.message); process.exit(1); });
