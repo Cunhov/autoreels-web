@@ -21,9 +21,13 @@ RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund --prefer-of
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
-ENV NODE_OPTIONS="--max-old-space-size=768"
+ENV NODE_OPTIONS="--max-old-space-size=1024"
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# Ensure scripts/ exists even when .dockerignore excludes its legacy files
+# (db-migrate.sh from the DB workstream lives here and is needed in the runner)
+RUN mkdir -p /app/scripts
 
 # Make DATABASE_URL available during build (needed by prisma.config.ts for prisma generate)
 ARG DATABASE_URL
@@ -43,9 +47,9 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Copy public folder (create empty if not exists)
-RUN mkdir -p ./public
-COPY --from=builder /app/public* ./public/
+# Copy public folder (committed as public/.gitkeep — do NOT use a glob here,
+# BuildKit fails the build when the wildcard matches nothing)
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public/
 
 # Set the correct permission for prerender cache
 RUN mkdir .next
@@ -55,14 +59,49 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# Copy Prisma schema and migrations for runtime DB operations
-# NOTE: Do NOT copy prisma.config.ts — Prisma CLI auto-loads it and fails without node_modules
-COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
+# ── Prisma CLI for runtime migrations ──────────────────────────────────────────
+# The Next.js standalone output only traces what the app imports at runtime.
+# `prisma` (the CLI) is a devDependency, so it is NOT included — but
+# docker-entrypoint.sh needs it to run `prisma migrate deploy` against the
+# persistent volume. Copy the CLI and its full transitive dependency closure.
+# NOTE: these packages are copied from the BUILDER stage (Linux), so the
+# platform-specific schema engine inside @prisma/engines matches the runner.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_modules/prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
+# Transitive deps of the Prisma CLI (resolved empirically with prisma@7.4.2)
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/mysql2 ./node_modules/mysql2
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/postgres ./node_modules/postgres
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/iconv-lite ./node_modules/iconv-lite
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/graphmatch ./node_modules/graphmatch
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/grammex ./node_modules/grammex
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/graceful-fs ./node_modules/graceful-fs
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/retry ./node_modules/retry
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/fast-check ./node_modules/fast-check
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/pure-rand ./node_modules/pure-rand
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/exsolve ./node_modules/exsolve
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/jiti ./node_modules/jiti
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/rc9 ./node_modules/rc9
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/destr ./node_modules/destr
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/defu ./node_modules/defu
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/pkg-types ./node_modules/pkg-types
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/confbox ./node_modules/confbox
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/dotenv ./node_modules/dotenv
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/perfect-debounce ./node_modules/perfect-debounce
 
-# Create data directories for SQLite and uploads
+# Copy Prisma schema and config for runtime DB operations.
+# prisma.config.ts is REQUIRED by `prisma migrate deploy` in Prisma 7 (the CLI
+# reads datasource.url from it — DATABASE_URL is provided via env at runtime).
+COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=nextjs:nodejs /app/prisma.config.ts ./prisma.config.ts
+
+# Copy the DB migration helper (baseline for legacy DBs + migrate deploy).
+# Created by the monolith DB workstream; entrypoint falls back to a plain
+# `prisma migrate deploy` if this file is absent.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
+
+# Create data directories for SQLite and uploads (single persistent volume)
 RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
 RUN mkdir -p /app/data/uploads && chown -R nextjs:nodejs /app/data/uploads
-RUN mkdir -p /app/public/uploads && chown -R nextjs:nodejs /app/public/uploads
 
 # Copy the entrypoint script
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./
@@ -73,6 +112,9 @@ RUN chmod +x ./docker-entrypoint.sh
 # won't persist across Easypanel deploys.
 VOLUME ["/app/data"]
 
+# Healthcheck: verify the HTTP server responds (API route checks the DB too)
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=90s \
+  CMD wget -qO- http://localhost:3000/api/health || exit 1
 
 USER nextjs
 
