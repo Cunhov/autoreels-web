@@ -81,6 +81,7 @@ model Channel {
   username            String?
   profile_picture_url String?
   status              String   @default("active")
+  settings            String?  // JSON: per-channel settings (e.g. max_posts_per_hour)
   created_at          DateTime @default(now())
 
   user     User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
@@ -178,6 +179,9 @@ model Post {
   instagram_media_id     String?
   instagram_container_id String?
   instagram_child_ids    String?   // JSON: array of child container IDs
+  attempts               Int       @default(0)   // publish attempts (retry/backoff)
+  last_attempt_at        DateTime? // last time the cron tried to process this post
+  container_created_at   DateTime? // when the IG container was created (3-min heuristic)
   created_at             DateTime  @default(now())
 
   user    User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
