@@ -10,10 +10,15 @@ import { Prisma } from "@prisma/client";
  *
  * PATCH body (all optional, at least one required):
  *   { status: "cancelled" }                       → cancel a non-published post
- *   { status: "pending" }                         → retry a failed/cancelled/scheduled post (due ASAP)
+ *   { status: "pending" }                         → retry a failed/cancelled/scheduled post (preserves its date)
  *   { scheduled_at: "<ISO future>" }              → reschedule; reactivates failed/cancelled posts
  *   { scheduled_at: null, status: "pending" }     → clear schedule → due on next cron tick
  *   { status: "pending", scheduled_at: "<ISO>" }  → retry at a specific future time
+ *
+ * A plain retry ({ status: "pending" } without scheduled_at) preserves the
+ * existing scheduled_at — even when it is in the past (the cron treats past
+ * dates as due), so the post keeps its place on the calendar. Posts that never
+ * had a date stay NULL (due on the next cron tick).
  */
 
 const RETRYABLE_STATUSES = ["failed", "cancelled", "scheduled"] as const;
@@ -76,7 +81,14 @@ export async function PATCH(
                 }
                 scheduledAt = null;
             } else {
-                const d = new Date(rawScheduledAt);
+                const raw = String(rawScheduledAt);
+                if (!/(Z|[+-]\d{2}:\d{2})$/.test(raw)) {
+                    return NextResponse.json(
+                        { error: "scheduled_at must be an ISO date with explicit offset (e.g. ...Z or ...+03:00)" },
+                        { status: 400 }
+                    );
+                }
+                const d = new Date(raw);
                 if (Number.isNaN(d.getTime())) {
                     return NextResponse.json({ error: "Invalid scheduled_at" }, { status: 400 });
                 }
@@ -115,11 +127,13 @@ export async function PATCH(
             data.error_message = null;
             data.failed_reason = null;
             if (scheduledAt !== undefined) {
+                // Explicit reschedule wins over any preserved date.
                 data.scheduled_at = scheduledAt;
-            } else if (!post.scheduled_at || post.scheduled_at.getTime() <= Date.now()) {
-                // No explicit schedule → due on the next cron tick.
-                data.scheduled_at = null;
             }
+            // Otherwise preserve the existing scheduled_at — even if it is in
+            // the past (the cron treats past dates as due), so the post keeps
+            // its place on the calendar. A post that never had a date stays
+            // NULL → due on the next cron tick.
         } else if (rescheduleReactivates) {
             // scheduled_at alone on a failed/cancelled post reactivates it.
             data.scheduled_at = scheduledAt;
