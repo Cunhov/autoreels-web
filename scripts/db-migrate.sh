@@ -38,9 +38,19 @@ echo "[db-migrate] schema=${SCHEMA}"
 echo "[db-migrate] url=${URL}"
 echo "[db-migrate] cli=${PRISMA_CLI}"
 
-# ─── Generated Prisma config (self-contained; cwd must have node_modules) ────
-TMP_CONFIG="${PWD}/prisma.config.generated.ts"
-cat > "${TMP_CONFIG}" <<EOF
+# ─── Prisma config (repo versioned config preferred; else generate where writable) ─
+# Prisma 7 requires datasource.url to come from the config file for
+# `migrate deploy`/`resolve`. The runner ships /app/prisma.config.ts (copied
+# by the Dockerfile), which resolves `prisma/config` against /app/node_modules.
+# Fallbacks: generate in $PWD (normal local dev) or, as a last resort, in /tmp
+# with an absolute import into the project's own node_modules.
+if [ -f /app/prisma.config.ts ]; then
+  TMP_CONFIG="/app/prisma.config.ts"
+  echo "[db-migrate] using repo prisma.config.ts"
+elif touch "${PWD}/.prisma-config-write-test" 2>/dev/null; then
+  rm -f "${PWD}/.prisma-config-write-test"
+  TMP_CONFIG="${PWD}/prisma.config.generated.ts"
+  cat > "${TMP_CONFIG}" <<EOF
 import { defineConfig } from "prisma/config";
 
 export default defineConfig({
@@ -49,7 +59,20 @@ export default defineConfig({
   datasource: { url: process.env["DATABASE_URL"] ?? "file:/app/data/prod.db" },
 });
 EOF
-trap 'rm -f "${TMP_CONFIG}"' EXIT INT TERM
+  trap 'rm -f "${TMP_CONFIG}"' EXIT INT TERM
+else
+  TMP_CONFIG="/tmp/prisma.config.generated.ts"
+  cat > "${TMP_CONFIG}" <<EOF
+import { defineConfig } from "${PWD}/node_modules/prisma/config.js";
+
+export default defineConfig({
+  schema: "${SCHEMA}",
+  migrations: { path: "${MIGRATIONS_DIR}" },
+  datasource: { url: process.env["DATABASE_URL"] ?? "file:/app/data/prod.db" },
+});
+EOF
+  trap 'rm -f "${TMP_CONFIG}"' EXIT INT TERM
+fi
 
 # ─── 1) WAL + busy_timeout (safe for concurrent cron + API) ──────────────────
 node -e '
