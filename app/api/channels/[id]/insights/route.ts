@@ -3,16 +3,19 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getSessionUserId } from "@/lib/api";
+import { resolveAccessToken, getGraphBaseUrl } from "@/lib/instagram";
 import {
-    resolveAccessToken,
-    getGraphBaseUrl,
-    GRAPH_API_VERSION,
-    fetchWithTimeout,
-} from "@/lib/instagram";
+    fetchMediaInsights,
+    upsertPostMetric,
+    totalsFromMetrics,
+    EMPTY_METRICS,
+    type IgMetrics,
+} from "@/app/api/ig-insights";
 
-// ─── Cache (in-memory, 5 min) ────────────────────────────────────────────────
+// ─── Cache (in-memory, 5-min buckets; key has NO milliseconds) ────────────────
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const CACHE_WINDOW_MS = 5 * 60 * 1000;
+const MAX_POSTS = 50; // IG quota is 200 calls/h; worst case here is ~100 calls
 
 interface CacheEntry {
     expiresAt: number;
@@ -21,60 +24,10 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-function cacheKey(channelId: string, from: string, to: string): string {
+/** 5-minute bucket key — stable within the bucket, so the cache actually hits. */
+export function cacheKey(channelId: string, from: string, to: string): string {
     const window = Math.floor(Date.now() / CACHE_WINDOW_MS);
     return `${channelId}:${from}:${to}:${window}`;
-}
-
-// ─── Instagram helpers ────────────────────────────────────────────────────────
-
-/** Metric sets, in order of preference. IG rejects metrics not supported by a
- *  media type (e.g. `reach` doesn't exist for IMAGE/CAROUSEL), so we degrade
- *  gracefully: full set → no reach → likes/comments/impressions only. */
-const METRIC_SETS = [
-    "likes,comments,impressions,reach,saved,shares",
-    "likes,comments,impressions,saved,shares",
-    "likes,comments,impressions",
-];
-
-async function fetchMediaMeta(baseUrl: string, mediaId: string, token: string) {
-    try {
-        const url = `${baseUrl}/${GRAPH_API_VERSION}/${mediaId}?fields=timestamp,caption,media_type,permalink&access_token=${encodeURIComponent(token)}`;
-        const res = await fetchWithTimeout(url, {}, 15_000);
-        if (!res.ok) return null;
-        const data = await res.json();
-        if (!data || data.error) return null;
-        return data;
-    } catch {
-        return null;
-    }
-}
-
-async function fetchInsights(baseUrl: string, mediaId: string, token: string): Promise<Record<string, number>> {
-    for (const metricSet of METRIC_SETS) {
-        try {
-            const url = `${baseUrl}/${GRAPH_API_VERSION}/${mediaId}/insights?metric=${metricSet}&access_token=${encodeURIComponent(token)}`;
-            const res = await fetchWithTimeout(url, {}, 15_000);
-            if (!res.ok) continue;
-            const data = await res.json();
-            if (!data || data.error || !Array.isArray(data.data)) continue;
-            const metrics: Record<string, number> = {};
-            for (const entry of data.data) {
-                const name = entry?.name as string;
-                if (!name) continue;
-                const values = Array.isArray(entry?.values) ? entry.values : [];
-                const total = values.reduce((acc: number, v: unknown) => {
-                    const num = Number(typeof v === "object" && v !== null ? (v as { value?: unknown }).value ?? v : v);
-                    return acc + (Number.isFinite(num) ? num : 0);
-                }, 0);
-                metrics[name.toLowerCase()] = total;
-            }
-            if (Object.keys(metrics).length > 0) return metrics;
-        } catch {
-            // try the next (smaller) metric set
-        }
-    }
-    return {};
 }
 
 // ─── Route ────────────────────────────────────────────────────────────────────
@@ -103,6 +56,7 @@ export async function GET(
     const days = Number.isFinite(daysParam)
         ? Math.min(Math.max(Math.floor(daysParam), 1), 90)
         : 30;
+    const force = searchParams.get("force") === "1" || searchParams.get("force") === "true";
 
     const fromParam = searchParams.get("from");
     const toParam = searchParams.get("to");
@@ -112,25 +66,16 @@ export async function GET(
         return NextResponse.json({ error: "Invalid from/to" }, { status: 400 });
     }
 
+    // 1. Cache (bucket-stable) — bypassed with ?force=1
     const ck = cacheKey(channel.id, from.toISOString(), to.toISOString());
-    const cached = cache.get(ck);
-    if (cached && cached.expiresAt > Date.now()) {
-        return NextResponse.json(cached.data);
+    if (!force) {
+        const cached = cache.get(ck);
+        if (cached && cached.expiresAt > Date.now()) {
+            return NextResponse.json(cached.data);
+        }
     }
 
-    let token: string;
-    try {
-        token = channel.access_token ? await resolveAccessToken(channel.access_token) : "";
-    } catch {
-        return NextResponse.json(
-            { error: "Token resolution failed", detail: "Please re-connect the channel." },
-            { status: 400 }
-        );
-    }
-    if (!token || !channel.account_id) {
-        return NextResponse.json({ error: "Channel has no access token" }, { status: 400 });
-    }
-
+    // 2. Published posts in the window (take MAX_POSTS+1 to detect `has_more`)
     const posts = await prisma.post.findMany({
         where: {
             channel_id: channel.id,
@@ -138,7 +83,7 @@ export async function GET(
             published_at: { gte: from, lte: to },
         },
         orderBy: { published_at: "desc" },
-        take: 100,
+        take: MAX_POSTS + 1,
         select: {
             id: true,
             instagram_media_id: true,
@@ -150,57 +95,72 @@ export async function GET(
             thumbnail_url: true,
         },
     });
+    const hasMore = posts.length > MAX_POSTS;
+    const windowPosts = posts.slice(0, MAX_POSTS);
 
-    const baseUrl = getGraphBaseUrl(token);
-    const totals = { likes: 0, comments: 0, reach: 0, impressions: 0, saved: 0, shares: 0, posts_analyzed: 0 };
-    const resultPosts: unknown[] = [];
-
-    for (const post of posts) {
-        const mediaId = post.instagram_media_id;
-        const entry: {
-            id: string;
-            instagram_media_id: string | null;
-            permalink: string | null;
-            caption: string | null;
-            media_type: string | null;
-            published_at: Date | null;
-            video_url: string | null;
-            image_url: string | null;
-            thumbnail_url: string | null;
-            metrics: Record<string, number>;
-        } = {
-            id: post.id,
-            instagram_media_id: mediaId || null,
-            permalink: null,
-            caption: post.caption || null,
-            media_type: post.media_type || null,
-            published_at: post.published_at,
-            video_url: post.video_url,
-            image_url: post.image_url,
-            thumbnail_url: post.thumbnail_url,
-            metrics: { likes: 0, comments: 0, reach: 0, impressions: 0, saved: 0, shares: 0 },
-        };
-
-        if (mediaId) {
-            const meta = await fetchMediaMeta(baseUrl, mediaId, token);
-            if (meta) {
-                entry.permalink = meta.permalink || null;
-                if (!entry.media_type) entry.media_type = meta.media_type || null;
-                if (!entry.caption) entry.caption = meta.caption || null;
-            }
-            const metrics = await fetchInsights(baseUrl, mediaId, token);
-            let anyMetric = false;
-            for (const k of ["likes", "comments", "reach", "impressions", "saved", "shares"]) {
-                const v = metrics[k] || 0;
-                entry.metrics[k] = v;
-                totals[k as keyof typeof totals] += v;
-                if (v > 0) anyMetric = true;
-            }
-            if (anyMetric) totals.posts_analyzed++;
+    // 3. Primary path: PostMetric rows from the DB (zero IG calls)
+    if (!force) {
+        const dbResult = await payloadFromDb(channel, days, from, to, windowPosts);
+        if (dbResult) {
+            const payload = { ...dbResult, has_more: hasMore, source: "db" };
+            setCache(ck, payload);
+            return NextResponse.json(payload);
         }
-        resultPosts.push(entry);
     }
 
+    // 4. Fallback: direct IG fetch (batched), persisting into PostMetric
+    let token: string;
+    try {
+        token = channel.access_token ? await resolveAccessToken(channel.access_token) : "";
+    } catch {
+        return NextResponse.json(
+            { error: "Token resolution failed", detail: "Please re-connect the channel in /channels." },
+            { status: 400 }
+        );
+    }
+    if (!token || !channel.account_id) {
+        return NextResponse.json(
+            { error: "Channel has no access token", detail: "Re-connect the channel in /channels." },
+            { status: 400 }
+        );
+    }
+    if (force) {
+        // Invalidate the DB coverage shortcut for this window — refetch everything
+        await prisma.postMetric.deleteMany({
+            where: { post_id: { in: windowPosts.map(p => p.id) } },
+        });
+    }
+    const baseUrl = getGraphBaseUrl(token);
+
+    const entries: PostEntry[] = [];
+    const errors: { post_id: string; message: string }[] = [];
+    const igCalls = { count: 0 };
+
+    // Batches of 5 — bounded parallelism, stops on quota/auth errors
+    for (let i = 0; i < windowPosts.length; i += 5) {
+        const batch = windowPosts.slice(i, i + 5);
+        const results = await Promise.all(batch.map(post => fetchPostEntry(baseUrl, post, token, igCalls)));
+        for (const r of results) {
+            if (r.entry) entries.push(r.entry);
+            if (r.error) errors.push(r.error);
+            if (r.fatal) {
+                if (r.fatal === "auth") {
+                    return NextResponse.json(
+                        { error: "auth", detail: "Token do canal expirado — reconecte o canal em /channels." },
+                        { status: 401 }
+                    );
+                }
+                if (r.fatal === "rate_limit") {
+                    return NextResponse.json(
+                        { error: "rate_limit", detail: "Limite da API do Instagram atingido — tente em alguns minutos." },
+                        { status: 429 }
+                    );
+                }
+            }
+        }
+    }
+
+    const totals = totalsFromMetrics(entries);
     const payload = {
         channel_id: channel.id,
         channel_name: channel.name,
@@ -209,15 +169,140 @@ export async function GET(
         to: to.toISOString(),
         fetched_at: new Date().toISOString(),
         totals,
-        posts: resultPosts,
+        posts: entries,
+        has_more: hasMore,
+        source: "ig" as const,
+        ...(errors.length > 0 ? { errors } : {}),
     };
+    setCache(ck, payload);
+    return NextResponse.json(payload);
+}
 
-    // Store + bound the cache size
-    cache.set(ck, { expiresAt: Date.now() + CACHE_TTL_MS, data: payload });
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+
+function setCache(key: string, data: unknown) {
+    cache.set(key, { expiresAt: Date.now() + CACHE_TTL_MS, data });
     if (cache.size > 50) {
         const oldest = [...cache.entries()].sort((a, b) => a[1].expiresAt - b[1].expiresAt)[0];
         if (oldest) cache.delete(oldest[0]);
     }
+}
 
-    return NextResponse.json(payload);
+interface DbPost {
+    id: string;
+    instagram_media_id: string | null;
+    caption: string | null;
+    media_type: string | null;
+    published_at: Date | null;
+    video_url: string | null;
+    image_url: string | null;
+    thumbnail_url: string | null;
+}
+
+interface PostEntry {
+    id: string;
+    instagram_media_id: string | null;
+    permalink: string | null;
+    caption: string | null;
+    media_type: string | null;
+    published_at: Date | null;
+    video_url: string | null;
+    image_url: string | null;
+    thumbnail_url: string | null;
+    metrics: IgMetrics;
+}
+
+function entryFromDbPost(post: DbPost, metrics: IgMetrics): PostEntry {
+    return {
+        id: post.id,
+        instagram_media_id: post.instagram_media_id,
+        permalink: null,
+        caption: post.caption,
+        media_type: post.media_type,
+        published_at: post.published_at,
+        video_url: post.video_url,
+        image_url: post.image_url,
+        thumbnail_url: post.thumbnail_url,
+        metrics,
+    };
+}
+
+/** Build the payload from PostMetric rows when coverage >= 50% of the window. */
+async function payloadFromDb(
+    channel: { id: string; name: string },
+    days: number,
+    from: Date,
+    to: Date,
+    windowPosts: DbPost[]
+): Promise<Omit<ReturnType<typeof makePayload>, "has_more" | "source"> | null> {
+    if (windowPosts.length === 0) return null;
+    const rows = await prisma.postMetric.findMany({
+        where: { post_id: { in: windowPosts.map(p => p.id) } },
+    });
+    if (rows.length === 0) return null;
+    const coverage = rows.length / windowPosts.length;
+    if (coverage < 0.5) return null;
+
+    const byPost = new Map(rows.map(r => [r.post_id, r]));
+    const entries = windowPosts.map(p => {
+        const row = byPost.get(p.id);
+        return entryFromDbPost(p, row
+            ? {
+                likes: row.likes, comments: row.comments, plays: row.plays,
+                reach: row.reach, impressions: row.impressions, saved: row.saved, shares: row.shares,
+            }
+            : { ...EMPTY_METRICS });
+    });
+    const totals = totalsFromMetrics(entries);
+    const fetchedAt = rows.reduce((max, r) => (r.fetched_at > max ? r.fetched_at : max), rows[0].fetched_at);
+    return makePayload(channel, days, from, to, entries, totals, fetchedAt);
+}
+
+function makePayload(
+    channel: { id: string; name: string },
+    days: number,
+    from: Date,
+    to: Date,
+    posts: PostEntry[],
+    totals: ReturnType<typeof totalsFromMetrics>,
+    fetchedAt: Date
+) {
+    return {
+        channel_id: channel.id,
+        channel_name: channel.name,
+        days,
+        from: from.toISOString(),
+        to: to.toISOString(),
+        fetched_at: fetchedAt.toISOString(),
+        totals,
+        posts,
+    };
+}
+
+async function fetchPostEntry(
+    baseUrl: string,
+    post: DbPost,
+    token: string,
+    igCalls: { count: number }
+): Promise<{ entry?: PostEntry; error?: { post_id: string; message: string }; fatal?: "auth" | "rate_limit" }> {
+    if (!post.instagram_media_id) {
+        return { error: { post_id: post.id, message: "Sem instagram_media_id — não é possível buscar métricas" } };
+    }
+    const res = await fetchMediaInsights(baseUrl, post.instagram_media_id, token, post.media_type);
+    igCalls.count += res.igCalls;
+    if (res.kind === "auth") {
+        return { fatal: "auth" };
+    }
+    if (res.kind === "rate_limit") {
+        return { fatal: "rate_limit" };
+    }
+    if (res.kind === "error") {
+        return { error: { post_id: post.id, message: res.message } };
+    }
+    await upsertPostMetric(post.id, null, res.metrics).catch(() => { /* non-fatal */ });
+    const entry = entryFromDbPost(post, res.metrics);
+    entry.permalink = res.meta?.permalink || null;
+    if (!entry.media_type && res.meta?.media_type) entry.media_type = res.meta.media_type;
+    if (!entry.caption && res.meta?.caption) entry.caption = res.meta.caption;
+    return { entry };
 }
