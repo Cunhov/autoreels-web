@@ -1,4 +1,27 @@
-import { posix } from "path";
+import { posix, extname } from "path";
+
+/** Whitelisted media extensions (lowercase, no dot) for server-generated file names. */
+export const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "m4v", "webm", "avi", "mkv", "3gp", "mpeg", "mpg", "m2ts", "ts"]);
+export const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif", "bmp", "avif", "heic", "heif"]);
+
+/**
+ * Extract a safe media extension (lowercase, no dot) from a file name.
+ * Returns null for missing/unsafe/unsupported extensions.
+ */
+export function safeMediaExtension(filename: string): string | null {
+    const ext = extname(filename).toLowerCase().replace(/^\./, "");
+    if (ext.length < 1 || ext.length > 5 || !/^[a-z0-9]+$/.test(ext)) return null;
+    if (VIDEO_EXTENSIONS.has(ext) || IMAGE_EXTENSIONS.has(ext)) return ext;
+    return null;
+}
+
+export function isVideoExtension(ext: string): boolean {
+    return VIDEO_EXTENSIONS.has(ext);
+}
+
+export function isImageExtension(ext: string): boolean {
+    return IMAGE_EXTENSIONS.has(ext);
+}
 
 /**
  * Reject raw paths containing ".." path segments, backslashes, or that are

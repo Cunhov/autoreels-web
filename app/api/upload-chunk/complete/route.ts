@@ -3,7 +3,22 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
-import { cleanPathSegment } from "@/lib/upload-path";
+import { cleanPathSegment, normalizeUploadPath, safeMediaExtension, isVideoExtension } from "@/lib/upload-path";
+import { isFfmpegAvailable, getVideoDurationSec } from "@/lib/ffmpeg";
+import { randomUUID } from "crypto";
+import { createReadStream, createWriteStream } from "fs";
+import { mkdir, unlink, stat, writeFile } from "fs/promises";
+import { join, dirname } from "path";
+import { pipeline } from "stream/promises";
+import { listPartIndices, getUploadsDir } from "@/app/api/upload-chunk/route";
+
+const MAX_THUMBNAIL_BYTES = 8 * 1024 * 1024; // 8MB
+const DEFAULT_USER_QUOTA_BYTES = 20 * 1024 * 1024 * 1024; // 20GB per user
+
+function getUserQuotaBytes(): number {
+    const fromEnv = Number(process.env.UPLOAD_QUOTA_BYTES);
+    return Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_USER_QUOTA_BYTES;
+}
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
@@ -12,30 +27,58 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    let finalDiskPath: string | null = null;
+    let thumbnailDiskPath: string | null = null;
+    let partBase: string | null = null;
+    let totalChunks = 0;
+
+    const cleanupParts = async () => {
+        if (!partBase) return;
+        const indices = await listPartIndices(partBase);
+        for (const index of indices) {
+            await unlink(`${partBase}.part.${index}`).catch(() => { });
+        }
+    };
+
     try {
         const formData = await req.formData();
-        const filename = formData.get("filename") as string;
-        const size = parseInt(formData.get("size") as string);
-        const folderPath = formData.get("folderPath") as string;
-        const type = formData.get("type") as string;
+        const filename = formData.get("filename") as string | null;
+        const sizeDeclaredRaw = formData.get("size") as string | null;
+        const targetPath = formData.get("path") as string | null;
+        const typeRaw = formData.get("type") as string | null;
         const tagsRaw = formData.get("tags") as string | null;
-        const tags = tagsRaw || null; // JSON string or null
         const parentId = formData.get("parentId") as string | null;
         const caption = formData.get("caption") as string | null;
-        const thumbnailPath = formData.get("thumbnailPath") as string | null;
+        const thumbnailPathLegacy = formData.get("thumbnailPath") as string | null;
+        const thumbnailFile = formData.get("thumbnail");
+        const totalChunksRaw = formData.get("totalChunks") as string | null;
 
-        if (!filename || isNaN(size) || size < 0) {
+        if (!filename || !targetPath) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
         }
 
-        const safeFolderPath = cleanPathSegment(folderPath);
         const safeFilename = cleanPathSegment(filename);
-
-        if (safeFolderPath === null || safeFilename === null || safeFilename.includes("/") || safeFilename === ".") {
-            return NextResponse.json({ error: "Invalid file path" }, { status: 400 });
+        if (safeFilename === null || safeFilename === "" || safeFilename.includes("/") || safeFilename === ".") {
+            return NextResponse.json({ error: "Invalid file name" }, { status: 400 });
         }
 
-        // Validate parent folder ownership (prevent attaching items to another user's folder)
+        // Server-generated file name: {uuid}.{safeExt} — unpredictable, immutable URLs.
+        const ext = safeMediaExtension(safeFilename);
+        if (!ext) {
+            return NextResponse.json({ error: "Unsupported media type (expected video or image file)" }, { status: 400 });
+        }
+
+        // Type: honor the client's explicit video/image, else infer from extension.
+        const type = typeRaw === "video" || typeRaw === "image"
+            ? typeRaw
+            : (isVideoExtension(ext) ? "video" : "image");
+
+        const sizeDeclared = parseInt(sizeDeclaredRaw || "0");
+        if (Number.isNaN(sizeDeclared) || sizeDeclared < 0) {
+            return NextResponse.json({ error: "Invalid size" }, { status: 400 });
+        }
+
+        // Validate parent folder ownership (prevent attaching to another user's folder)
         if (parentId) {
             const parent = await prisma.contentItem.findFirst({
                 where: { id: parentId, user_id: userId },
@@ -46,55 +89,169 @@ export async function POST(req: Request) {
             }
         }
 
-        // Define clean URL for serving
-        const finalUrl = `/api/file/${[userId, safeFolderPath, safeFilename].filter(Boolean).join("/")}`;
-        const safeThumbnailPath = thumbnailPath ? cleanPathSegment(thumbnailPath) : null;
-        const thumbnailUrl = safeThumbnailPath ? `/api/file/${safeThumbnailPath}` : null;
+        // ── Staging: locate the .part.{i} files ─────────────────────────────────
+        const stagingPath = normalizeUploadPath(userId, targetPath);
+        if (!stagingPath) {
+            return NextResponse.json({ error: "Invalid upload path" }, { status: 400 });
+        }
 
-        // Check if an item already exists with this name/path to avoid constraint errors
+        const uploadDir = getUploadsDir();
+        partBase = join(uploadDir, stagingPath);
+        const stagedIndices = await listPartIndices(partBase);
+
+        // totalChunks: prefer the explicit field; fall back to max index + 1 for
+        // backward compatibility with clients that don't send it yet.
+        const explicitTotal = parseInt(totalChunksRaw || "0");
+        totalChunks = Number.isInteger(explicitTotal) && explicitTotal > 0
+            ? explicitTotal
+            : (stagedIndices.length > 0 ? Math.max(...stagedIndices) + 1 : 0);
+
+        if (totalChunks < 1) {
+            return NextResponse.json({ error: "No uploaded chunks found" }, { status: 400 });
+        }
+
+        // Verify EVERY part 0..totalChunks-1 is present — no silent corruption.
+        const present = new Set(stagedIndices);
+        const missing: number[] = [];
+        for (let i = 0; i < totalChunks; i++) {
+            if (!present.has(i)) missing.push(i);
+        }
+        if (missing.length > 0) {
+            return NextResponse.json(
+                { error: "Incomplete upload", missing },
+                { status: 409 }
+            );
+        }
+
+        // ── Concatenate parts into the final file (streams, no full buffering) ──
+        const uuidName = `${randomUUID()}.${ext}`;
+        const finalRelativePath = `${userId}/${uuidName}`;
+        finalDiskPath = join(uploadDir, finalRelativePath);
+        await mkdir(dirname(finalDiskPath), { recursive: true });
+
+        const out = createWriteStream(finalDiskPath, { flags: "w" });
+        try {
+            for (let i = 0; i < totalChunks; i++) {
+                await pipeline(
+                    createReadStream(`${partBase}.part.${i}`),
+                    out,
+                    { end: i === totalChunks - 1 }
+                );
+            }
+        } catch (error: unknown) {
+            out.destroy();
+            await unlink(finalDiskPath).catch(() => { });
+            throw error;
+        }
+
+        // ── Verify actual size on disk ──────────────────────────────────────────
+        const finalStat = await stat(finalDiskPath);
+        const actualSize = finalStat.size;
+        if (actualSize === 0) {
+            await unlink(finalDiskPath).catch(() => { });
+            finalDiskPath = null;
+            return NextResponse.json({ error: "Uploaded file is empty" }, { status: 400 });
+        }
+        if (sizeDeclared > 0 && actualSize !== sizeDeclared) {
+            await unlink(finalDiskPath).catch(() => { });
+            finalDiskPath = null;
+            return NextResponse.json(
+                { error: "Size mismatch (uploaded bytes differ from declared size)" },
+                { status: 400 }
+            );
+        }
+
+        // ── Duration via ffprobe (best-effort) ──────────────────────────────────
+        let duration: number | null = null;
+        if (type === "video" && isFfmpegAvailable()) {
+            try {
+                duration = await getVideoDurationSec(finalDiskPath);
+            } catch {
+                duration = null; // non-fatal
+            }
+        }
+
+        // ── Thumbnail: new path (File in FormData) or legacy thumbnailPath ──────
+        let thumbnailUrl: string | null = null;
+        if (thumbnailFile instanceof File && thumbnailFile.size > 0) {
+            if (thumbnailFile.size > MAX_THUMBNAIL_BYTES) {
+                return NextResponse.json({ error: "Thumbnail too large (max 8MB)" }, { status: 400 });
+            }
+            const thumbName = `thumb-${randomUUID()}.jpg`;
+            const thumbRelative = `${userId}/${thumbName}`;
+            thumbnailDiskPath = join(uploadDir, thumbRelative);
+            const bytes = Buffer.from(await thumbnailFile.arrayBuffer());
+            await writeFile(thumbnailDiskPath, bytes);
+            thumbnailUrl = `/api/file/${thumbRelative}`;
+        } else if (thumbnailPathLegacy) {
+            const safeThumb = cleanPathSegment(thumbnailPathLegacy);
+            if (safeThumb) thumbnailUrl = `/api/file/${safeThumb}`;
+        }
+
+        // ── Quota check (before persisting the DB record) ───────────────────────
+        const quotaBytes = getUserQuotaBytes();
+        const agg = await prisma.contentItem.aggregate({
+            where: { user_id: userId },
+            _sum: { size: true },
+        });
+        const usedBefore = agg._sum.size || 0;
+        if (usedBefore + actualSize > quotaBytes) {
+            await unlink(finalDiskPath).catch(() => { });
+            finalDiskPath = null;
+            if (thumbnailDiskPath) {
+                await unlink(thumbnailDiskPath).catch(() => { });
+                thumbnailDiskPath = null;
+            }
+            return NextResponse.json({ error: "Quota exceeded (upload limit reached)" }, { status: 413 });
+        }
+
+        // ── Dedupe / create the ContentItem ─────────────────────────────────────
+        const finalUrl = `/api/file/${finalRelativePath}`;
+        const data = {
+            size: actualSize,
+            url: finalUrl,
+            path: finalRelativePath,
+            type,
+            ...(duration != null ? { duration } : {}),
+            ...(thumbnailUrl ? { thumbnail_url: thumbnailUrl } : {}),
+            ...(tagsRaw ? { tags: tagsRaw } : {}),
+            ...(parentId ? { parent_id: parentId } : { parent_id: null }),
+            ...(caption ? { caption } : {}),
+        };
+
         const existingItem = await prisma.contentItem.findFirst({
             where: {
                 user_id: userId,
                 name: safeFilename,
-                path: safeFolderPath,
-            }
+                ...(parentId ? { parent_id: parentId } : { parent_id: null }),
+            },
         });
 
         let savedItem;
         if (existingItem) {
-            // Update size/url if re-uploaded
             savedItem = await prisma.contentItem.update({
                 where: { id: existingItem.id },
-                data: {
-                    size,
-                    url: finalUrl,
-                    type,
-                    ...(thumbnailUrl ? { thumbnail_url: thumbnailUrl } : {}),
-                    ...(tags ? { tags } : {}),
-                    ...(parentId ? { parent_id: parentId } : {}),
-                    ...(caption ? { caption } : {}),
-                }
+                data,
             });
         } else {
             savedItem = await prisma.contentItem.create({
                 data: {
                     user_id: userId,
                     name: safeFilename,
-                    size: size,
-                    url: finalUrl,
-                    path: safeFolderPath,
-                    type: type,
-                    ...(thumbnailUrl ? { thumbnail_url: thumbnailUrl } : {}),
-                    ...(tags ? { tags } : {}),
-                    ...(parentId ? { parent_id: parentId } : {}),
-                    ...(caption ? { caption } : {}),
-                }
+                    ...data,
+                },
             });
         }
 
+        await cleanupParts();
+
         return NextResponse.json({ success: true, item: savedItem });
     } catch (error: unknown) {
-        console.error('Finalizing upload error:', error);
+        console.error("Finalizing upload error:", error);
+        // On any failure, remove the final/thumbnail files and the staged parts.
+        if (finalDiskPath) await unlink(finalDiskPath).catch(() => { });
+        if (thumbnailDiskPath) await unlink(thumbnailDiskPath).catch(() => { });
+        await cleanupParts();
         return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
     }
 }
