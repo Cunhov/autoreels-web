@@ -1,6 +1,18 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { safeEqual } from '@/lib/secret';
+// Contract with fix3-core: parsePlannerConfig moved to lib/planner-config.
+import { parsePlannerConfig } from '@/lib/planner-config';
+
+function parsePlannerState(planner: { state?: string | null }, configParsed: Record<string, unknown>): unknown {
+    if (planner.state) {
+        try {
+            const parsed = JSON.parse(planner.state);
+            if (parsed && typeof parsed === 'object') return parsed;
+        } catch { /* fall through */ }
+    }
+    return configParsed.state ?? null;
+}
 
 /**
  * GET /api/admin/fix-planners
@@ -84,7 +96,8 @@ export async function GET(req: Request) {
             })),
             sort_order: configParsed.sort_order,
             sleep_schedule: configParsed.sleep_schedule,
-            state: configParsed.state,
+            state: parsePlannerState(p, configParsed),
+            state_source: p.state ? 'column' : (configParsed.state ? 'config' : null),
             is_double_stringified: isDoubleStringified,
             config_parse_error: parseError,
             recent_posts: recentPosts,
@@ -99,7 +112,7 @@ export async function GET(req: Request) {
         });
         fixed = result.count;
 
-        // Also fix double-stringified configs
+        // Also fix double-stringified configs and migrate state out of config into the column.
         for (const p of allPlanners as any[]) {
             try {
                 const firstParse = JSON.parse(p.config);
@@ -109,6 +122,31 @@ export async function GET(req: Request) {
                         where: { id: p.id },
                         data: { config: firstParse },
                     });
+                }
+            } catch { /* ignore */ }
+
+            // Migrate state from config.state → planner.state (column), if present.
+            try {
+                const configObj = parsePlannerConfig(p.config) as Record<string, unknown>;
+                if (configObj && typeof configObj === 'object' && 'state' in configObj) {
+                    const legacyState = configObj.state;
+                    const { state: _removed, ...restConfig } = configObj;
+                    void _removed;
+                    if (!p.state && legacyState !== undefined) {
+                        await prisma.planner.update({
+                            where: { id: p.id },
+                            data: {
+                                state: typeof legacyState === 'string' ? legacyState : JSON.stringify(legacyState),
+                                config: JSON.stringify(restConfig),
+                            },
+                        });
+                    } else if (legacyState !== undefined) {
+                        // State already in the column — just clean the config copy.
+                        await prisma.planner.update({
+                            where: { id: p.id },
+                            data: { config: JSON.stringify(restConfig) },
+                        });
+                    }
                 }
             } catch { /* ignore */ }
         }
