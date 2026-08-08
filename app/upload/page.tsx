@@ -1,11 +1,12 @@
 'use client';
 
-import { useUpload, UploadTask } from '@/contexts/UploadContext';
+import { useUploadTasks, useUploadActions, UploadTask } from '@/contexts/UploadContext';
 import { useRef, useState, useCallback } from 'react';
 import { Plus, X, RotateCcw, FileVideo, Image as ImageIcon, AlertCircle, CheckCircle2, CloudUpload, Tag, FolderOpen } from 'lucide-react';
 
 export default function UploadPage() {
-    const { tasks, addFiles, addFolderFiles, cancelTask, retryTask, clearCompleted } = useUpload();
+    const { tasks } = useUploadTasks();
+    const { addFiles, addFolderFiles, cancelTask, retryTask, clearCompleted } = useUploadActions();
 
     // Tag input state
     const [tags, setTags] = useState<string[]>([]);
@@ -19,8 +20,24 @@ export default function UploadPage() {
     // Stats
     const totalTasks = tasks.length;
     const completedTasks = tasks.filter(t => t.status === 'completed').length;
-    const failedTasks = tasks.filter(t => t.status === 'error' || t.status === 'frozen').length;
+    const errorTasks = tasks.filter(t => t.status === 'error').length;
+    const frozenTasks = tasks.filter(t => t.status === 'frozen').length;
     const activeTasks = tasks.filter(t => t.status === 'pending' || t.status === 'uploading').length;
+
+    // Global queue progress: bytes sent / bytes total across active tasks
+    const { globalSent, globalTotal } = tasks.reduce(
+        (acc, t) => {
+            if (t.status === 'pending' || t.status === 'uploading') {
+                acc.globalTotal += t.size;
+                acc.globalSent += t.totalChunks > 0
+                    ? Math.round((t.currentChunk / t.totalChunks) * t.size)
+                    : 0;
+            }
+            return acc;
+        },
+        { globalSent: 0, globalTotal: 0 },
+    );
+    const globalProgress = globalTotal > 0 ? Math.round((globalSent / globalTotal) * 100) : 0;
 
     const addTag = useCallback(() => {
         const trimmed = tagInput.trim().toLowerCase();
@@ -42,9 +59,7 @@ export default function UploadPage() {
     };
 
     const handleFiles = useCallback((files: FileList | File[]) => {
-        const fileArray = Array.from(files).filter(f =>
-            f.type.startsWith('video/') || f.type.startsWith('image/')
-        );
+        const fileArray = Array.from(files);
         if (fileArray.length > 0) {
             addFiles(fileArray, null, tags);
         }
@@ -61,10 +76,7 @@ export default function UploadPage() {
         e.preventDefault();
         setIsDragging(false);
 
-        const items = e.dataTransfer.items;
         const files = e.dataTransfer.files;
-
-        // Check if any item is a folder by checking webkitRelativePath
         const fileArray = Array.from(files);
         const hasFolderStructure = fileArray.some(f => f.webkitRelativePath && f.webkitRelativePath.includes('/'));
 
@@ -114,7 +126,7 @@ export default function UploadPage() {
                     <div>
                         <h1 className="text-[28px] font-bold tracking-tight text-ios-text">Upload Queue</h1>
                         <p className="text-[15px] text-ios-text-secondary mt-1">
-                            {activeTasks} active uploads • {failedTasks} frozen • {completedTasks} completed
+                            {activeTasks} active{activeTasks !== 1 ? 's' : ''} • {frozenTasks} retrying • {errorTasks} failed • {completedTasks} completed
                         </p>
                     </div>
                     {completedTasks > 0 && (
@@ -126,6 +138,26 @@ export default function UploadPage() {
                         </button>
                     )}
                 </div>
+
+                {/* Global queue progress bar */}
+                {(activeTasks > 0 || globalProgress > 0) && (
+                    <div className="bg-ios-card dark:bg-[#1C1C1E] border border-ios-separator rounded-2xl p-4 shadow-sm">
+                        <div className="flex items-center justify-between mb-2">
+                            <span className="text-[13px] font-semibold text-ios-text-secondary uppercase tracking-wider">
+                                Queue Progress
+                            </span>
+                            <span className="text-[13px] font-semibold text-ios-blue">
+                                {globalProgress > 0 ? globalProgress : '0'}% · {formatBytes(globalSent)} / {formatBytes(globalTotal)}
+                            </span>
+                        </div>
+                        <div className="h-2 w-full bg-ios-gray-5 rounded-full overflow-hidden">
+                            <div
+                                className="h-full rounded-full transition-all duration-300 bg-ios-blue"
+                                style={{ width: getProgressWidth(globalProgress) }}
+                            />
+                        </div>
+                    </div>
+                )}
 
                 {/* Upload Area — Drop Zone + Tags */}
                 <div className="bg-ios-card dark:bg-[#1C1C1E] border border-ios-separator rounded-2xl overflow-hidden shadow-sm">
@@ -146,14 +178,14 @@ export default function UploadPage() {
                                 {isDragging ? 'Drop files here' : 'Drag & drop files to upload'}
                             </h3>
                             <p className="text-[14px] text-ios-text-secondary">
-                                or <span className="text-ios-blue font-medium">click to browse</span> — videos and images only
+                                or <span className="text-ios-blue font-medium">click to browse</span> — MP4/MOV/WebM and JPG/PNG/WebP up to 1GB
                             </p>
                         </div>
                         <input
                             ref={fileInputRef}
                             type="file"
                             multiple
-                            accept="video/*,image/*"
+                            accept="video/*,image/*,.mp4,.mov,.m4v,.webm,.mkv,.jpg,.jpeg,.png,.webp,.gif"
                             className="hidden"
                             onChange={(e) => {
                                 if (e.target.files) handleFiles(e.target.files);
@@ -185,7 +217,7 @@ export default function UploadPage() {
                                 if (e.target.files) await handleFolderFiles(e.target.files);
                                 e.target.value = '';
                             }}
-                            {...({ webkitdirectory: '', directory: '' } as any)}
+                            {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
                         />
                     </div>
 
@@ -246,7 +278,7 @@ export default function UploadPage() {
 
                                         {/* Icon */}
                                         <div className="w-12 h-12 rounded-xl bg-ios-gray-5 flex items-center justify-center text-ios-text flex-shrink-0">
-                                            {task.name.match(/\.(mp4|mov|mkv)$/i) ? <FileVideo size={24} className="opacity-70" /> : <ImageIcon size={24} className="opacity-70" />}
+                                            {task.name.match(/\.(mp4|mov|mkv|webm|m4v)$/i) ? <FileVideo size={24} className="opacity-70" /> : <ImageIcon size={24} className="opacity-70" />}
                                         </div>
 
                                         {/* Info */}
