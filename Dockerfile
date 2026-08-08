@@ -90,6 +90,19 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/pkg-types ./node_mod
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/confbox ./node_modules/confbox
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/dotenv ./node_modules/dotenv
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules/perfect-debounce ./node_modules/perfect-debounce
+# Second empirical pass (prisma@7.4.2): @prisma/dev pulls these at runtime
+# (db push / migrate deploy / config loading). Discovered by running the CLI
+# in a sandbox with only these packages until all MODULE_NOT_FOUND were gone.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/valibot ./node_modules/valibot
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/pathe ./node_modules/pathe
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/zeptomatch ./node_modules/zeptomatch
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/get-port-please ./node_modules/get-port-please
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/remeda ./node_modules/remeda
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/std-env ./node_modules/std-env
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/proper-lockfile ./node_modules/proper-lockfile
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/effect ./node_modules/effect
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/c12 ./node_modules/c12
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/deepmerge-ts ./node_modules/deepmerge-ts
 
 # Copy Prisma schema and config for runtime DB operations.
 # prisma.config.ts is REQUIRED by `prisma migrate deploy` in Prisma 7 (the CLI
