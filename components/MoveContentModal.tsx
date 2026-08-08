@@ -84,25 +84,26 @@ export default function MoveContentModal({ isOpen, onClose, itemsToMove, onMoveC
     const handleMove = async () => {
         setMoving(true);
         try {
-            const updates = itemsToMove.map(item => ({
-                id: item.id,
-                parent_id: selectedDestination
-            }));
-
-            for (const update of updates) {
-                const res = await fetch(`/api/content-items/${update.id}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ parent_id: selectedDestination })
-                });
-                if (!res.ok) throw new Error('Failed to move item');
+            // Single bulk request instead of N sequential PATCHes.
+            const res = await fetch('/api/content-items/bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'move',
+                    ids: itemsToMove.map(item => item.id),
+                    data: { parent_id: selectedDestination }
+                })
+            });
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error((json as { error?: string })?.error || 'Failed to move items');
             }
 
             onMoveComplete();
             onClose();
         } catch (error) {
             console.error('Move failed:', error);
-            alert('Failed to move items');
+            alert(error instanceof Error ? error.message : 'Failed to move items');
         } finally {
             setMoving(false);
         }
