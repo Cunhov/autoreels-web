@@ -28,6 +28,18 @@ export default function NewPost() {
         fetchChannels();
     }, []);
 
+    // Deep link from the calendar: /new?scheduled_at=YYYY-MM-DDTHH:MM pre-fills
+    // the schedule input. Read via window.location (no useSearchParams) so the
+    // page needs no Suspense boundary. Format is already datetime-local native.
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const params = new URLSearchParams(window.location.search);
+        const scheduled = params.get('scheduled_at');
+        if (scheduled && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(scheduled)) {
+            setScheduledAt(scheduled);
+        }
+    }, []);
+
     // Release the object URL when the preview changes or the page unmounts
     useEffect(() => {
         return () => {

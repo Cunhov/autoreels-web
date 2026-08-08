@@ -5,9 +5,11 @@ interface WeekViewProps {
     currentDate: Date;
     posts: Post[];
     onPostClick: (post: Post) => void;
+    /** Called when a day cell is clicked (empty days → deep link to /new). */
+    onDayClick?: (date: Date) => void;
 }
 
-export default function WeekView({ currentDate, posts, onPostClick }: WeekViewProps) {
+export default function WeekView({ currentDate, posts, onPostClick, onDayClick }: WeekViewProps) {
     const getWeekDays = (date: Date) => {
         const days = [];
         const startOfWeek = new Date(date);
@@ -52,7 +54,7 @@ export default function WeekView({ currentDate, posts, onPostClick }: WeekViewPr
                 {days.map((d, i) => {
                     const isToday = d.toDateString() === new Date().toDateString();
                     return (
-                        <div key={i} className="text-center flex flex-col items-center gap-1 group cursor-pointer">
+                        <div key={i} className="text-center flex flex-col items-center gap-1 group cursor-pointer" onClick={() => onDayClick?.(d)}>
                             <span className="text-[11px] font-bold text-ios-secondary uppercase tracking-widest opacity-80">
                                 {weekDays[d.getDay()]}
                             </span>

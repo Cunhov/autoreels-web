@@ -9,6 +9,7 @@ import { Post } from '@/app/types'
 import { useRouter } from 'next/navigation'
 import { ErrorModal, SuccessModal } from '@/components/Calendar/PostStatusModals';
 import DayDetailsModal from '@/components/Calendar/DayDetailsModal';
+import LocalPreviewModal from '@/components/Calendar/LocalPreviewModal';
 
 type FilterStatus = 'all' | 'published' | 'failed' | 'pending';
 
@@ -18,35 +19,42 @@ function toApiDate(date: Date) {
   return date.toISOString();
 }
 
-function getFetchWindow(currentDate: Date, viewMode: 'month' | 'week') {
-  const today = new Date();
-  let start: Date;
-  let end: Date;
-
+/** Range of the visible calendar (month: first day ± padding; week: week start + 14d). */
+function getVisibleRange(currentDate: Date, viewMode: 'month' | 'week') {
   if (viewMode === 'month') {
-    start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+    const start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
     start.setDate(start.getDate() - 7);
-    end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
+    const end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0, 23, 59, 59, 999);
     end.setDate(end.getDate() + 14);
-  } else {
-    start = new Date(currentDate);
-    start.setDate(start.getDate() - start.getDay());
-    start.setHours(0, 0, 0, 0);
-    end = new Date(start);
-    end.setDate(start.getDate() + 14);
-    end.setHours(23, 59, 59, 999);
+    return { start, end };
   }
+  const start = new Date(currentDate);
+  start.setDate(start.getDate() - start.getDay());
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 14);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
 
-  const todayStart = new Date(today);
-  todayStart.setHours(0, 0, 0, 0);
-  const upcomingEnd = new Date(today);
-  upcomingEnd.setDate(upcomingEnd.getDate() + 30);
-  upcomingEnd.setHours(23, 59, 59, 999);
+/** Upcoming strip range: today → today+30d (fetched separately so past months stay lean). */
+function getUpcomingRange() {
+  const today = new Date();
+  const start = new Date(today);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(today);
+  end.setDate(end.getDate() + 30);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
 
-  return {
-    start: new Date(Math.min(start.getTime(), todayStart.getTime())),
-    end: new Date(Math.max(end.getTime(), upcomingEnd.getTime())),
-  };
+/** Normalize the /api/calendar response into a Post[] (defensive: array or { posts: [...] }). */
+function normalizeCalendarData(data: unknown): Post[] {
+  if (Array.isArray(data)) return data as Post[];
+  if (data && typeof data === 'object' && Array.isArray((data as { posts?: unknown }).posts)) {
+    return (data as { posts: Post[] }).posts;
+  }
+  return [];
 }
 
 export default function CalendarPage() {
@@ -66,23 +74,49 @@ export default function CalendarPage() {
   const router = useRouter();
 
   const lastFetchRef = useRef(0);
+  const postsRef = useRef<Post[]>([]);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  // `today` is computed after mount so the Today bar / Upcoming strip never
+  // render during SSR (avoids hydration mismatches from wall-clock reads).
+  const [today, setToday] = useState<Date | null>(null);
+
+  useEffect(() => {
+    setToday(new Date());
+  }, []);
 
   const fetchPosts = useCallback(async () => {
-    setLoading(true);
+    const hasData = postsRef.current.length > 0;
+    // Keep the current data visible on refetch — spinner only on the first load.
+    setLoading(!hasData);
     lastFetchRef.current = Date.now();
     try {
-      const { start, end } = getFetchWindow(currentDate, viewMode);
-      const postsParams = new URLSearchParams({
-        start: toApiDate(start),
-        end: toApiDate(end),
-        limit: '1000',
-      });
-      const postsRes = await fetch(`/api/posts?${postsParams.toString()}`);
-      const postsData = await postsRes.json();
+      // Two parallel, lean fetches: the visible month/week range and the
+      // upcoming strip (today..+30d). Dedupe by id when they overlap.
+      const visible = getVisibleRange(currentDate, viewMode);
+      const upcoming = getUpcomingRange();
+      const visibleParams = new URLSearchParams({ start: toApiDate(visible.start), end: toApiDate(visible.end) });
+      const upcomingParams = new URLSearchParams({ start: toApiDate(upcoming.start), end: toApiDate(upcoming.end) });
+      const [visibleRes, upcomingRes] = await Promise.all([
+        fetch(`/api/calendar?${visibleParams.toString()}`),
+        fetch(`/api/calendar?${upcomingParams.toString()}`),
+      ]);
+      const [visibleData, upcomingData] = await Promise.all([visibleRes.json(), upcomingRes.json()]);
 
-      if (Array.isArray(postsData)) setPosts(postsData);
+      if (!visibleRes.ok || !upcomingRes.ok) {
+        throw new Error('Failed to load calendar data');
+      }
+
+      const merged = new Map<string, Post>();
+      [...normalizeCalendarData(visibleData), ...normalizeCalendarData(upcomingData)].forEach(p => {
+        if (p && p.id) merged.set(p.id, p);
+      });
+      const nextPosts = Array.from(merged.values());
+      postsRef.current = nextPosts;
+      setPosts(nextPosts);
+      setFetchError(null);
     } catch (err) {
       console.error('Error fetching data:', err);
+      setFetchError('Falha ao carregar os dados do calendário.');
     } finally {
       setLoading(false);
     }
@@ -123,36 +157,57 @@ export default function CalendarPage() {
     })();
   }, []);
 
-  const handlePrev = () => {
-    const newDate = new Date(currentDate);
+  const handlePrev = useCallback(() => {
     if (viewMode === 'month') {
-      newDate.setMonth(currentDate.getMonth() - 1);
+      // Navigate from the 1st of the month — fixes the day-31 month-skip rollover.
+      setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
     } else {
-      newDate.setDate(currentDate.getDate() - 7);
+      setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() - 7));
     }
-    setCurrentDate(newDate);
-  };
+  }, [currentDate, viewMode]);
 
-  const handleNext = () => {
-    const newDate = new Date(currentDate);
+  const handleNext = useCallback(() => {
     if (viewMode === 'month') {
-      newDate.setMonth(currentDate.getMonth() + 1);
+      setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
     } else {
-      newDate.setDate(currentDate.getDate() + 7);
+      setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() + 7));
     }
-    setCurrentDate(newDate);
-  };
+  }, [currentDate, viewMode]);
 
-  const handleToday = () => {
+  const handleToday = useCallback(() => {
     setCurrentDate(new Date());
-  }
+  }, []);
+
+  // Keyboard shortcuts: ←/→ change month, T jumps to today.
+  // Ignored while typing in inputs/textarea/selects or contentEditable.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        handlePrev();
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        handleNext();
+      } else if (e.key.toLowerCase() === 't') {
+        handleToday();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [handlePrev, handleNext, handleToday]);
 
   // Apply filters
   const filteredPosts = useMemo(() => {
     return posts.filter(p => {
       if (filterStatus !== 'all') {
         if (filterStatus === 'pending') {
-          if (p.status === 'published' || p.status === 'failed') return false;
+          // 'pending' bucket: pending/scheduled/processing — excludes published,
+          // failed AND cancelled (cancelled is a terminal state, not an active one).
+          if (['published', 'failed', 'cancelled'].includes(p.status)) return false;
         } else {
           if (p.status !== filterStatus) return false;
         }
@@ -161,6 +216,22 @@ export default function CalendarPage() {
       return true;
     });
   }, [posts, filterStatus, filterPlannerId]);
+
+  // Click on a day cell: empty day → deep link to /new with a pre-filled time;
+  // day with posts → open the DayDetailsModal.
+  const handleDayClick = useCallback((date: Date) => {
+    const dayPosts = filteredPosts.filter(p => {
+      if (!p.scheduled_at) return false;
+      const d = new Date(p.scheduled_at);
+      return d.getFullYear() === date.getFullYear() && d.getMonth() === date.getMonth() && d.getDate() === date.getDate();
+    });
+    if (dayPosts.length === 0) {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      router.push(`/new?scheduled_at=${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T12:00`);
+    } else {
+      setSelectedDay(date);
+    }
+  }, [filteredPosts, router]);
 
   const filterActive = filterStatus !== 'all' || filterPlannerId !== 'all';
 
@@ -266,9 +337,9 @@ export default function CalendarPage() {
         </div>
       )}
 
-      {/* Today's Summary Bar */}
-      {(() => {
-        const today = new Date();
+      {/* Today's Summary Bar — gated on `today` (set after mount) to avoid SSR
+          wall-clock reads that would cause hydration mismatches. */}
+      {today && (() => {
         const todayPosts = posts.filter(p => {
           if (!p.scheduled_at) return false;
           const d = new Date(p.scheduled_at);
@@ -276,7 +347,7 @@ export default function CalendarPage() {
         });
         const todayPublished = todayPosts.filter(p => p.status === 'published').length;
         const todayFailed = todayPosts.filter(p => p.status === 'failed').length;
-        const todayScheduled = todayPosts.filter(p => !['published', 'failed'].includes(p.status)).length;
+        const todayScheduled = todayPosts.filter(p => !['published', 'failed', 'cancelled'].includes(p.status)).length;
         if (todayPosts.length === 0) return null;
         return (
           <div className="relative z-10 bg-ios-card/60 backdrop-blur-md border-b border-ios-separator px-5 py-2.5 flex items-center gap-6 text-[13px]">
@@ -296,10 +367,10 @@ export default function CalendarPage() {
         );
       })()}
 
-      {/* Upcoming Posts Strip */}
-      {(() => {
+      {/* Upcoming Posts Strip — gated on `today` (see comment above). */}
+      {today && (() => {
         const upcoming = posts
-          .filter(p => p.scheduled_at && !['published', 'failed'].includes(p.status) && new Date(p.scheduled_at) > new Date())
+          .filter(p => p.scheduled_at && !['published', 'failed', 'cancelled'].includes(p.status) && new Date(p.scheduled_at) > today)
           .sort((a, b) => new Date(a.scheduled_at!).getTime() - new Date(b.scheduled_at!).getTime())
           .slice(0, 5);
         if (upcoming.length === 0) return null;
@@ -327,6 +398,16 @@ export default function CalendarPage() {
         );
       })()}
 
+      {/* Fetch error banner with retry */}
+      {fetchError && (
+        <div className="relative z-10 px-4 py-2 border-b border-ios-separator bg-red-50 dark:bg-red-950/30 flex items-center justify-between gap-3">
+          <p className="text-xs text-ios-red">{fetchError}</p>
+          <button onClick={fetchPosts} className="text-xs font-semibold text-ios-blue hover:underline shrink-0">
+            Tentar novamente
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-auto px-4 pb-10 pt-2 z-10 scrollbar-hide">
         {loading ? (
           <div className="flex items-center justify-center h-full">
@@ -338,13 +419,14 @@ export default function CalendarPage() {
               currentDate={currentDate}
               posts={filteredPosts}
               onPostClick={setSelectedPost}
-              onDayClick={setSelectedDay}
+              onDayClick={handleDayClick}
             />
           ) : (
             <WeekView
               currentDate={currentDate}
               posts={filteredPosts}
               onPostClick={setSelectedPost}
+              onDayClick={handleDayClick}
             />
           )
         )}
@@ -379,6 +461,14 @@ export default function CalendarPage() {
 
       {selectedPost && selectedPost.status === 'published' && (
         <SuccessModal
+          post={selectedPost}
+          onClose={() => setSelectedPost(null)}
+        />
+      )}
+
+      {/* Dead-click fix: pending/scheduled/processing posts open a local preview. */}
+      {selectedPost && !['failed', 'published'].includes(selectedPost.status) && (
+        <LocalPreviewModal
           post={selectedPost}
           onClose={() => setSelectedPost(null)}
         />

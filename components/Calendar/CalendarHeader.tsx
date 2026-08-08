@@ -74,7 +74,14 @@ export default function CalendarHeader({
                     </button>
                 </div>
 
-                <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                    {/* Explicit Today button (the month title also navigates home) */}
+                    <button
+                        onClick={onToday}
+                        className="text-xs font-semibold text-ios-blue bg-ios-blue/10 hover:bg-ios-blue/20 rounded-full px-3 py-1.5 transition-colors active:scale-95"
+                    >
+                        Today
+                    </button>
                     <div className="flex items-center gap-1">
                         <button
                             onClick={onPrev}

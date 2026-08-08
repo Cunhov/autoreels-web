@@ -93,6 +93,12 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                     }`}>
                                     {item.day}
                                 </span>
+                                {/* Count badge — derived from the already-fetched posts */}
+                                {dayPosts.length > 0 && (
+                                    <span className="text-[9px] font-bold text-ios-blue bg-ios-blue/10 border border-ios-blue/20 rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
+                                        {dayPosts.length}
+                                    </span>
+                                )}
                             </div>
 
                             <div className="flex-1 space-y-1.5 overflow-hidden">
