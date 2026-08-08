@@ -30,8 +30,10 @@ const INTERVAL_MS = INTERVAL_SEC * 1000;
 const ENDPOINT = `${APP_URL}/api/cron/publisher`;
 const BACKUP_ENDPOINT = `${APP_URL}/api/cron/backup`;
 const MAINTENANCE_ENDPOINT = `${APP_URL}/api/cron/maintenance`;
+const METRICS_ENDPOINT = `${APP_URL}/api/cron/metrics`;
 const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // attempt backup roughly every 6h
 const MAINTENANCE_INTERVAL_MS = 24 * 60 * 60 * 1000; // retention/cleanup roughly once a day
+const METRICS_INTERVAL_MS = 30 * 60 * 1000; // sync IG metrics roughly every 30 min
 
 // ── Coloured log helpers ───────────────────────────────────────────────────────
 const ts = () => new Date().toISOString();
@@ -127,6 +129,30 @@ async function maybeRunMaintenance() {
     }
 }
 
+// ── Metrics sync (30 min — idempotent route, self-gating) ─────────────────────
+let lastMetricsSyncAt = 0;
+
+async function maybeRunMetricsSync() {
+    if (Date.now() - lastMetricsSyncAt < METRICS_INTERVAL_MS) return;
+    lastMetricsSyncAt = Date.now();
+
+    log('▶ Syncing IG metrics...');
+    try {
+        const res = await fetch(METRICS_ENDPOINT, {
+            method: 'POST',
+            headers: { 'x-cron-auth': CRON_SECRET },
+        });
+        const body = await res.text().catch(() => '(no body)');
+        if (res.ok) {
+            log('✅ Metrics sync:', body);
+        } else {
+            err(`Metrics sync HTTP ${res.status}: ${body}`);
+        }
+    } catch (e) {
+        err('Metrics sync failed:', e.message);
+    }
+}
+
 // ── Main loop ──────────────────────────────────────────────────────────────────
 // Recursive setTimeout: the next run is only scheduled AFTER the previous one
 // finishes, so long runs never overlap.
@@ -134,6 +160,7 @@ async function loop() {
     await runPublisher();
     await maybeRunBackup();
     await maybeRunMaintenance();
+    await maybeRunMetricsSync();
     setTimeout(loop, INTERVAL_MS);
 }
 
