@@ -42,6 +42,10 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
             setCurrentImage(imageUrl);
             setAspect(initialAspectRatio);
             setActiveTool('crop');
+            // Reset crop state so a previous session's crop can't be re-applied
+            setCrop({ x: 0, y: 0 });
+            setZoom(1);
+            setCroppedAreaPixels(null);
             // Reset history
             setHistory([]);
             historyIndexRef.current = -1;
@@ -87,31 +91,48 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
         saveHistory(canvas);
     }, [saveHistory]);
 
-    const handleApplyCrop = async () => {
+    /**
+     * Apply the pending crop.
+     * Returns the cropped image data URL (or null if there is nothing to apply).
+     * State updates are async, so callers must use the RETURN VALUE — never the
+     * re-rendered canvas/currentImage — to read the cropped result.
+     */
+    const handleApplyCrop = useCallback(async (): Promise<string | null> => {
+        if (!croppedAreaPixels) return null;
         try {
             const croppedImage = await getCroppedImg(currentImage, croppedAreaPixels);
             if (croppedImage) {
                 setCurrentImage(croppedImage);
                 setActiveTool('move'); // Switch to editor mode
 
-                // Nuke the fabric canvas so it re-initializes with new image
-                if (fabricCanvasRef.current) {
-                    fabricCanvasRef.current.dispose();
-                    fabricCanvasRef.current = null;
+                // Nuke the fabric canvas so it re-initializes with the new image.
+                // In crop mode the FabricCanvas is unmounted and its cleanup already
+                // disposed it — guard against double-dispose and stale refs.
+                const prev = fabricCanvasRef.current;
+                fabricCanvasRef.current = null;
+                if (prev && !prev.disposed) {
+                    prev.dispose().catch(() => { /* already disposed */ });
                 }
+
                 // Reset history: the next canvas init (new image) will push a
                 // fresh initial state at index 0, so undo never crosses images.
                 setHistory([]);
                 historyIndexRef.current = -1;
                 setHistoryIndex(-1);
+
+                // The pending crop is now applied — clear it so it can never be
+                // re-applied on top of the already-cropped image (double-crop).
+                setCroppedAreaPixels(null);
+                return croppedImage;
             }
         } catch (e) {
             console.error('Crop failed', e);
         }
-    };
+        return null;
+    }, [croppedAreaPixels, currentImage]);
 
-    const handleAddText = async () => {
-        if (fabricCanvasRef.current) {
+    const handleAddText = useCallback(() => {
+        if (fabricCanvasRef.current && !fabricCanvasRef.current.disposed) {
             const text = new fabric.IText('Tap to edit', {
                 left: 100,
                 top: 100,
@@ -124,46 +145,62 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
             fabricCanvasRef.current.setActiveObject(text);
             setActiveTool('text');
         }
-    };
+    }, []);
 
-    const handleSave = () => {
+    /**
+     * Switch editor tool, applying any pending crop BEFORE leaving the crop tool
+     * so the Fabric canvas always mounts with the cropped image (not the original).
+     */
+    const switchTool = useCallback(async (tool: EditorTool) => {
+        if (tool === activeTool) return;
+        if (activeTool === 'crop' && tool !== 'crop' && croppedAreaPixels) {
+            await handleApplyCrop();
+        }
+        setActiveTool(tool);
+        if (tool === 'text') {
+            handleAddText();
+        }
+    }, [activeTool, croppedAreaPixels, handleApplyCrop, handleAddText]);
+
+    const handleSave = useCallback(async () => {
+        let result: string | null = null;
+
         if (activeTool === 'crop') {
-            // If actively cropping, apply crop first then save? Or just save current view?
-            // Usually users expect "Done" to mean "Apply Crop & Save"
-            handleApplyCrop().then(() => {
-                // The handleApplyCrop updates currentImage, but it's async state. 
-                // We might need a ref or effect. For now, let's assume specific "Apply" button is used for crop.
-
-                // If we are just cropping and haven't initialized fabric, currentImage is mostly fine but we need the crop result.
-                // If we want to save the final result:
-                // If activeTool is crop, we assume the user is happy with the crop OR they should have clicked 'Apply'.
-                // Let's force apply crop if in crop mode?
-                // Or better: Use the canvas output.
-
-                // NOTE: If we are in crop mode, we haven't 'applied' it to a canvas yet.
-                // We should probably prompt to apply or better yet, just return the cropped image.
-            });
+            // Apply any pending crop so the saved image includes it. handleApplyCrop
+            // returns the cropped data URL directly (state is async, so we can't
+            // rely on the re-rendered canvas/currentImage yet).
+            result = await handleApplyCrop();
+            if (!result) {
+                // No crop area was set — export the current image as-is.
+                result = currentImage;
+            }
+            if (result) {
+                onSave(result);
+                onClose();
+            }
+            return;
         }
 
-        // If we have a fabric canvas, export it
-        if (fabricCanvasRef.current) {
-            const dataUrl = fabricCanvasRef.current.toDataURL({
-                format: 'png',
-                quality: 0.9,
-                multiplier: 1,
-            });
-            onSave(dataUrl);
+        // Editor mode: export the live Fabric canvas (draw/text edits).
+        if (fabricCanvasRef.current && !fabricCanvasRef.current.disposed) {
+            try {
+                result = fabricCanvasRef.current.toDataURL({
+                    format: 'png',
+                    quality: 0.9,
+                    multiplier: 1,
+                });
+            } catch (e) {
+                console.error('Canvas export failed', e);
+                result = null;
+            }
+        }
+        if (!result) result = currentImage;
+
+        if (result) {
+            onSave(result);
             onClose();
-        } else if (activeTool === 'crop' && croppedAreaPixels) {
-            // Only crop was done
-            getCroppedImg(currentImage, croppedAreaPixels).then(img => {
-                if (img) {
-                    onSave(img);
-                    onClose();
-                }
-            });
         }
-    };
+    }, [activeTool, currentImage, handleApplyCrop, onSave, onClose]);
 
     if (!isOpen) return null;
 
@@ -232,7 +269,7 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
                 {/* Footer Toolbar */}
                 <div className="h-20 bg-black/50 backdrop-blur-md border-t border-white/10 flex items-center justify-center gap-8 pb-4">
                     <button
-                        onClick={() => setActiveTool('crop')}
+                        onClick={() => switchTool('crop')}
                         className={`flex flex-col items-center gap-1 ${activeTool === 'crop' ? 'text-ios-blue' : 'text-white/60 hover:text-white'}`}
                     >
                         <div className={`p-2 rounded-xl ${activeTool === 'crop' ? 'bg-white/10' : ''}`}>
@@ -242,7 +279,7 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
                     </button>
 
                     <button
-                        onClick={() => { setActiveTool('draw'); }}
+                        onClick={() => switchTool('draw')}
                         className={`flex flex-col items-center gap-1 ${activeTool === 'draw' ? 'text-ios-blue' : 'text-white/60 hover:text-white'}`}
                     >
                         <div className={`p-2 rounded-xl ${activeTool === 'draw' ? 'bg-white/10' : ''}`}>
@@ -252,7 +289,7 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
                     </button>
 
                     <button
-                        onClick={() => { setActiveTool('text'); handleAddText(); }}
+                        onClick={() => switchTool('text')}
                         className={`flex flex-col items-center gap-1 ${activeTool === 'text' ? 'text-ios-blue' : 'text-white/60 hover:text-white'}`}
                     >
                         <div className={`p-2 rounded-xl ${activeTool === 'text' ? 'bg-white/10' : ''}`}>
