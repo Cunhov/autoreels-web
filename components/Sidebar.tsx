@@ -4,7 +4,7 @@ import { Calendar, BarChart2, Radio, Sliders, PlusSquare, Folder, LogOut, Search
 import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
-import { useUpload } from '@/contexts/UploadContext';
+import { useUploadTasks } from '@/contexts/UploadContext';
 
 interface NavBadges {
     failedPosts: number;
@@ -19,7 +19,7 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
     const pathname = usePathname();
     const { data: session } = useSession();
     const [badges, setBadges] = useState<NavBadges>({ failedPosts: 0, activePlanners: 0 });
-    const { tasks: uploadTasks } = useUpload(); // Get global upload tasks
+    const { tasks: uploadTasks } = useUploadTasks(); // Get global upload tasks
 
     const isActive = (path: string) => pathname === path;
 

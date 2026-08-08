@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { Upload, X, Radio, Calendar as CalendarIcon } from 'lucide-react';
+import { useUploadActions } from '@/contexts/UploadContext';
 
 interface Channel {
     id: string;
@@ -10,11 +11,10 @@ interface Channel {
     platform: string;
 }
 
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB — must match server-side chunk convention
-
 export default function NewPost() {
     const router = useRouter();
     const { data: session } = useSession();
+    const { uploadAndWait } = useUploadActions();
     const [channels, setChannels] = useState<Channel[]>([]);
     const [selectedChannel, setSelectedChannel] = useState('');
     const [scheduledAt, setScheduledAt] = useState('');
@@ -56,42 +56,8 @@ export default function NewPost() {
         e.target.value = '';
     };
 
-    // Upload a file using the chunked local API (/api/upload-chunk) with retries
-    const uploadChunked = async (targetPath: string, fileToUpload: File) => {
-        const totalChunks = Math.ceil(fileToUpload.size / CHUNK_SIZE);
-        for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-            const start = chunkIndex * CHUNK_SIZE;
-            const end = Math.min(start + CHUNK_SIZE, fileToUpload.size);
-            const chunk = fileToUpload.slice(start, end);
-
-            let retries = 0;
-            let success = false;
-            while (!success && retries < 3) {
-                try {
-                    const uploadRes = await fetch('/api/upload-chunk', {
-                        method: 'POST',
-                        headers: {
-                            'x-chunk-index': chunkIndex.toString(),
-                            'x-total-chunks': totalChunks.toString(),
-                            'x-file-name': targetPath,
-                            'Content-Type': 'application/octet-stream',
-                        },
-                        body: chunk,
-                    });
-                    if (!uploadRes.ok) {
-                        const err = await uploadRes.json().catch(() => ({})) as { error?: string };
-                        throw new Error(err.error || `Failed to upload chunk ${chunkIndex + 1}/${totalChunks}`);
-                    }
-                    success = true;
-                } catch (err) {
-                    retries++;
-                    if (retries >= 3) throw err;
-                    await new Promise(r => setTimeout(r, 1000 * retries));
-                }
-            }
-        }
-    };
-
+    // Upload the file via the global upload queue (chunked, resumable).
+    // uploadAndWait enqueues the file and resolves when the task finishes.
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!file) return;
@@ -101,34 +67,16 @@ export default function NewPost() {
 
         try {
             if (!session?.user) throw new Error('You must be logged in to create a post.');
-            const userId = (session.user as { id?: string }).id;
-            if (!userId) throw new Error('You must be logged in to create a post.');
 
-            // 1. Upload the file in chunks to the local filesystem (data/uploads)
-            const folderPath = 'admin';
-            const targetPath = `${folderPath}/${file.name}`;
-            await uploadChunked(targetPath, file);
-
-            // 2. Finalize metadata (creates the ContentItem record)
-            const formData = new FormData();
-            formData.append('filename', file.name);
-            formData.append('size', file.size.toString());
-            formData.append('path', targetPath);
-            formData.append('folderPath', folderPath);
-            formData.append('type', 'video');
-
-            const metaRes = await fetch('/api/upload-chunk/complete', {
-                method: 'POST',
-                body: formData,
-            });
-            if (!metaRes.ok) {
-                const metaErr = await metaRes.json().catch(() => ({})) as { error?: string };
-                throw new Error(metaErr.error || 'Failed to save file metadata');
+            // 1. Upload the file through the global upload queue (root folder)
+            const results = await uploadAndWait([file], { folderId: null });
+            const first = results[0];
+            if (!first || first.error || !first.item?.url) {
+                throw new Error(first?.error || 'Failed to upload video');
             }
-            const metaData = await metaRes.json();
-            const videoUrl = metaData?.item?.url || `/api/file/${userId}/${folderPath}/${encodeURIComponent(file.name)}`;
+            const videoUrl = first.item.url as string;
 
-            // 3. Create the post record (scheduled_at as ISO; publish now if empty)
+            // 2. Create the post record (scheduled_at as ISO; publish now if empty)
             const res = await fetch('/api/posts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
