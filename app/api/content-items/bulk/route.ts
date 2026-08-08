@@ -4,8 +4,75 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { buildContentWhere } from "../route";
-import { deleteFileFromDisk, buildDiskPath, extractUploadPathFromUrl } from "@/lib/deleteFiles";
+import { deleteFileFromDisk, collectItemFiles } from "@/lib/deleteFiles";
 import { cleanPathSegment } from "@/lib/upload-path";
+
+// SQLite has a hard limit on bind variables per statement (~999 by default;
+// Prisma also materializes the IN list). Keep IN batches well below that.
+const IN_BATCH_SIZE = 500;
+// Keep rename transactions small to avoid long-lived write locks on SQLite.
+const RENAME_BATCH_SIZE = 200;
+const MAX_COLLECT_ITEMS = 10_000;
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) {
+        chunks.push(arr.slice(i, i + size));
+    }
+    return chunks;
+}
+
+interface FileInfo {
+    id: string;
+    url: string | null;
+    thumbnail_url: string | null;
+    name: string | null;
+    path: string | null;
+    type: string;
+}
+
+/**
+ * Recursively collect all descendants of the given items (any depth) plus the
+ * items themselves, with the fields needed for disk cleanup.
+ */
+async function collectWithDescendants(roots: FileInfo[]): Promise<Array<{ url: string | null; thumbnail_url: string | null; name: string | null; path: string | null }>> {
+    const collected: Array<{ url: string | null; thumbnail_url: string | null; name: string | null; path: string | null }> =
+        roots.map((r) => ({ url: r.url, thumbnail_url: r.thumbnail_url, name: r.name, path: r.path }));
+
+    let currentLevel = roots.map((r) => r.id);
+    let guard = 0;
+
+    while (currentLevel.length > 0 && guard < 20) {
+        const level = await prisma.contentItem.findMany({
+            where: { parent_id: { in: currentLevel } },
+            select: {
+                id: true,
+                url: true,
+                thumbnail_url: true,
+                name: true,
+                path: true,
+            },
+        });
+        if (level.length === 0) break;
+
+        collected.push(...level.map((c) => ({
+            url: c.url ?? null,
+            thumbnail_url: c.thumbnail_url ?? null,
+            name: c.name ?? null,
+            path: c.path ?? null,
+        })));
+
+        if (collected.length > MAX_COLLECT_ITEMS) {
+            console.warn(`[bulk] Descendant collection exceeded ${MAX_COLLECT_ITEMS} items; truncating.`);
+            break;
+        }
+
+        currentLevel = level.map((c) => c.id);
+        guard++;
+    }
+
+    return collected;
+}
 
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
@@ -18,7 +85,7 @@ export async function POST(req: Request) {
         const body = await req.json();
         const { action, ids, all, filters, data } = body;
         // action: "delete" | "move" | "rename"
-        // ids: string[]           — explicit item IDs
+        // ids: string[]           — explicit item IDs (order matters for rename)
         // all: boolean            — select all matching items
         // filters: object         — query-param-like filters when all=true
         // data: object            — payload for move/rename
@@ -28,15 +95,17 @@ export async function POST(req: Request) {
         }
 
         // Resolve the set of target IDs
-        let targetIds: string[] = ids || [];
+        let targetIds: string[] = Array.isArray(ids) ? ids.filter(Boolean) : [];
 
         if (all) {
-            // Build a where clause from the filters to find all matching IDs
+            // Build a where clause from the filters to find all matching IDs.
+            // Order by created_at so "all" operations have a deterministic order.
             const filterParams = new URLSearchParams(filters || {});
             const where = buildContentWhere(userId, filterParams);
             const allItems = await prisma.contentItem.findMany({
                 where,
                 select: { id: true },
+                orderBy: { created_at: "asc" },
             });
             targetIds = allItems.map((item: { id: string }) => item.id);
         }
@@ -53,50 +122,29 @@ export async function POST(req: Request) {
                 // Fetch items with their file info
                 const itemsToDelete = await prisma.contentItem.findMany({
                     where: ownershipWhere,
-                    select: { id: true, name: true, path: true, type: true, thumbnail_url: true },
+                    select: {
+                        id: true,
+                        url: true,
+                        thumbnail_url: true,
+                        name: true,
+                        path: true,
+                        type: true,
+                    },
                 });
 
-                // Collect all disk paths to delete
-                const diskPaths: string[] = [];
+                // Recursively collect every descendant's files (any depth)
+                const allItems = await collectWithDescendants(itemsToDelete);
 
-                // Add direct item files (non-folder types)
-                for (const item of itemsToDelete) {
-                    if (item.type !== "carousel_folder" && item.name) {
-                        const diskPath = buildDiskPath(userId, item.path, item.name);
-                        if (diskPath) diskPaths.push(diskPath);
-                    }
-                    const thumb = extractUploadPathFromUrl(item.thumbnail_url);
-                    if (thumb) {
-                        diskPaths.push(thumb);
-                    }
-                }
+                const diskPaths = allItems.flatMap((item) => collectItemFiles(userId, item));
 
-                // Collect children of carousel folders
-                const folderIds = itemsToDelete
-                    .filter((item: { type: string }) => item.type === "carousel_folder")
-                    .map((item: { id: string }) => item.id);
-
-                if (folderIds.length > 0) {
-                    const descendants = await prisma.contentItem.findMany({
-                        where: { parent_id: { in: folderIds } },
-                        select: { name: true, path: true, thumbnail_url: true },
+                // Delete from DB in batches (SQLite bind-variable limit)
+                let deleted = 0;
+                for (const batch of chunkArray(targetIds, IN_BATCH_SIZE)) {
+                    const result = await prisma.contentItem.deleteMany({
+                        where: { id: { in: batch }, user_id: userId },
                     });
-                    for (const d of descendants) {
-                        if (d.name) {
-                            const diskPath = buildDiskPath(userId, d.path, d.name);
-                            if (diskPath) diskPaths.push(diskPath);
-                        }
-                        const thumb = extractUploadPathFromUrl(d.thumbnail_url);
-                        if (thumb) {
-                            diskPaths.push(thumb);
-                        }
-                    }
+                    deleted += result.count;
                 }
-
-                // Delete from DB (cascade handles children records)
-                const result = await prisma.contentItem.deleteMany({
-                    where: ownershipWhere,
-                });
 
                 // Best-effort direct file cleanup
                 if (diskPaths.length > 0) {
@@ -105,7 +153,7 @@ export async function POST(req: Request) {
                     );
                 }
 
-                return NextResponse.json({ affected: result.count });
+                return NextResponse.json({ affected: deleted });
             }
 
             case "move": {
@@ -121,7 +169,7 @@ export async function POST(req: Request) {
                 if (targetParentId !== null) {
                     const parent = await prisma.contentItem.findFirst({
                         where: { id: targetParentId, user_id: userId },
-                        select: { id: true },
+                        select: { id: true, type: true },
                     });
                     if (!parent) {
                         return NextResponse.json(
@@ -129,13 +177,24 @@ export async function POST(req: Request) {
                             { status: 400 }
                         );
                     }
+                    // Destination must be a folder-like item
+                    if (parent.type !== "folder" && parent.type !== "carousel_folder") {
+                        return NextResponse.json(
+                            { error: "Destination is not a folder" },
+                            { status: 400 }
+                        );
+                    }
                 }
 
-                const result = await prisma.contentItem.updateMany({
-                    where: ownershipWhere,
-                    data: { parent_id: targetParentId },
-                });
-                return NextResponse.json({ affected: result.count });
+                let affected = 0;
+                for (const batch of chunkArray(targetIds, IN_BATCH_SIZE)) {
+                    const result = await prisma.contentItem.updateMany({
+                        where: { id: { in: batch }, user_id: userId },
+                        data: { parent_id: targetParentId },
+                    });
+                    affected += result.count;
+                }
+                return NextResponse.json({ affected });
             }
 
             case "rename": {
@@ -152,24 +211,32 @@ export async function POST(req: Request) {
                     return NextResponse.json({ error: "Invalid rename prefix" }, { status: 400 });
                 }
 
-                // For rename, we need ordering, so fetch items in order
+                // Fetch items, then sort by their position in the received id
+                // array so the numeric suffix follows the user's click order.
                 const itemsToRename = await prisma.contentItem.findMany({
                     where: ownershipWhere,
-                    orderBy: { name: "asc" },
                     select: { id: true },
                 });
 
-                // Use a transaction for atomicity
-                await prisma.$transaction(
-                    itemsToRename.map((item: { id: string }, i: number) =>
-                        prisma.contentItem.update({
-                            where: { id: item.id },
-                            data: {
-                                name: `${cleanPrefix}_${String(i + 1).padStart(3, "0")}`,
-                            },
-                        })
-                    )
+                const position = new Map(targetIds.map((id, i) => [id, i]));
+                itemsToRename.sort(
+                    (a, b) => (position.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (position.get(b.id) ?? Number.MAX_SAFE_INTEGER)
                 );
+
+                // Apply in small transactions (avoids long write locks on SQLite)
+                for (const [batchIndex, batch] of chunkArray(itemsToRename, RENAME_BATCH_SIZE).entries()) {
+                    const globalStart = batchIndex * RENAME_BATCH_SIZE;
+                    await prisma.$transaction(
+                        batch.map((item: { id: string }, j: number) =>
+                            prisma.contentItem.update({
+                                where: { id: item.id },
+                                data: {
+                                    name: `${cleanPrefix}_${String(globalStart + j + 1).padStart(3, "0")}`,
+                                },
+                            })
+                        )
+                    );
+                }
 
                 return NextResponse.json({ affected: itemsToRename.length });
             }
