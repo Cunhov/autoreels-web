@@ -5,6 +5,7 @@ import {
 	useUploadActions,
 	UploadTask,
 } from "@/contexts/UploadContext";
+import { collectDroppedFiles } from "@/lib/upload-drop";
 import { useRef, useState, useCallback } from "react";
 import {
 	Plus,
@@ -16,7 +17,6 @@ import {
 	CheckCircle2,
 	CloudUpload,
 	Tag,
-	FolderOpen,
 } from "lucide-react";
 
 export default function UploadPage() {
@@ -28,7 +28,6 @@ export default function UploadPage() {
 	const [tags, setTags] = useState<string[]>([]);
 	const [tagInput, setTagInput] = useState("");
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const folderInputRef = useRef<HTMLInputElement>(null);
 
 	// Drag state
 	const [isDragging, setIsDragging] = useState(false);
@@ -99,19 +98,23 @@ export default function UploadPage() {
 	);
 
 	const handleDrop = useCallback(
-		(e: React.DragEvent) => {
+		async (e: React.DragEvent) => {
 			e.preventDefault();
 			setIsDragging(false);
 
-			const files = e.dataTransfer.files;
-			const fileArray = Array.from(files);
+			// Rebuild folder structure (webkitRelativePath) via the Entry API —
+			// Chrome leaves it empty on folder drops, which would flatten
+			// carousel folders into loose files.
+			const fileArray = await collectDroppedFiles(e.dataTransfer);
+			if (fileArray.length === 0) return;
+
 			const hasFolderStructure = fileArray.some(
 				(f) => f.webkitRelativePath && f.webkitRelativePath.includes("/"),
 			);
 
 			if (hasFolderStructure) {
-				handleFolderFiles(fileArray);
-			} else if (fileArray.length > 0) {
+				await handleFolderFiles(fileArray);
+			} else {
 				handleFiles(fileArray);
 			}
 		},
@@ -216,9 +219,9 @@ export default function UploadPage() {
 					</div>
 				)}
 
-				{/* Upload Area — Drop Zone + Tags */}
+				{/* Upload Area — single drop zone (files + folders) */}
 				<div className="bg-ios-card dark:bg-[#1C1C1E] border border-ios-separator rounded-2xl overflow-hidden shadow-sm">
-					{/* Drop Zone */}
+					{/* Drop Zone: drop files/folders OR click to browse files */}
 					<div
 						onDrop={handleDrop}
 						onDragOver={handleDragOver}
@@ -237,14 +240,20 @@ export default function UploadPage() {
 								strokeWidth={1.5}
 							/>
 							<h3 className="text-[17px] font-semibold text-ios-text mb-1">
-								{isDragging ? "Drop files here" : "Drag & drop files to upload"}
+								{isDragging
+									? "Drop here"
+									: "Drag & drop files or folders"}
 							</h3>
 							<p className="text-[14px] text-ios-text-secondary">
 								or{" "}
 								<span className="text-ios-blue font-medium">
 									click to browse
 								</span>{" "}
-								— MP4/MOV/WebM and JPG/PNG/WebP up to 1GB
+								— videos & images up to 1GB
+							</p>
+							<p className="text-[12px] text-ios-text-secondary mt-2">
+								Folders with 2+ files become carousels · add a .txt for the
+								caption
 							</p>
 						</div>
 						<input
@@ -257,37 +266,6 @@ export default function UploadPage() {
 								if (e.target.files) handleFiles(e.target.files);
 								e.target.value = "";
 							}}
-						/>
-					</div>
-
-					{/* Folder Upload Button */}
-					<div className="px-4 py-3 border-b border-ios-separator flex items-center gap-3">
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								folderInputRef.current?.click();
-							}}
-							className="flex items-center gap-2 px-4 py-2 bg-ios-gray-5 text-ios-text text-[14px] font-medium rounded-xl hover:bg-ios-gray-4 transition-all"
-						>
-							<FolderOpen size={16} />
-							Upload Folder (Carousel)
-						</button>
-						<span className="text-[13px] text-ios-text-secondary">
-							Folders with 2+ files become carousels. Drop/select multiple
-							folders at once. Include a .txt for caption.
-						</span>
-						<input
-							ref={folderInputRef}
-							type="file"
-							className="hidden"
-							onChange={async (e) => {
-								if (e.target.files) await handleFolderFiles(e.target.files);
-								e.target.value = "";
-							}}
-							{...({
-								webkitdirectory: "",
-								directory: "",
-							} as React.InputHTMLAttributes<HTMLInputElement>)}
 						/>
 					</div>
 

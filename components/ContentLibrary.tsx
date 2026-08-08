@@ -11,10 +11,11 @@ import {
     ExternalLink, Eye, CornerDownRight, AlertCircle, Globe
 } from 'lucide-react';
 import IOSButton from './IOSButton';
-import { useDropzone } from 'react-dropzone';
+import { useDropzone, type DropEvent, type FileRejection } from 'react-dropzone';
 import { useRouter, useSearchParams } from 'next/navigation';
 import MoveContentModal from './MoveContentModal';
 import { useUploadActions } from '@/contexts/UploadContext';
+import { collectDroppedFiles } from '@/lib/upload-drop';
 import IOSToast, { ToastType } from './IOSToast';
 import { useRef } from 'react';
 import EditContentModal from './EditContentModal';
@@ -68,7 +69,7 @@ function normalizeTags(raw: unknown): string[] {
     return [];
 }
 
-function normalizeItem(item: any): ContentItem {
+function normalizeItem(item: ContentItem): ContentItem {
     return { ...item, tags: normalizeTags(item.tags) };
 }
 
@@ -685,7 +686,7 @@ export default function ContentLibrary({
             // Ignore responses from requests that were superseded
             if (controller.signal.aborted) return;
 
-            setItems((data as any[]).map(normalizeItem));
+            setItems((data as ContentItem[]).map(normalizeItem));
             if (keepSelection) {
                 // Keep only the ids that still exist in the refreshed page
                 const visibleIds = new Set((data as ContentItem[]).map(i => i.id));
@@ -722,7 +723,7 @@ export default function ContentLibrary({
             // Stale response after navigating away — discard it
             if (folderAtStart !== currentFolderId) return;
 
-            setItems(prev => [...prev, ...(data as any[]).map(normalizeItem)]);
+            setItems(prev => [...prev, ...(data as ContentItem[]).map(normalizeItem)]);
             setTotalCount(json.totalCount ?? (items.length + data.length));
             setHasMore(json.hasMore ?? false);
             setCurrentOffset(prev => prev + PAGE_SIZE);
@@ -750,17 +751,30 @@ export default function ContentLibrary({
     // Actions (Upload, Drop, Create Folder)
     // -------------------------------------------------------------------------
 
-    const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    const onDrop = useCallback(async (acceptedFiles: File[], _rejections: FileRejection[] = [], event?: DropEvent) => {
         try {
             if (!session?.user || acceptedFiles.length === 0) return;
 
+            // Rebuild folder structure (webkitRelativePath) via the Entry API —
+            // Chrome leaves it empty on folder drops, which would flatten
+            // carousel folders into loose files.
+            let files = acceptedFiles;
+            try {
+                if (event && 'dataTransfer' in event && event.dataTransfer) {
+                    const collected = await collectDroppedFiles(event.dataTransfer);
+                    if (collected.length > 0) files = collected;
+                }
+            } catch {
+                // keep acceptedFiles
+            }
+
             // Detect if any files have webkitRelativePath (folder upload)
-            const hasFolderStructure = acceptedFiles.some(f => (f as any).webkitRelativePath && (f as any).webkitRelativePath.includes('/'));
+            const hasFolderStructure = files.some(f => f.webkitRelativePath && f.webkitRelativePath.includes('/'));
 
             if (hasFolderStructure) {
-                await addFolderFiles(acceptedFiles, currentFolderId || null);
+                await addFolderFiles(files, currentFolderId || null);
             } else {
-                addFiles(acceptedFiles, currentFolderId || null);
+                addFiles(files, currentFolderId || null);
             }
 
             setToast({ msg: 'Uploads queued. Check the Uploads tab for details.', show: true, type: 'info' });
@@ -1044,9 +1058,9 @@ export default function ContentLibrary({
             setImageEditorItem(null);
             // Refresh so the new item appears once the queue completes it.
             fetchContent(currentFolderId, { keepSelection: true });
-        } catch (error: any) {
+        } catch (error) {
             console.error('Save failed:', error);
-            setToast({ msg: 'Failed to save image: ' + (error?.message || 'unknown error'), type: 'error', show: true });
+            setToast({ msg: 'Failed to save image: ' + ((error as Error)?.message || 'unknown error'), type: 'error', show: true });
         }
     }, [imageEditorItem, currentFolderId, addFiles, fetchContent]);
 
@@ -1107,7 +1121,12 @@ export default function ContentLibrary({
         if (!confirm(`Delete ${count} items? This cannot be undone.`)) return;
         try {
             setBulkLoading(true);
-            const body: any = { action: 'delete' };
+            const body: {
+                action: string;
+                all?: boolean;
+                filters?: Record<string, string>;
+                ids?: string[];
+            } = { action: 'delete' };
             if (selectAllServer) {
                 body.all = true;
                 body.filters = buildFilterParams();
@@ -1274,7 +1293,7 @@ export default function ContentLibrary({
                         {/* Sort Dropdown — always visible */}
                         <select
                             value={sortBy}
-                            onChange={(e) => setSortBy(e.target.value as any)}
+                            onChange={(e) => setSortBy(e.target.value as SortOption)}
                             title="Sort order"
                             aria-label="Sort order"
                             className="text-xs bg-ios-card border border-ios-separator rounded-lg px-2 py-1.5 focus:border-ios-blue outline-none"
