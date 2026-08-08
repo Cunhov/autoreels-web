@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { Post } from '@/app/types';
 import IOSButton from '@/components/IOSButton';
+import LocalPreviewModal from '@/components/Calendar/LocalPreviewModal';
 
 interface DayDetailsModalProps {
     date: Date;
@@ -28,60 +29,16 @@ function toLocalInputValue(iso: string): string {
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** Full-screen local preview for scheduled/pending posts (not yet on Instagram) */
-function LocalPreviewModal({ post, onClose }: { post: Post; onClose: () => void }) {
-    return (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
-            <button
-                onClick={onClose}
-                className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors z-10"
-                title="Close preview"
-            >
-                <X size={22} />
-            </button>
-
-            <div className="w-full max-w-md flex flex-col items-center gap-4 p-4">
-                {/* Media */}
-                <div className="w-full aspect-[9/16] max-h-[70vh] bg-black rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center">
-                    {post.video_url ? (
-                        <video
-                            src={post.video_url}
-                            className="w-full h-full object-contain"
-                            controls
-                            autoPlay
-                            playsInline
-                        />
-                    ) : post.image_url || post.thumbnail_url ? (
-                        <img
-                            src={post.image_url || post.thumbnail_url}
-                            className="w-full h-full object-contain"
-                            alt="Post preview"
-                        />
-                    ) : (
-                        <div className="text-white/50 text-sm">No media available</div>
-                    )}
-                </div>
-
-                {/* Info */}
-                <div className="bg-white/10 rounded-xl p-4 w-full text-white space-y-2">
-                    <div className="flex items-center gap-2 text-xs text-white/60">
-                        <Clock size={12} />
-                        Scheduled for {new Date(post.scheduled_at).toLocaleString()}
-                    </div>
-                    {post.caption && (
-                        <p className="text-sm leading-relaxed text-white/90 line-clamp-4">{post.caption}</p>
-                    )}
-                    <span className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide
-                        ${post.status === 'published' ? 'bg-green-500/30 text-green-300' :
-                            post.status === 'failed' ? 'bg-red-500/30 text-red-300' :
-                                'bg-gray-500/30 text-gray-300'}`}>
-                        {post.status.replace('_', ' ')}
-                    </span>
-                </div>
-            </div>
-        </div>
-    );
+/** Current local wall-clock as a `<input type="datetime-local">` value (for `min`). */
+function toLocalNowValue(): string {
+    return toLocalInputValue(new Date().toISOString());
 }
+
+/** Full-screen local preview for scheduled/pending posts (not yet on Instagram) —
+ *  now imported from components/Calendar/LocalPreviewModal.tsx (shared with the
+ *  calendar page for the pending/scheduled dead-click fix). */
+
+/** Compact modal to pick a new schedule for a post. Empty value = publish on the next cron tick. */
 
 /** Compact modal to pick a new schedule for a post. Empty value = publish on the next cron tick. */
 function RescheduleModal({
@@ -89,11 +46,14 @@ function RescheduleModal({
     onClose,
     onConfirm,
     busy,
+    error,
 }: {
     post: Post;
     onClose: () => void;
     onConfirm: (value: string) => void;
     busy: boolean;
+    /** Validation / request error — keeps the modal open with the typed value. */
+    error: string | null;
 }) {
     const [value, setValue] = useState(post.scheduled_at ? toLocalInputValue(post.scheduled_at) : '');
 
@@ -116,9 +76,15 @@ function RescheduleModal({
                     <input
                         type="datetime-local"
                         value={value}
+                        min={toLocalNowValue()}
                         onChange={(e) => setValue(e.target.value)}
                         className="w-full rounded-xl border border-ios-separator bg-ios-background px-3 py-2.5 text-sm text-ios-text focus:outline-none focus:ring-2 focus:ring-ios-blue/40"
                     />
+                    {error && (
+                        <p className="text-xs text-ios-red bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800/40 rounded-lg px-3 py-2">
+                            {error}
+                        </p>
+                    )}
                     <div className="flex gap-2 pt-1">
                         <IOSButton onClick={onClose} variant="secondary" className="flex-1" disabled={busy}>
                             Cancelar
@@ -136,6 +102,7 @@ function RescheduleModal({
 export default function DayDetailsModal({ date, posts, onClose, onPostClick, onPostsChanged }: DayDetailsModalProps) {
     const [previewPost, setPreviewPost] = useState<Post | null>(null);
     const [reschedulePost, setReschedulePost] = useState<Post | null>(null);
+    const [rescheduleError, setRescheduleError] = useState<string | null>(null);
     const [confirmingCancelId, setConfirmingCancelId] = useState<string | null>(null);
     const [busyId, setBusyId] = useState<string | null>(null);
     const [feedback, setFeedback] = useState<Feedback>(null);
@@ -214,18 +181,34 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
 
     const handleRescheduleSubmit = async (post: Post, value: string) => {
         setBusyId(post.id);
-        setReschedulePost(null);
+        setRescheduleError(null);
         try {
             if (value) {
-                await patchPost(post, { scheduled_at: new Date(value).toISOString() });
+                const d = new Date(value);
+                if (Number.isNaN(d.getTime()) || d.getTime() <= Date.now()) {
+                    // Keep the modal open with the typed value; no request made.
+                    setRescheduleError('Escolha uma data/hora futura.');
+                    return;
+                }
+                await patchPost(post, { scheduled_at: d.toISOString() });
                 showFeedback('success', 'Post reagendado');
             } else {
-                await patchPost(post, { status: 'pending' });
+                // Publish now: always clear the schedule so the cron picks it up on
+                // the next tick — even if the post still has a future scheduled_at.
+                await patchPost(post, { status: 'pending', scheduled_at: null });
                 showFeedback('success', 'Post re-enfileirado (próximo ciclo)');
             }
+            // Only close on success — a failed request keeps the modal open so the
+            // user's typed value is not lost.
+            setReschedulePost(null);
             onPostsChanged?.();
         } catch (e) {
-            showFeedback('error', (e as Error).message);
+            const msg = (e as Error).message;
+            setRescheduleError(
+                msg.includes('retried in its current status')
+                    ? 'Este post já está pendente — será publicado no próximo ciclo do agendador.'
+                    : msg
+            );
         } finally {
             setBusyId(null);
         }
@@ -467,7 +450,8 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
                 <RescheduleModal
                     post={reschedulePost}
                     busy={busyId === reschedulePost.id}
-                    onClose={() => setReschedulePost(null)}
+                    error={rescheduleError}
+                    onClose={() => { setReschedulePost(null); setRescheduleError(null); }}
                     onConfirm={(value) => handleRescheduleSubmit(reschedulePost, value)}
                 />
             )}
