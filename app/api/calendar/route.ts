@@ -25,7 +25,12 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { searchParams } = new URL(req.url);
+    let searchParams: URLSearchParams;
+    try {
+        searchParams = new URL(req.url).searchParams;
+    } catch {
+        return NextResponse.json({ error: "Invalid request URL" }, { status: 400 });
+    }
     const startRaw = searchParams.get("start");
     const endRaw = searchParams.get("end");
 
@@ -89,6 +94,12 @@ export async function GET(req: Request) {
             planner_id: true,
             error_message: true,
             failed_reason: true,
+            children_urls: true,
+            collaborators: true,
+            audio_configuration: true,
+            user_tags: true,
+            share_to_feed: true,
+            location_id: true,
         },
     });
 
