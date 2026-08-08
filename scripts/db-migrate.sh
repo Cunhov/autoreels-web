@@ -107,23 +107,53 @@ else console.log("managed");
 ')"
 echo "[db-migrate] state=${STATE}"
 
+# ── Retry helper for Prisma CLI calls ─────────────────────────────────────────
+# During a rolling deploy (start-first), the OLD app instance is still running
+# and writing to the SQLite DB while this instance runs migrations. Prisma's
+# engine opens its own connection and does NOT inherit the busy_timeout pragma
+# set above, so a concurrent writer can fail it with "database is locked".
+# Migrations are idempotent — retrying until the lock clears is safe.
+run_prisma() {
+  local attempt=1 max_attempts=12
+  while true; do
+    local out code
+    if out=$("$@" 2>&1); then
+      echo "$out"
+      return 0
+    fi
+    code=$?
+    if ! echo "$out" | grep -qiE "database is locked|SQLITE_BUSY"; then
+      echo "$out" >&2
+      return "$code"
+    fi
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      echo "$out" >&2
+      echo "[db-migrate] FAILED after ${max_attempts} attempts — database kept locking" >&2
+      return "$code"
+    fi
+    echo "[db-migrate] database is locked (attempt ${attempt}/${max_attempts}) — retrying in 5s..."
+    sleep 5
+    attempt=$((attempt + 1))
+  done
+}
+
 # ─── 3) Align legacy schema (additive only) + baseline + deploy ───────────────
 if [ "${STATE}" = "legacy" ]; then
   echo "[db-migrate] Legacy DB detected — aligning schema additively (NO --accept-data-loss)..."
   # Fails loudly on destructive drift instead of silently dropping data
-  ${PRISMA_CLI} db push --config "${TMP_CONFIG}" --schema "${SCHEMA}"
+  run_prisma ${PRISMA_CLI} db push --config "${TMP_CONFIG}" --schema "${SCHEMA}"
 
   echo "[db-migrate] Marking existing migrations as applied (baseline)..."
   for dir in "${MIGRATIONS_DIR}"/*/; do
     [ -d "${dir}" ] || continue
     name="$(basename "${dir}")"
     echo "[db-migrate]   resolve --applied ${name}"
-    ${PRISMA_CLI} migrate resolve --applied "${name}" --config "${TMP_CONFIG}" --schema "${SCHEMA}"
+    run_prisma ${PRISMA_CLI} migrate resolve --applied "${name}" --config "${TMP_CONFIG}" --schema "${SCHEMA}"
   done
 fi
 
 echo "[db-migrate] Running migrate deploy..."
-${PRISMA_CLI} migrate deploy --config "${TMP_CONFIG}" --schema "${SCHEMA}"
+run_prisma ${PRISMA_CLI} migrate deploy --config "${TMP_CONFIG}" --schema "${SCHEMA}"
 
 # ─── 4) WAL re-check (idempotent, post-deploy) ────────────────────────────────
 node -e '
