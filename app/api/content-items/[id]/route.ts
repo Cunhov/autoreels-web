@@ -3,15 +3,70 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
-import { deleteFileFromDisk, buildDiskPath, extractUploadPathFromUrl } from "@/lib/deleteFiles";
+import { deleteFileFromDisk, collectItemFiles } from "@/lib/deleteFiles";
 import { cleanPathSegment } from "@/lib/upload-path";
+import { normalizeTags } from "../shared";
 
 // Fields a client may update. Server-owned fields (id, user_id, created_at,
 // path) are excluded to prevent mass assignment / arbitrary file deletion.
 const PATCH_ALLOWED_FIELDS = [
     "name", "title", "caption", "tags", "type", "size", "duration",
-    "parent_id", "thumbnail_url",
+    "parent_id", "thumbnail_url", "url",
 ] as const;
+
+// Hard safety cap for recursive descendant collection (prevents runaway scans)
+const MAX_COLLECT_ITEMS = 10_000;
+
+/**
+ * Recursively collect an item plus ALL descendants (any depth) with the
+ * fields needed for disk cleanup. Returns [] if the root is missing.
+ */
+async function collectWithDescendants(
+    root: { id: string; url?: string | null; thumbnail_url?: string | null; name?: string | null; path?: string | null }
+) {
+    const collected: Array<{ url: string | null; thumbnail_url: string | null; name: string | null; path: string | null }> = [
+        {
+            url: root.url ?? null,
+            thumbnail_url: root.thumbnail_url ?? null,
+            name: root.name ?? null,
+            path: root.path ?? null,
+        },
+    ];
+
+    let currentLevel: string[] = [root.id];
+    let guard = 0;
+
+    while (currentLevel.length > 0 && guard < 20) {
+        const level = await prisma.contentItem.findMany({
+            where: { parent_id: { in: currentLevel } },
+            select: {
+                id: true,
+                url: true,
+                thumbnail_url: true,
+                name: true,
+                path: true,
+            },
+        });
+        if (level.length === 0) break;
+
+        collected.push(...level.map((c) => ({
+            url: c.url ?? null,
+            thumbnail_url: c.thumbnail_url ?? null,
+            name: c.name ?? null,
+            path: c.path ?? null,
+        })));
+
+        if (collected.length > MAX_COLLECT_ITEMS) {
+            console.warn(`[cleanup] Descendant collection exceeded ${MAX_COLLECT_ITEMS} items; truncating.`);
+            break;
+        }
+
+        currentLevel = level.map((c) => c.id);
+        guard++;
+    }
+
+    return collected;
+}
 
 export async function GET(
     _req: Request,
@@ -60,6 +115,11 @@ export async function PATCH(
             if (data[field] !== undefined) payload[field] = data[field];
         }
 
+        // Nothing to update (e.g. client sent only server-owned fields)
+        if (Object.keys(payload).length === 0) {
+            return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+        }
+
         // Sanitize name (must not contain path separators / traversal)
         if (payload.name !== undefined) {
             const cleanName = cleanPathSegment(String(payload.name));
@@ -67,6 +127,26 @@ export async function PATCH(
                 return NextResponse.json({ error: "Invalid name" }, { status: 400 });
             }
             payload.name = cleanName;
+        }
+
+        // Validate url (used by "replace original" from the image editor): must
+        // be our own /api/file/{userId}/... path, without traversal. Never accept
+        // `path` (disk layout is server-owned).
+        if (payload.url !== undefined) {
+            const url = payload.url as string | null;
+            if (url && (!url.startsWith(`/api/file/${userId}/`) || url.includes(".."))) {
+                return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
+            }
+            payload.url = url;
+        }
+
+        // Validate size (replacement metadata): non-negative integer
+        if (payload.size !== undefined) {
+            const size = Number(payload.size);
+            if (!Number.isInteger(size) || size < 0) {
+                return NextResponse.json({ error: "Invalid size" }, { status: 400 });
+            }
+            payload.size = size;
         }
 
         // Sanitize thumbnail_url (must be our own /api/file/ path or http(s))
@@ -94,9 +174,9 @@ export async function PATCH(
             }
         }
 
-        // Tags: store as JSON string
-        if (payload.tags !== undefined && typeof payload.tags !== "string") {
-            payload.tags = JSON.stringify(payload.tags);
+        // Tags: always store as a JSON array string (normalized)
+        if (payload.tags !== undefined) {
+            payload.tags = normalizeTags(payload.tags);
         }
 
         const result = await prisma.contentItem.updateMany({
@@ -129,58 +209,40 @@ export async function DELETE(
     const { id } = await params;
 
     try {
-        // Fetch the item first so we can clean up its file
+        // Fetch the item first so we can clean up its files
         const item = await prisma.contentItem.findFirst({
             where: { id, user_id: userId },
-            select: { id: true, name: true, path: true, type: true, thumbnail_url: true },
+            select: {
+                id: true,
+                name: true,
+                path: true,
+                type: true,
+                thumbnail_url: true,
+                url: true,
+            },
         });
 
         if (!item) {
             return NextResponse.json({ error: "Item not found or unauthorized" }, { status: 404 });
         }
 
-        // Collect all files to delete
-        const filesToDelete: string[] = [];
+        // Recursively collect this item + every descendant (any depth)
+        const allItems = await collectWithDescendants(item);
 
-        // If the item itself has a file (non-folder types)
-        if (item.type !== "carousel_folder" && item.name) {
-            const diskPath = buildDiskPath(userId, item.path, item.name);
-            if (diskPath) filesToDelete.push(diskPath);
-        }
-        const itemThumb = extractUploadPathFromUrl(item.thumbnail_url);
-        if (itemThumb) {
-            filesToDelete.push(itemThumb);
-        }
+        // Resolve every file (URL is the source of truth; legacy fallback to path+name)
+        const filesToDelete = allItems.flatMap((c) => collectItemFiles(userId, c));
 
-        // If it's a carousel folder, also collect children's files
-        if (item.type === "carousel_folder") {
-            const children = await prisma.contentItem.findMany({
-                where: { parent_id: item.id },
-                select: { name: true, path: true, thumbnail_url: true },
-            });
-            for (const child of children) {
-                if (child.name) {
-                    const diskPath = buildDiskPath(userId, child.path, child.name);
-                    if (diskPath) filesToDelete.push(diskPath);
-                }
-                const childThumb = extractUploadPathFromUrl(child.thumbnail_url);
-                if (childThumb) {
-                    filesToDelete.push(childThumb);
-                }
-            }
-        }
-
-        // Delete from DB (cascade handles children records)
+        // Delete from DB first (cascade handles descendant records)
         await prisma.contentItem.deleteMany({
             where: { id, user_id: userId },
         });
 
-        // Best-effort file cleanup
+        // Best-effort file cleanup — never let disk failures block the DB delete
         await Promise.allSettled(
             filesToDelete.map((p) => deleteFileFromDisk(p))
         );
 
-        return NextResponse.json({ success: true });
+        return NextResponse.json({ success: true, files_cleaned: filesToDelete.length });
     } catch (error: unknown) {
         console.error('Delete content item error:', error);
         return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
