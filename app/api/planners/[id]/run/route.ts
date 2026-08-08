@@ -2,14 +2,29 @@ import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { describeChannelHealth, resolvePlannerRuntime } from '@/lib/planner-runtime';
+import { getErrorMessage } from '@/lib/api';
+// Contract with fix3-core: runPlannerOnce(prisma, planner, now, { force }) is added
+// to lib/planner-runtime.ts by that worktree. It performs the full Phase 0 logic
+// (due/sleep/start_time checks, content selection, templates, post creation,
+// state + last_run persistence) and returns { ok, created, errors, warnings }.
+import { runPlannerOnce } from '@/lib/planner-runtime';
+
+// Contract result shape — defensive: accepts both `created` and `posts_created`.
+type RunOnceResult = {
+    ok: boolean;
+    created?: number;
+    posts_created?: number;
+    selected_index?: number | null;
+    errors?: string[];
+    warnings?: string[];
+};
 
 /**
  * POST /api/planners/[id]/run
- * 
+ *
  * Triggers a single planner run immediately for the authenticated user.
  * Bypasses the CRON_SECRET requirement — uses session auth instead.
- * Resets last_run so the next cron tick picks it up as due.
+ * A paused planner must be explicitly activated first (409).
  */
 export async function POST(
     _req: Request,
@@ -32,58 +47,30 @@ export async function POST(
             return NextResponse.json({ error: 'Planner not found' }, { status: 404 });
         }
 
+        if (planner.status === 'paused') {
+            return NextResponse.json({ error: 'Planner is paused' }, { status: 409 });
+        }
+
         if (!planner.channels || planner.channels.length === 0) {
             return NextResponse.json({ error: 'Planner has no channels connected' }, { status: 400 });
         }
 
         const now = new Date();
-        const runtime = await resolvePlannerRuntime(prisma, planner, now);
-        if (!runtime.ok) {
-            return NextResponse.json({ error: runtime.errors.join('; '), warnings: runtime.warnings }, { status: 400 });
+        // force: true → ignores frequency/start_time/sleep gating (explicit user action).
+        const rawResult = await runPlannerOnce(prisma, planner, now, { force: true });
+        const result = rawResult as RunOnceResult;
+
+        if (!result || result.ok === false) {
+            const errors = result?.errors?.length ? result.errors : ['Planner run failed'];
+            return NextResponse.json({
+                error: errors.join('; '),
+                warnings: result?.warnings ?? [],
+            }, { status: 400 });
         }
 
-        const publishableChannels = (planner.channels || []).filter((channel: any) => describeChannelHealth(channel, now).ok);
-        if (publishableChannels.length === 0) {
-            return NextResponse.json({ error: 'No publishable channels available' }, { status: 400 });
-        }
+        const postsCreated = result.created ?? result.posts_created ?? 0;
 
-        const { selectedIndex, mediaUrl, mediaType, caption, locationId, shareToFeed, thumbnailUrl, children, nextState, warnings } = runtime;
-        const safeChildren = children || [];
-
-        // Create posts for each channel
-        let postsCreated = 0;
-        for (const channel of publishableChannels) {
-            await prisma.post.create({
-                data: {
-                    user_id: planner.user_id,
-                    channel_id: channel.id,
-                    status: 'pending',
-                    media_type: mediaType,
-                    video_url: mediaType === 'REELS' ? mediaUrl : null,
-                    image_url: (mediaType === 'IMAGE') ? mediaUrl
-                        : (mediaType === 'STORIES' && mediaUrl && !mediaUrl?.includes('.mp4')) ? mediaUrl : null,
-                    thumbnail_url: thumbnailUrl || (safeChildren.length > 0 ? safeChildren[0].url : null),
-                    children_urls: safeChildren.length > 0 ? JSON.stringify(safeChildren) : null,
-                    share_to_feed: shareToFeed,
-                    location_id: locationId,
-                    caption,
-                    scheduled_at: now,
-                    planner_id: planner.id,
-                },
-            });
-            postsCreated++;
-        }
-
-        // Update planner last_run + state so the next cron interval is counted from now
-        await prisma.planner.update({
-            where: { id: planner.id },
-            data: {
-                last_run: now,
-                config: JSON.stringify({ ...runtime.config, state: nextState }),
-            },
-        });
-
-        // Write a log entry
+        // Informational log entry (runPlannerOnce may already log — duplicates are benign).
         await prisma.plannerLog.create({
             data: {
                 planner_id: planner.id,
@@ -93,8 +80,14 @@ export async function POST(
             },
         }).catch(() => { });
 
-        return NextResponse.json({ success: true, posts_created: postsCreated, selected_index: selectedIndex, warnings });
-    } catch (error: any) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        return NextResponse.json({
+            success: true,
+            posts_created: postsCreated,
+            selected_index: result.selected_index ?? null,
+            warnings: result?.warnings ?? [],
+        });
+    } catch (error: unknown) {
+        console.error('Run planner error:', error);
+        return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
     }
 }
