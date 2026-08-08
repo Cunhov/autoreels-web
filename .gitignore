@@ -59,3 +59,5 @@ data/
 # Secrets
 .env
 .pi-subagents/
+*.db-shm
+*.db-wal
