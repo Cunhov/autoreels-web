@@ -100,6 +100,7 @@ model Planner {
   user_id     String
   name        String
   config      String   // JSON stringified
+  state       String?  // JSON stringified publish state (published_indexes, last_index, template_index)
   status      String   @default("active")
   last_run    DateTime?
   created_at  DateTime @default(now())
@@ -112,6 +113,7 @@ model Planner {
   @@map("planners")
   @@index([user_id, status])
   @@index([user_id, created_at])
+  @@index([status])
 }
 
 model PlannerLog {
@@ -126,6 +128,7 @@ model PlannerLog {
 
   @@map("planner_logs")
   @@index([planner_id, created_at])
+  @@index([created_at])
 }
 
 model ContentItem {
@@ -195,4 +198,6 @@ model Post {
   @@index([status, scheduled_at])
   @@index([channel_id])
   @@index([planner_id])
+  @@index([status, created_at])
+  @@index([planner_id, status])
 }
