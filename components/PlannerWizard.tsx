@@ -28,6 +28,15 @@ const STEPS = [
     { id: 'sorting', title: 'Sorting' }
 ];
 
+/** Convert an ISO timestamp to a local 'YYYY-MM-DDTHH:mm' value for <input type="datetime-local">. */
+function toLocalDateTimeInput(iso: string | null | undefined): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 // Shape of an entry in planner config.content (library items, legacy uploads, carousels).
 interface ContentEntry {
     type?: string;
@@ -82,6 +91,15 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     // Count of existing content items that the UI cannot represent (legacy direct
     // uploads). They are preserved as-is on save so editing a planner never loses them.
     const [preservedCount, setPreservedCount] = useState(0);
+    // Original config.content snapshot + per-item post settings, captured when an
+    // edit session starts. Used on save to keep heterogeneous items intact and to
+    // rebuild the original order (no flattening, no legacy loss, no reordering).
+    const [originalContent, setOriginalContent] = useState<ContentEntry[]>([]);
+    const [originalItemSettings, setOriginalItemSettings] = useState<Record<string, any>>({});
+    // Becomes true the moment the user edits any post setting. While false, each
+    // existing item keeps its OWN original settings instead of being flattened to
+    // the values of the first item (or of the UI).
+    const [settingsTouched, setSettingsTouched] = useState(false);
 
     const selectedChannelNames = useMemo(() => {
         return selectedChannels
@@ -110,7 +128,9 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
 
             if (initialData) {
                 setName(initialData.name || '');
-                setSelectedChannels(initialData.channel_ids || []);
+                // The API may expose channels as `channels` (objects) or `channel_ids`;
+                // prefer the former so an edit never deselects every channel.
+                setSelectedChannels(initialData.channels?.map((c: any) => c.id) || initialData.channel_ids || []);
 
                 // Defensive parse: config may arrive as a (double) JSON string from the API.
                 let config = initialData.config || {};
@@ -125,7 +145,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 setFrequencyValue(config.frequency?.value || 1);
                 setFrequencyUnit(config.frequency?.unit || 'hours');
                 setTimezone(config.timezone || 'America/Sao_Paulo');
-                setStartTime(config.start_time || '');
+                setStartTime(toLocalDateTimeInput(config.start_time));
                 setSortOrder(config.sort_order || 'random_loop');
 
                 if (config.sleep_schedule) {
@@ -157,6 +177,29 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     setPreservedCount(legacyCount);
                     setContentTab(libIds.length > 0 ? 'library' : 'upload');
 
+                    // Snapshot the original content list and per-item settings so a
+                    // later save can rebuild the original order and preserve each
+                    // item's own settings (heterogeneous planners are never flattened).
+                    setOriginalContent(Array.isArray(content) ? content : []);
+                    const settingsMap: Record<string, any> = {};
+                    for (const c of content) {
+                        const key = c.id || c.folder_id || null;
+                        if (!key) continue;
+                        settingsMap[key] = {
+                            media_type: c.media_type,
+                            share_to_feed: c.share_to_feed,
+                            caption: c.caption,
+                            caption_fallback: c.caption_fallback,
+                            title_fallback: c.title_fallback,
+                            location_id: c.location_id,
+                            collaborators: c.collaborators,
+                            user_tags: c.user_tags,
+                            audio_configuration: c.audio_configuration,
+                        };
+                    }
+                    setOriginalItemSettings(settingsMap);
+                    setSettingsTouched(false);
+
                     if (content[0]?.media_type === 'CAROUSEL') {
                         setIsCarousel(true);
                         setMediaType('CAROUSEL');
@@ -186,12 +229,13 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     setAudioId(audioConfig.audio_id || '');
                     setAudioVolume(audioConfig.audio_volume !== undefined ? audioConfig.audio_volume : 80);
                     setVideoVolume(audioConfig.video_volume !== undefined ? audioConfig.video_volume : 20);
-                    setCaptionTemplates('');
-                    setCaptionRotation('off');
                 } else {
                     setSelectedContentIds([]);
                     setFiles([]);
                     setPreservedCount(0);
+                    setOriginalContent([]);
+                    setOriginalItemSettings({});
+                    setSettingsTouched(false);
                     setContentTab('upload');
                     setIsCarousel(false);
                     setMediaType('REELS');
@@ -211,6 +255,9 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 setSelectedContentIds([]);
                 setFiles([]);
                 setPreservedCount(0);
+                setOriginalContent([]);
+                setOriginalItemSettings({});
+                setSettingsTouched(false);
                 setFrequencyValue(1);
                 setFrequencyUnit('hours');
                 setTimezone('America/Sao_Paulo');
@@ -252,9 +299,16 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
     }, [files]);
 
     async function fetchChannels() {
-        const res = await fetch('/api/channels');
-        const data = await res.json();
-        setChannels(Array.isArray(data) ? data.filter((c: any) => c.platform === 'instagram' && c.status === 'active') : []);
+        try {
+            const res = await fetch('/api/channels');
+            if (!res.ok) throw new Error('Failed to load channels');
+            const data = await res.json();
+            setChannels(Array.isArray(data) ? data.filter((c: any) => c.platform === 'instagram' && c.status === 'active') : []);
+        } catch (err) {
+            console.error('Failed to fetch channels:', err);
+            setChannels([]);
+            setFormError('Could not load channels. Check your connection and try again.');
+        }
     }
 
     const handleNext = () => {
@@ -291,7 +345,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
             uploadedItems.push({
                 url: item.url as string,
                 type: item.type || (
-                    /\\.(mp4|mov|mkv|webm|m4v)(\?\|$)/i.test(item.url || '')
+                    /\\.(mp4|mov|mkv|webm|m4v)(\?.*)?$/i.test(item.url || '')
                         ? 'video'
                         : 'image'
                 ),
@@ -312,8 +366,24 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
 
         // Validate frequency: NaN/0/negative would spam or silently kill the planner.
         const freqValue = Number.isFinite(frequencyValue) && frequencyValue >= 1 ? frequencyValue : 10;
-        if (freqValue !== frequencyValue) {
-            setFormError('Invalid posting interval — using 10.');
+
+        // Carousel posts are built from FOLDERS only (the cron resolves each
+        // folder's children). Reject non-folder selections early with a clear error.
+        if (isCarousel && selectedContentIds.length > 0) {
+            try {
+                const params = new URLSearchParams({ types: 'carousel_folder', limit: '500' });
+                const res = await fetch(`/api/content-items?${params.toString()}`);
+                if (res.ok) {
+                    const payload = await res.json();
+                    const folders = Array.isArray(payload) ? payload : (payload.items || []);
+                    const folderIds = new Set(folders.map((f: { id?: string }) => f?.id).filter(Boolean));
+                    const invalid = selectedContentIds.filter(id => !folderIds.has(id));
+                    if (invalid.length > 0) {
+                        setFormError(`Carousel requires folders — ${invalid.length} selected item(s) are not folders. Remove them and try again.`);
+                        return;
+                    }
+                }
+            } catch { /* best-effort: the server still validates */ }
         }
 
         setLoading(true);
@@ -333,124 +403,113 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 ? userTags.split(',').map(s => s.trim()).filter(Boolean)
                 : null;
 
-            // 2. Prepare Content Array
-            let content: ContentEntry[] = [];
+            // Post settings to apply. When the user has NOT touched any setting,
+            // existing items keep their OWN original settings (heterogeneous
+            // planners are preserved, not flattened). New items always get the
+            // current UI settings.
+            const globalSettings = {
+                media_type: isCarousel ? 'CAROUSEL' : mediaType,
+                share_to_feed: shareToFeed,
+                caption,
+                caption_fallback: captionFallback,
+                title_fallback: titleFallback,
+                location_id: location,
+                collaborators: collaboratorsList,
+                user_tags: (mediaType === 'IMAGE' || isCarousel) ? userTagsList : null,
+                audio_configuration: mediaType === 'REELS' && audioId
+                    ? { audio_id: audioId, audio_volume: audioVolume, video_volume: videoVolume }
+                    : null,
+            };
+
+            // 2. Build the UI-generated content entries
+            let generated: ContentEntry[] = [];
 
             if (isCarousel && selectedContentIds.length > 0) {
-                // Carousel from folders: Each folder becomes its own carousel post
+                // Carousel from folders: each folder becomes its own carousel post
                 for (const folderId of selectedContentIds) {
-                    content.push({
-                        type: 'library_item',
-                        id: folderId,
-                        media_type: 'CAROUSEL',
-                        caption,
-                        caption_fallback: captionFallback,
-                        title_fallback: titleFallback,
-                        location_id: location,
-                        collaborators: collaboratorsList,
-                        user_tags: userTagsList
-                    });
+                    const orig = originalItemSettings[folderId];
+                    generated.push(orig && !settingsTouched
+                        ? { type: 'library_item', id: folderId, ...orig }
+                        : { type: 'library_item', id: folderId, ...globalSettings });
                 }
-
                 // If we also have direct uploads that form a carousel
                 if (uploadedItems.length >= 2) {
-                    content.push({
+                    generated.push({
                         type: 'config',
-                        media_type: 'CAROUSEL',
                         children_urls: uploadedItems,
-                        caption,
-                        caption_fallback: captionFallback,
-                        title_fallback: titleFallback,
-                        location_id: location,
-                        collaborators: collaboratorsList,
-                        user_tags: userTagsList
+                        ...globalSettings,
+                        media_type: 'CAROUSEL',
                     });
                 }
             } else if (isCarousel && uploadedItems.length >= 2) {
                 // Carousel from direct uploads
-                content = [{
+                generated = [{
                     type: 'config',
-                    media_type: 'CAROUSEL',
                     children_urls: uploadedItems,
-                    caption,
-                    caption_fallback: captionFallback,
-                    title_fallback: titleFallback,
-                    location_id: location,
-                    collaborators: collaboratorsList,
-                    user_tags: userTagsList
+                    ...globalSettings,
+                    media_type: 'CAROUSEL',
                 }];
             } else {
                 // Separate Posts (Reels, Images, etc)
-                const audioConfig = mediaType === 'REELS' && audioId ? {
-                    audio_id: audioId,
-                    audio_volume: audioVolume,
-                    video_volume: videoVolume
-                } : null;
-
-                content = [
-                    ...uploadedItems.map(item => ({
-                        ...item,
-                        media_type: mediaType,
-                        share_to_feed: shareToFeed,
-                        caption,
-                        caption_fallback: captionFallback,
-                        title_fallback: titleFallback,
-                        location_id: location,
-                        collaborators: collaboratorsList,
-                        user_tags: mediaType === 'IMAGE' ? userTagsList : null,
-                        audio_configuration: audioConfig
-                    })),
-                    ...selectedContentIds.map(id => ({
-                        type: 'library_item',
-                        id,
-                        media_type: mediaType,
-                        share_to_feed: shareToFeed,
-                        caption,
-                        caption_fallback: captionFallback,
-                        title_fallback: titleFallback,
-                        location_id: location,
-                        collaborators: collaboratorsList,
-                        user_tags: mediaType === 'IMAGE' ? userTagsList : null,
-                        audio_configuration: audioConfig
-                    }))
+                generated = [
+                    ...uploadedItems.map(item => ({ ...item, ...globalSettings })),
+                    ...selectedContentIds.map(id => {
+                        const orig = originalItemSettings[id];
+                        return orig && !settingsTouched
+                            ? { type: 'library_item', id, ...orig }
+                            : { type: 'library_item', id, ...globalSettings };
+                    }),
                 ];
             }
 
-            // Preserve existing content items that the UI cannot represent (legacy
-            // direct uploads / type:'config'). Without this, editing a planner
-            // silently dropped those items from the posting queue.
-            const existingContentRaw = initialData?.config?.content || [];
-            let existingContent = existingContentRaw;
-            if (typeof existingContent === 'string') {
-                try { existingContent = JSON.parse(existingContent); } catch { /* ignore */ }
+            // 3. When editing, rebuild the ORIGINAL order — replacing the items the
+            // UI represents with the generated entries, keeping legacy entries
+            // (type:'config' uploads) exactly where they were, and appending any
+            // genuinely new entries at the end. Deselected items are dropped.
+            let content: ContentEntry[];
+            const plannerId = initialData?.id;
+            if (plannerId && originalContent.length > 0) {
+                const used = new Set<number>();
+                const merged: ContentEntry[] = [];
+                for (const orig of originalContent) {
+                    const key = orig.id || orig.folder_id || null;
+                    if (!key || (orig.type !== 'library_item' && !orig.folder_id)) {
+                        // Legacy upload/config entry: preserve exactly as-is.
+                        merged.push(orig);
+                        continue;
+                    }
+                    const idx = generated.findIndex((e, i) => !used.has(i) && (e.id || e.folder_id) === key);
+                    if (idx >= 0) {
+                        merged.push(generated[idx]);
+                        used.add(idx);
+                    }
+                    // else: item deselected during this edit — dropped on purpose.
+                }
+                generated.forEach((e, i) => { if (!used.has(i)) merged.push(e); });
+                content = merged;
+            } else {
+                content = generated;
             }
-            const legacyItems = (Array.isArray(existingContent) ? existingContent : []).filter((c: ContentEntry) => {
-                if (c.type === 'library_item') return false;      // represented via selection
-                if (c.folder_id) return false;                     // represented via folder selection
-                return true;                                       // legacy upload/config: preserve
-            });
-            content = [...legacyItems, ...content];
 
-            // 3. Prepare Config in JSON
-            // Compare CONTENT IDENTITY (which items, not settings like caption) —
-            // state (published_indexes/last_index) only needs resetting when the
-            // item composition actually changes. Editing a name/caption alone now
-            // preserves the planner's progress.
-            const contentIdentity = (list: ContentEntry[]) => list.map((c) => {
-                if (c.type === 'library_item') return `lib:${c.id}`;
-                if (c.folder_id) return `lib:${c.folder_id}`;
-                if (c.url) return `url:${c.url}`;
-                if (c.children_urls) return `carousel:${c.children_urls.map((u) => u.url || u.id).join('|')}`;
-                return JSON.stringify(c);
-            });
-            const existingContentList = Array.isArray(existingContent) ? existingContent : [];
-            const contentChanged =
-                JSON.stringify(contentIdentity(content)) !== JSON.stringify(contentIdentity(existingContentList));
-            const existingState = initialData?.config?.state || {};
+            // 4. Content identity (WHICH items, ignoring settings) compared as an
+            // ORDERED MULTISET — reordering existing items or editing a caption
+            // alone does NOT reset publish state; only adding/removing items does.
+            const identity = (list: ContentEntry[]) =>
+                list.map((c) => {
+                    if (c.type === 'library_item') return `lib:${c.id}`;
+                    if (c.folder_id) return `lib:${c.folder_id}`;
+                    if (c.url) return `url:${c.url}`;
+                    if (c.children_urls) return `carousel:${c.children_urls.map((u) => u.url || u.id).join('|')}`;
+                    return JSON.stringify(c);
+                }).sort().join('|');
+            const contentChanged = plannerId
+                ? identity(content) !== identity(originalContent)
+                : content.length > 0;
 
-            // Reset state if content changed
-            const preservedState = contentChanged ? {} : existingState;
-
+            // 5. Prepare Config in JSON. NOTE: publish state now lives in its own
+            // column (Planner.state) — it is NEVER sent from the client. The
+            // reset_state flag below tells the server to clear it only when the
+            // item composition really changed.
             const plannerConfig = {
                 frequency: {
                     value: freqValue,
@@ -465,11 +524,9 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                 caption_templates: captionTemplates.split('\n').map(s => s.trim()).filter(Boolean),
                 caption_rotation: captionRotation,
                 content,
-                state: preservedState
             };
 
-            // 4. Update or Insert Planner
-            const plannerId = initialData?.id;
+            // 6. Update or Insert Planner
             const res = await fetch(plannerId ? `/api/planners/${plannerId}` : '/api/planners', {
                 method: plannerId ? 'PATCH' : 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -477,22 +534,30 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                     name,
                     channel_ids: selectedChannels,
                     config: plannerConfig,
-                    ...(plannerId ? {} : { status: 'active' })
+                    ...(plannerId ? { reset_state: contentChanged } : { status: 'active' })
                 }),
             });
 
-            if (!res.ok) throw new Error('Failed to save planner');
+            if (!res.ok) {
+                let message = 'Failed to save planner';
+                try {
+                    const errBody = await res.json();
+                    if (errBody?.error) message = errBody.error;
+                } catch { /* keep default */ }
+                throw new Error(message);
+            }
 
             onSuccess();
             onClose();
         } catch (error) {
             console.error(error);
-            alert('Failed to create planner');
+            setFormError(error instanceof Error ? error.message : 'Failed to save planner');
         } finally {
             setLoading(false);
             setUploading(false);
         }
     };
+
 
     if (!isOpen) return null;
 
@@ -521,6 +586,13 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
 
                 {/* Content */}
                 <div className="flex-1 overflow-y-auto p-6 bg-ios-background/50">
+
+                    {/* Global error banner — visible on every step */}
+                    {formError && (
+                        <div className="mb-4 p-3 rounded-xl bg-ios-red/10 border border-ios-red/30 text-ios-red text-sm">
+                            {formError}
+                        </div>
+                    )}
 
                     {/* Step 0: Basics */}
                     {step === 0 && (
@@ -611,16 +683,16 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                     <MediaUploader files={files} onFilesChange={setFiles} />
                                 ) : (
                                     <div className="h-full border border-ios-separator rounded-xl overflow-hidden min-h-[300px]">
-                                        {isCarousel && mediaType === 'IMAGE' && (
+                                        {isCarousel && (
                                             <div className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs p-2 border-b border-blue-100 dark:border-blue-900/30">
-                                                📂 Select a folder to post as carousel. Images will be posted in alphabetical/numerical order.
+                                                📂 Select folders to post as carousels. Each folder becomes one carousel post.
                                             </div>
                                         )}
                                         <ContentLibrary
                                             mode="select"
                                             initialSelection={selectedContentIds}
                                             onSelectionChange={setSelectedContentIds}
-                                            allowedTypes={isCarousel && mediaType === 'IMAGE' ? ['carousel_folder'] : ['video', 'image', 'carousel_folder']}
+                                            allowedTypes={isCarousel ? ['carousel_folder'] : ['video', 'image', 'carousel_folder']}
                                             disableUrlNavigation={true}
                                         />
                                     </div>
@@ -628,7 +700,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                             </div>
 
                             <p className="text-xs text-ios-secondary">
-                                {isCarousel && mediaType === 'IMAGE'
+                                {isCarousel
                                     ? `${selectedContentIds.length} folder(s) selected for carousel.`
                                     : `${files.length} new files, ${selectedContentIds.length} library items selected.`
                                 }
@@ -649,6 +721,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                                 const next = !isCarousel;
                                                 setIsCarousel(next);
                                                 setMediaType(next ? 'CAROUSEL' : 'REELS');
+                                                setSettingsTouched(true);
                                             }}
                                             className="flex items-center gap-2 cursor-pointer"
                                         >
@@ -669,6 +742,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                                 const v = e.target.value as typeof mediaType;
                                                 setMediaType(v);
                                                 setIsCarousel(v === 'CAROUSEL');
+                                                setSettingsTouched(true);
                                             }}
                                             className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
                                         >
@@ -682,7 +756,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                         <div className="flex flex-col justify-center">
                                             <label className="text-xs font-medium text-ios-text mb-1.5 block">Options</label>
                                             <div
-                                                onClick={() => setShareToFeed(!shareToFeed)}
+                                                onClick={() => { setShareToFeed(!shareToFeed); setSettingsTouched(true); }}
                                                 className="flex items-center gap-2 cursor-pointer"
                                             >
                                                 <div className={`w-4 h-4 border rounded flex items-center justify-center ${shareToFeed ? 'bg-ios-blue border-ios-blue' : 'border-gray-300'}`}>
@@ -714,7 +788,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                     </div>
                                     <textarea
                                         value={caption}
-                                        onChange={(e) => setCaption(e.target.value)}
+                                        onChange={(e) => { setCaption(e.target.value); setSettingsTouched(true); }}
                                         className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
                                         placeholder="Write a caption... Use tags for dynamic content."
                                     />
@@ -763,7 +837,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                         <p className="text-[11px] text-gray-400 mb-2">Used if the selected content has an empty title and {"{post_title}"} is used.</p>
                                         <input
                                             value={titleFallback}
-                                            onChange={(e) => setTitleFallback(e.target.value)}
+                                            onChange={(e) => { setTitleFallback(e.target.value); setSettingsTouched(true); }}
                                             className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
                                             placeholder="Example: AutoReels Magic"
                                         />
@@ -773,7 +847,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                         <p className="text-[11px] text-gray-400 mb-2">Used if the selected content has an empty caption and {"{post_caption}"} is used.</p>
                                         <textarea
                                             value={captionFallback}
-                                            onChange={(e) => setCaptionFallback(e.target.value)}
+                                            onChange={(e) => { setCaptionFallback(e.target.value); setSettingsTouched(true); }}
                                             className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-16 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400"
                                             placeholder="Example: Check out this amazing content!"
                                         />
@@ -785,7 +859,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                         <label className="text-xs font-medium text-ios-text mb-1.5 block">Location ID (Optional)</label>
                                         <input
                                             value={location}
-                                            onChange={(e) => setLocation(e.target.value)}
+                                            onChange={(e) => { setLocation(e.target.value); setSettingsTouched(true); }}
                                             className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
                                             placeholder="Instagram Location ID"
                                         />
@@ -796,7 +870,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                             <label className="text-xs font-medium text-ios-text mb-1.5 block">Collaborators (Optional)</label>
                                             <input
                                                 value={collaborators}
-                                                onChange={(e) => setCollaborators(e.target.value)}
+                                                onChange={(e) => { setCollaborators(e.target.value); setSettingsTouched(true); }}
                                                 className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
                                                 placeholder="e.g. user1, user2"
                                             />
@@ -809,7 +883,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                             <label className="text-xs font-medium text-ios-text mb-1.5 block">User Tags (Optional)</label>
                                             <input
                                                 value={userTags}
-                                                onChange={(e) => setUserTags(e.target.value)}
+                                                onChange={(e) => { setUserTags(e.target.value); setSettingsTouched(true); }}
                                                 className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
                                                 placeholder="e.g. user1, user2"
                                             />
@@ -824,7 +898,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                                 <label className="text-[11px] font-medium text-ios-text mb-1 block">Audio ID</label>
                                                 <input
                                                     value={audioId}
-                                                    onChange={(e) => setAudioId(e.target.value)}
+                                                    onChange={(e) => { setAudioId(e.target.value); setSettingsTouched(true); }}
                                                     className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-xs focus:border-ios-blue outline-none placeholder:text-gray-400"
                                                     placeholder="Meta Audio Track ID"
                                                 />
@@ -838,7 +912,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                                             min="0"
                                                             max="100"
                                                             value={audioVolume}
-                                                            onChange={(e) => setAudioVolume(parseInt(e.target.value))}
+                                                            onChange={(e) => { setAudioVolume(parseInt(e.target.value)); setSettingsTouched(true); }}
                                                             className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-ios-blue"
                                                         />
                                                     </div>
@@ -849,7 +923,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                                             min="0"
                                                             max="100"
                                                             value={videoVolume}
-                                                            onChange={(e) => setVideoVolume(parseInt(e.target.value))}
+                                                            onChange={(e) => { setVideoVolume(parseInt(e.target.value)); setSettingsTouched(true); }}
                                                             className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-ios-blue"
                                                         />
                                                     </div>
@@ -946,10 +1020,6 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                             </p>
                                         )}
                                     </div>
-                                )}
-
-                                {formError && (
-                                    <p className="text-xs text-ios-red mt-2">{formError}</p>
                                 )}
                             </div>
                         </div>
