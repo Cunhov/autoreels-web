@@ -3,6 +3,8 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
+// Contract with fix3-core: lib/planner-config.ts is created by that worktree.
+import { parsePlannerConfig, validatePlannerConfig } from "@/lib/planner-config";
 
 const VALID_PLANNER_STATUS = ["active", "paused"];
 
@@ -15,6 +17,46 @@ const publicChannelSelect = {
     profile_picture_url: true,
     status: true,
 };
+
+/**
+ * Normalize a client-sent config into a string JSON, validating it first.
+ * Returns { ok: true, json: string } or { ok: false, errors: string[] }.
+ */
+async function validateConfigPayload(config: unknown): Promise<{ ok: true; json: string } | { ok: false; errors: string[] }> {
+    const configObj = typeof config === 'string' ? parsePlannerConfig(config) : (config ?? {});
+    const result = validatePlannerConfig(configObj);
+    if (result && result.ok === false) {
+        return { ok: false, errors: Array.isArray(result.errors) ? result.errors : ['Invalid planner config'] };
+    }
+    return { ok: true, json: JSON.stringify(configObj) };
+}
+
+/**
+ * Validate channel_ids and return the owned subset (or an error).
+ * - undefined           → not provided (no-op)
+ * - non-array           → error
+ * - empty array         → valid (disconnect all)
+ * - array with foreign ids → error (never silently drop)
+ */
+async function resolveOwnedChannelIds(
+    userId: string,
+    channelIds: unknown
+): Promise<{ ok: true; ids: string[] } | { ok: false; error: string }> {
+    if (channelIds === undefined) return { ok: true, ids: [] };
+    if (!Array.isArray(channelIds)) {
+        return { ok: false, error: 'channel_ids must be an array' };
+    }
+    if (channelIds.length === 0) return { ok: true, ids: [] };
+
+    const owned = await prisma.channel.findMany({
+        where: { id: { in: channelIds }, user_id: userId },
+        select: { id: true },
+    });
+    if (owned.length !== channelIds.length) {
+        return { ok: false, error: 'One or more channels do not belong to this user' };
+    }
+    return { ok: true, ids: channelIds };
+}
 
 export async function GET() {
     const session = await getServerSession(authOptions);
@@ -61,6 +103,8 @@ export async function GET() {
     return NextResponse.json(
         planners.map(planner => ({
             ...planner,
+            // Contract with the wizard: channel_ids (array of ids) alongside `channels`.
+            channel_ids: planner.channels.map(channel => channel.id),
             stats: statsByPlanner[planner.id] ?? { total: 0, published: 0, failed: 0 },
         }))
     );
@@ -83,21 +127,27 @@ export async function POST(req: Request) {
         // Restrict status to known values (default: active)
         const safeStatus = VALID_PLANNER_STATUS.includes(status) ? status : "active";
 
-        const safeChannelIds = Array.isArray(channel_ids) ? channel_ids : [];
-        const ownedChannels = safeChannelIds.length > 0
-            ? await prisma.channel.findMany({
-                where: { id: { in: safeChannelIds }, user_id: userId },
-                select: { id: true },
-            })
-            : [];
+        // Validate config (frequency, sort_order, content, sleep, templates, ...)
+        const configCheck = await validateConfigPayload(config);
+        if (!configCheck.ok) {
+            return NextResponse.json({ error: "Invalid planner config", details: configCheck.errors }, { status: 400 });
+        }
+
+        // channel_ids: must be an array; every id must belong to this user.
+        const channelCheck = await resolveOwnedChannelIds(userId, channel_ids);
+        if (!channelCheck.ok) {
+            return NextResponse.json({ error: channelCheck.error }, { status: 400 });
+        }
+
         const planner = await prisma.planner.create({
             data: {
                 name,
                 status: safeStatus,
-                config: typeof config === 'string' ? config : JSON.stringify(config ?? {}),
+                config: configCheck.json,
+                state: null,
                 user_id: userId,
                 channels: {
-                    connect: ownedChannels.map(channel => ({ id: channel.id })),
+                    connect: channelCheck.ids.map(channelId => ({ id: channelId })),
                 },
             },
         });
