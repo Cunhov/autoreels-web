@@ -7,6 +7,8 @@ export interface Post {
     error_message?: string;
     failed_reason?: string;
     instagram_media_id?: string;
+    instagram_container_id?: string;
+    instagram_child_ids?: string;
     channel_id: string;
     planner_id?: string;
     share_to_feed?: boolean;
@@ -14,4 +16,10 @@ export interface Post {
     title?: string;
     thumbnail_url?: string;
     image_url?: string;
+    media_type?: string;
+    children_urls?: string;
+    collaborators?: string;
+    user_tags?: string;
+    audio_configuration?: string;
+    attempts?: number;
 }
