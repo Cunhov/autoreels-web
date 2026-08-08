@@ -200,4 +200,22 @@ model Post {
   @@index([planner_id])
   @@index([status, created_at])
   @@index([planner_id, status])
+  @@index([channel_id, status, published_at])
+}
+
+model PostMetric {
+  id          String   @id @default(uuid())
+  post_id     String   @unique
+  channel_id  String?
+  likes       Int      @default(0)
+  comments    Int      @default(0)
+  plays       Int      @default(0)
+  reach       Int      @default(0)
+  impressions Int      @default(0)
+  saved       Int      @default(0)
+  shares      Int      @default(0)
+  fetched_at  DateTime @default(now())
+
+  @@map("post_metrics")
+  @@index([channel_id, fetched_at])
 }
