@@ -143,13 +143,24 @@ export default function EditContentModal({
             const payload: Record<string, unknown> = { ...updates };
             if (payload.tags) payload.tags = JSON.stringify(payload.tags);
 
-            for (const id of ids) {
-                const res = await fetch(`/api/content-items/${id}`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                if (!res.ok) throw new Error('Failed to update item');
+            // Parallel PATCH (the bulk API has no 'update' action). If some items
+            // fail, report the first error — the rest were already applied.
+            const results = await Promise.all(
+                ids.map(id =>
+                    fetch(`/api/content-items/${id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    })
+                )
+            );
+            const failed = results.filter(res => !res.ok);
+            if (failed.length > 0) {
+                const first = await failed[0].json().catch(() => ({}));
+                throw new Error(
+                    (first as { error?: string })?.error ||
+                    `Failed to update ${failed.length} of ${ids.length} items`
+                );
             }
 
             onEditComplete();
