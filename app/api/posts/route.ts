@@ -35,6 +35,8 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status");
     const channelId = searchParams.get("channel_id");
+    const plannerId = searchParams.get("planner_id");
+    const mediaType = searchParams.get("media_type");
     const start = searchParams.get("start");
     const end = searchParams.get("end");
     const requestedLimit = Number(searchParams.get("limit") || "1000");
@@ -53,18 +55,38 @@ export async function GET(req: Request) {
         if (statuses.length > 0) where.status = { in: statuses };
     }
 
-    if (channelId) where.channel_id = channelId;
+    if (channelId) {
+        const ids = channelId.split(",").map(item => item.trim()).filter(Boolean);
+        if (ids.length > 0) where.channel_id = { in: ids };
+    }
+
+    if (plannerId) {
+        const ids = plannerId.split(",").map(item => item.trim()).filter(Boolean);
+        if (ids.length > 0) where.planner_id = { in: ids };
+    }
+
+    if (mediaType) {
+        const types = mediaType.split(",").map(item => item.trim().toUpperCase()).filter(Boolean);
+        if (types.length > 0) where.media_type = { in: types };
+    }
 
     if (start || end) {
+        // Invalid dates are a client error — return 400 instead of silently
+        // ignoring the filter (which would return the whole post history).
+        const startDate = start ? new Date(start) : null;
+        const endDate = end ? new Date(end) : null;
+        if (
+            (startDate && Number.isNaN(startDate.getTime())) ||
+            (endDate && Number.isNaN(endDate.getTime()))
+        ) {
+            return NextResponse.json(
+                { error: "start and end must be valid ISO dates" },
+                { status: 400 }
+            );
+        }
         where.scheduled_at = {};
-        if (start) {
-            const startDate = new Date(start);
-            if (!Number.isNaN(startDate.getTime())) where.scheduled_at.gte = startDate;
-        }
-        if (end) {
-            const endDate = new Date(end);
-            if (!Number.isNaN(endDate.getTime())) where.scheduled_at.lte = endDate;
-        }
+        if (startDate) where.scheduled_at.gte = startDate;
+        if (endDate) where.scheduled_at.lte = endDate;
     }
 
     const posts = await prisma.post.findMany({
@@ -124,9 +146,16 @@ export async function POST(req: Request) {
             }
         }
 
-        // Validate scheduled_at (optional date)
+        // Validate scheduled_at (optional date, ISO with explicit offset)
         if (payload.scheduled_at !== undefined && payload.scheduled_at !== null) {
-            const d = new Date(String(payload.scheduled_at));
+            const raw = String(payload.scheduled_at);
+            if (!/(Z|[+-]\d{2}:\d{2})$/.test(raw)) {
+                return NextResponse.json(
+                    { error: "scheduled_at must be an ISO date with explicit offset (e.g. ...Z or ...+03:00)" },
+                    { status: 400 }
+                );
+            }
+            const d = new Date(raw);
             if (Number.isNaN(d.getTime())) {
                 return NextResponse.json({ error: "Invalid scheduled_at" }, { status: 400 });
             }
