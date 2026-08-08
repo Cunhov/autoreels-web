@@ -74,7 +74,13 @@ EOF
   trap 'rm -f "${TMP_CONFIG}"' EXIT INT TERM
 fi
 
-# ─── 1) WAL + busy_timeout (safe for concurrent cron + API) ──────────────────
+# ─── 1) Ensure journal DELETE + busy_timeout ──────────────────────────────────
+# IMPORTANT: do NOT enable WAL. The app (better-sqlite3) keeps the SQLite
+# shared-memory file (-shm) open for its whole lifetime; the Prisma CLI schema
+# engine (libsql driver) cannot take the needed locks against that WAL session
+# and fails with "database is locked" — which broke rolling deploys.
+# The app is single-process and the publisher worker reaches it over HTTP, so
+# WAL buys nothing here. DELETE journaling + busy_timeout is safe.
 node -e '
 let Database;
 try { Database = require("better-sqlite3"); }
@@ -83,11 +89,11 @@ const fs = require("fs");
 const path = process.env.DATABASE_URL.replace(/^file:/, "");
 if (!fs.existsSync(path)) { console.log("[db-migrate] new DB, will be created by migrate deploy"); process.exit(0); }
 const db = new Database(path);
-db.pragma("journal_mode = WAL");
+db.pragma("journal_mode = DELETE");
 db.pragma("synchronous = NORMAL");
 db.pragma("busy_timeout = 5000");
 db.close();
-console.log("[db-migrate] WAL enabled:", path);
+console.log("[db-migrate] journal DELETE + busy_timeout:", path);
 '
 
 # ─── 2) Detect legacy (tables exist, no _prisma_migrations) ───────────────────
@@ -120,8 +126,9 @@ run_prisma() {
     if out=$("$@" 2>&1); then
       echo "$out"
       return 0
+    else
+      code=$?
     fi
-    code=$?
     if ! echo "$out" | grep -qiE "database is locked|SQLITE_BUSY"; then
       echo "$out" >&2
       return "$code"
@@ -155,18 +162,20 @@ fi
 echo "[db-migrate] Running migrate deploy..."
 run_prisma ${PRISMA_CLI} migrate deploy --config "${TMP_CONFIG}" --schema "${SCHEMA}"
 
-# ─── 4) WAL re-check (idempotent, post-deploy) ────────────────────────────────
+# ─── 4) Post-deploy safety check (idempotent) ─────────────────────────────────
+# Kept in DELETE journal mode — see step 1 (WAL is incompatible with the
+# Prisma CLI while the app holds the shared-memory session open).
 node -e '
 let Database;
 try { Database = require("better-sqlite3"); }
 catch { Database = require("/app/node_modules/better-sqlite3"); }
 const path = process.env.DATABASE_URL.replace(/^file:/, "");
 const db = new Database(path);
-db.pragma("journal_mode = WAL");
+db.pragma("journal_mode = DELETE");
 db.pragma("synchronous = NORMAL");
 db.pragma("busy_timeout = 5000");
 db.close();
-console.log("[db-migrate] post-deploy WAL check OK");
+console.log("[db-migrate] post-deploy journal check OK");
 '
 
 echo "[db-migrate] done."

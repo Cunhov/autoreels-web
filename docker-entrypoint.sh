@@ -19,19 +19,12 @@ else
     --schema=/app/prisma/schema.prisma
 fi
 
-# ── SQLite WAL mode ──────────────────────────────────────────────────────────
-# WAL greatly reduces SQLITE_BUSY contention between the cron writer and the
-# API readers. better-sqlite3 is traced into the standalone output, so this
-# runs offline.
-echo "Enabling SQLite WAL mode..."
-node -e "
-const Database = require('better-sqlite3');
-const db = new Database('/app/data/prod.db');
-db.pragma('journal_mode = WAL');
-db.pragma('busy_timeout = 5000');
-db.close();
-console.log('WAL enabled');
-"
+# ── SQLite journal mode ───────────────────────────────────────────────────────
+# Keep the DB in DELETE journal mode (db-migrate.sh does this). Do NOT enable
+# WAL here: the app keeps the -shm shared-memory session open for its lifetime
+# and the Prisma CLI schema engine cannot take its locks against it — that
+# produced permanent "database is locked" during rolling deploys.
+echo "SQLite journal mode handled by db-migrate.sh (DELETE + busy_timeout)."
 
 echo "Starting Next.js..."
 exec node server.js

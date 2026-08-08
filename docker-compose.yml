@@ -24,7 +24,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      # Entrypoint runs migrations + WAL setup before boot — give it room
+      # Entrypoint runs migrations + journal-mode setup before boot — give it room
       start_period: 120s
     logging:
       driver: json-file
