@@ -1,7 +1,8 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
-import { useSession } from 'next-auth/react';
+import React, {
+    createContext, useContext, useState, useEffect, useCallback, useRef, useMemo,
+} from 'react';
 import { createVideoThumbnailFile } from '@/lib/video-thumbnail';
 
 export type UploadStatus = 'pending' | 'uploading' | 'frozen' | 'error' | 'completed' | 'canceled';
@@ -9,11 +10,12 @@ export type UploadStatus = 'pending' | 'uploading' | 'frozen' | 'error' | 'compl
 export interface UploadTask {
     id: string;
     file: File;
-    name: string;
+    name: string;            // sanitized display name
     size: number;
     progress: number;
     status: UploadStatus;
-    folderPath: string;
+    folderPath: string;      // logical folder: 'admin' | 'folder_<id>' | 'carousel_<id>'
+    targetPath: string;      // relative upload path used by the chunk/status/cancel APIs
     tags: string[];
     parentId?: string | null;   // DB parent_id for carousel_item
     forceType?: string | null;  // e.g. 'carousel_item'
@@ -25,65 +27,152 @@ export interface UploadTask {
     retryCount: number;
 }
 
-interface UploadContextType {
-    tasks: UploadTask[];
+export interface UploadAndWaitResult {
+    name: string;
+    item?: {
+        url?: string;
+        type?: string;
+        thumbnail_url?: string | null;
+        [key: string]: unknown;
+    } | null;
+    error?: string;
+}
+
+interface UploadOpts {
+    folderId?: string | null;
+    tags?: string[];
+    forceType?: string | null;
+    caption?: string | null;
+}
+
+interface UploadActions {
     addFiles: (files: File[], folderId?: string | null, tags?: string[]) => void;
     addFolderFiles: (files: File[], parentFolderId?: string | null, tags?: string[]) => Promise<void>;
     cancelTask: (taskId: string) => void;
     retryTask: (taskId: string) => void;
     clearCompleted: () => void;
+    uploadAndWait: (files: File[], opts?: UploadOpts) => Promise<UploadAndWaitResult[]>;
 }
 
-const UploadContext = createContext<UploadContextType | undefined>(undefined);
+interface UploadTasksData {
+    tasks: UploadTask[];
+    activeUploads: number;
+}
 
-export function useUpload() {
-    const context = useContext(UploadContext);
-    if (!context) {
+export const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks — must match server-side convention
+export const MAX_CONCURRENT = 3; // maximum concurrent uploads
+export const MAX_FILE_SIZE = 1024 * 1024 * 1024; // 1GB per file
+export const VIDEO_EXTS = ['mp4', 'mov', 'm4v', 'webm', 'mkv'];
+export const IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+
+const CHUNK_FETCH_TIMEOUT_MS = 60_000; // real per-chunk network timeout (5MB in 60s ≈ 83KB/s floor)
+const FREEZE_TIMEOUT_MS = 30_000;      // safety net; the heartbeat keeps slow-but-alive tasks fresh
+const HEARTBEAT_INTERVAL_MS = 15_000;
+const RETRY_DELAY_MS = 5000;
+const MAX_AUTO_RETRIES = 2;
+
+const UploadActionsContext = createContext<UploadActions | undefined>(undefined);
+const UploadTasksContext = createContext<UploadTasksData | undefined>(undefined);
+
+/** Compat hook — full context (tasks + actions). */
+export function useUpload(): UploadTasksData & UploadActions {
+    const actions = useContext(UploadActionsContext);
+    const tasks = useContext(UploadTasksContext);
+    if (!actions || !tasks) {
         throw new Error('useUpload must be used within an UploadProvider');
     }
-    return context;
+    return { ...tasks, ...actions };
 }
 
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
-const MAX_CONCURRENT = 2; // Maximum number of concurrent uploads
-const FREEZE_TIMEOUT_MS = 30000; // 30s without progress = frozen (chunks of 5MB can take a while on slow links)
-const RETRY_DELAY_MS = 5000; // delay before re-enqueuing a frozen upload
-const MAX_AUTO_RETRIES = 2; // auto-retries before marking the task as failed
+/** Actions only — stable callbacks, does NOT re-render on task progress. */
+export function useUploadActions(): UploadActions {
+    const actions = useContext(UploadActionsContext);
+    if (!actions) {
+        throw new Error('useUploadActions must be used within an UploadProvider');
+    }
+    return actions;
+}
+
+/** Tasks only — re-renders when the queue changes. */
+export function useUploadTasks(): UploadTasksData {
+    const tasks = useContext(UploadTasksContext);
+    if (!tasks) {
+        throw new Error('useUploadTasks must be used within an UploadProvider');
+    }
+    return tasks;
+}
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+function sanitizeFileName(name: string): string {
+    const cleaned = name.replace(/[/\\]/g, '-').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+    return cleaned || 'untitled';
+}
+
+function getFileExtension(name: string): string {
+    return name.split('.').pop()?.toLowerCase() || '';
+}
+
+function isVideoFile(file: File): boolean {
+    return file.type.startsWith('video/') || VIDEO_EXTS.includes(getFileExtension(file.name));
+}
+
+function isImageFile(file: File): boolean {
+    return file.type.startsWith('image/') || IMAGE_EXTS.includes(getFileExtension(file.name));
+}
+
+function validateFile(file: File): { ok: boolean; error?: string } {
+    if (file.size > MAX_FILE_SIZE) {
+        return { ok: false, error: 'File too large (max 1GB)' };
+    }
+    const ext = getFileExtension(file.name);
+    if (!isVideoFile(file) && !isImageFile(file)) {
+        return { ok: false, error: `Unsupported file type: .${ext || 'unknown'}` };
+    }
+    return { ok: true };
+}
+
+function detectContentType(name: string): string {
+    return isVideoFile({ name } as File) ? 'video' : 'image';
+}
+
+// ─── Provider ────────────────────────────────────────────────────────────────
 
 export function UploadProvider({ children }: { children: React.ReactNode }) {
-    const { data: session } = useSession();
     const [tasks, setTasks] = useState<UploadTask[]>([]);
     const [activeUploads, setActiveUploads] = useState<Set<string>>(new Set());
 
-    // Track abort controllers for active tasks
+    // Refs (stable, read/written outside React lifecycle)
     const abortControllers = useRef<Map<string, AbortController>>(new Map());
-
-    // Track byte progress timestamps to detect freezes
     const lastProgressMs = useRef<Map<string, number>>(new Map());
-
-    // Track the last observed byte progress so slow-but-alive uploads are not frozen
-    const lastProgressBytes = useRef<Map<string, number>>(new Map());
-
-    // Timers for automatic retry of frozen uploads
     const retryTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+    const waiters = useRef<Map<string, (r: UploadAndWaitResult) => void>>(new Map());
+    const thumbnails = useRef<Map<string, File>>(new Map());
+    const userCanceled = useRef<Set<string>>(new Set());
+    const activeUploadsRef = useRef<Set<string>>(new Set());
+    const tasksRef = useRef<UploadTask[]>([]);
 
-    // Enqueue a frozen task again after RETRY_DELAY_MS (only if it is still frozen)
+    // Keep refs in sync for use inside intervals / async flows
+    useEffect(() => { tasksRef.current = tasks; }, [tasks]);
+    useEffect(() => { activeUploadsRef.current = activeUploads; }, [activeUploads]);
+
+    // ── task lifecycle helpers ────────────────────────────────────────────────
+
     const scheduleRetry = useCallback((taskId: string) => {
         if (retryTimers.current.has(taskId)) return;
-
         const timer = setTimeout(() => {
             retryTimers.current.delete(taskId);
             setTasks(prev => prev.map(t => {
                 if (t.id !== taskId || t.status !== 'frozen') return t;
-                // Restart from chunk 0: the server temp file may hold a partial chunk.
-                return { ...t, status: 'pending' as UploadStatus, progress: 0, currentChunk: 0 };
+                // Keep currentChunk/progress — the next startUpload resumes via
+                // the status endpoint instead of restarting from chunk 0.
+                // Increment retryCount so auto-retries are bounded.
+                return { ...t, status: 'pending' as UploadStatus, retryCount: t.retryCount + 1 };
             }));
         }, RETRY_DELAY_MS);
-
         retryTimers.current.set(taskId, timer);
     }, []);
 
-    // Clear any pending retry timer for a task
     const clearRetryTimer = useCallback((taskId: string) => {
         const timer = retryTimers.current.get(taskId);
         if (timer) {
@@ -92,30 +181,62 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         }
     }, []);
 
-    // Add new files to the queue (individual / loose files)
-    const addFiles = useCallback((files: File[], folderId: string | null = null, tags: string[] = []) => {
-        const newTasks: UploadTask[] = files.map(file => ({
+    const resolveWaiter = useCallback((taskId: string, result: UploadAndWaitResult) => {
+        const waiter = waiters.current.get(taskId);
+        if (waiter) {
+            waiters.current.delete(taskId);
+            waiter(result);
+        }
+    }, []);
+
+    const buildTask = useCallback((file: File, folderPath: string, opts: UploadOpts = {}, validated: boolean): UploadTask => {
+        const safeName = sanitizeFileName(file.name);
+        const targetPath = `${folderPath ? folderPath + '/' : ''}${safeName}`;
+        return {
             id: crypto.randomUUID(),
             file,
-            name: file.name,
+            name: safeName,
             size: file.size,
             progress: 0,
-            status: 'pending',
-            folderPath: folderId ? `folder_${folderId}` : 'admin',
-            tags,
-            parentId: folderId,
-            forceType: null,
-            caption: null,
+            status: validated ? 'pending' as UploadStatus : 'error' as UploadStatus,
+            folderPath,
+            targetPath,
+            tags: opts.tags || [],
+            parentId: opts.folderId ?? null,
+            forceType: opts.forceType ?? null,
+            caption: opts.caption ?? null,
             chunkSize: CHUNK_SIZE,
             totalChunks: Math.ceil(file.size / CHUNK_SIZE),
             currentChunk: 0,
-            retryCount: 0
-        }));
+            retryCount: 0,
+        };
+    }, []);
 
+    // Enqueue tasks. For invalid files, the task is created with status 'error'
+    // (visible in the queue with a clear reason) but is NOT enqueued for upload.
+    const enqueueTasks = useCallback((newTasks: UploadTask[]) => {
+        if (newTasks.length === 0) return;
+        for (const t of newTasks) {
+            if (t.status === 'error') {
+                t.errorMessage = t.errorMessage || 'Invalid file';
+            }
+        }
         setTasks(prev => [...prev, ...newTasks]);
     }, []);
 
-    // Add files from a folder upload with carousel detection
+    // ── public actions ────────────────────────────────────────────────────────
+
+    const addFiles = useCallback((files: File[], folderId: string | null = null, tags: string[] = []) => {
+        const folderPath = folderId ? `folder_${folderId}` : 'admin';
+        const newTasks: UploadTask[] = files.map(file => {
+            const check = validateFile(file);
+            const task = buildTask(file, folderPath, { folderId, tags }, check.ok);
+            if (!check.ok) task.errorMessage = check.error;
+            return task;
+        });
+        enqueueTasks(newTasks);
+    }, [buildTask, enqueueTasks]);
+
     const addFolderFiles = useCallback(async (files: File[], parentFolderId: string | null = null, tags: string[] = []) => {
         const newTasks: UploadTask[] = [];
 
@@ -124,42 +245,40 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const looseFiles: File[] = [];
 
         for (const file of files) {
-            const relPath = (file as any).webkitRelativePath as string;
+            const relPath = file.webkitRelativePath as string;
             if (relPath && relPath.includes('/')) {
-                // Extract the first-level folder name
                 const parts = relPath.split('/');
-                // parts[0] is the root folder selected by the user
-                // parts[1] is either a subfolder or the filename
                 if (parts.length >= 3) {
-                    // File is inside a subfolder: rootFolder/subFolder/file.mp4
                     const subFolder = parts[1];
-                    if (!folderGroups.has(subFolder)) {
-                        folderGroups.set(subFolder, []);
-                    }
+                    if (!folderGroups.has(subFolder)) folderGroups.set(subFolder, []);
                     folderGroups.get(subFolder)!.push(file);
                 } else {
-                    // File is directly in the root folder: rootFolder/file.mp4
                     looseFiles.push(file);
                 }
             } else {
-                // No relative path — treat as loose file
                 looseFiles.push(file);
             }
         }
 
-        // If all files are in the root with no subfolders, treat the root folder itself as a group
+        // If all files are in the root with no subfolders, treat the root folder as a group
         if (folderGroups.size === 0 && looseFiles.length > 0) {
-            const firstRelPath = (files[0] as any).webkitRelativePath as string;
+            const firstRelPath = (files[0] as File).webkitRelativePath as string;
             if (firstRelPath) {
                 const rootName = firstRelPath.split('/')[0];
                 folderGroups.set(rootName, looseFiles);
-                looseFiles.length = 0; // clear
+                looseFiles.length = 0;
             }
         }
 
+        const pushMediaTask = (file: File, folderPath: string, opts: UploadOpts) => {
+            const check = validateFile(file);
+            const task = buildTask(file, folderPath, opts, check.ok);
+            if (!check.ok) task.errorMessage = check.error;
+            newTasks.push(task);
+        };
+
         // Process folder groups — carousel detection
         for (const [folderName, groupFiles] of folderGroups) {
-            // Read .txt caption if present
             let folderCaption = '';
             const txtFile = groupFiles.find(f => f.name.toLowerCase().endsWith('.txt'));
             if (txtFile) {
@@ -170,29 +289,15 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 }
             }
 
-            // Filter out .txt files from media
             const mediaFiles = groupFiles.filter(f => !f.name.toLowerCase().endsWith('.txt'));
             if (mediaFiles.length === 0) continue;
 
             if (mediaFiles.length === 1) {
-                // Single file in folder → standalone post with caption
                 const file = mediaFiles[0];
-                newTasks.push({
-                    id: crypto.randomUUID(),
-                    file,
-                    name: file.name,
-                    size: file.size,
-                    progress: 0,
-                    status: 'pending',
-                    folderPath: parentFolderId ? `folder_${parentFolderId}` : 'admin',
+                pushMediaTask(file, parentFolderId ? `folder_${parentFolderId}` : 'admin', {
+                    folderId: parentFolderId,
                     tags,
-                    parentId: parentFolderId,
-                    forceType: null,
                     caption: folderCaption || null,
-                    chunkSize: CHUNK_SIZE,
-                    totalChunks: Math.ceil(file.size / CHUNK_SIZE),
-                    currentChunk: 0,
-                    retryCount: 0
                 });
             } else {
                 // 2+ files → create carousel_folder in DB, then queue children
@@ -205,35 +310,22 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                             type: 'carousel_folder',
                             parent_id: parentFolderId,
                             caption: folderCaption || null,
-                            ...(tags.length > 0 ? { tags: JSON.stringify(tags) } : {})
-                        })
+                            ...(tags.length > 0 ? { tags: JSON.stringify(tags) } : {}),
+                        }),
                     });
 
                     if (!res.ok) throw new Error('Failed to create carousel folder');
                     const folderData = await res.json();
 
-                    // Sort media files by name for consistent ordering
                     const sortedMedia = [...mediaFiles].sort((a, b) =>
-                        a.name.localeCompare(b.name, undefined, { numeric: true })
+                        a.name.localeCompare(b.name, undefined, { numeric: true }),
                     );
 
                     for (const file of sortedMedia) {
-                        newTasks.push({
-                            id: crypto.randomUUID(),
-                            file,
-                            name: file.name,
-                            size: file.size,
-                            progress: 0,
-                            status: 'pending',
-                            folderPath: `carousel_${folderData.id}`,
+                        pushMediaTask(file, `carousel_${folderData.id}`, {
+                            folderId: folderData.id,
                             tags,
-                            parentId: folderData.id,
                             forceType: 'carousel_item',
-                            caption: null,
-                            chunkSize: CHUNK_SIZE,
-                            totalChunks: Math.ceil(file.size / CHUNK_SIZE),
-                            currentChunk: 0,
-                            retryCount: 0
                         });
                     }
                 } catch (error) {
@@ -244,51 +336,44 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
         // Loose files — individual uploads
         for (const file of looseFiles) {
-            if (file.name.toLowerCase().endsWith('.txt')) continue; // skip .txt
-            newTasks.push({
-                id: crypto.randomUUID(),
-                file,
-                name: file.name,
-                size: file.size,
-                progress: 0,
-                status: 'pending',
-                folderPath: parentFolderId ? `folder_${parentFolderId}` : 'admin',
+            if (file.name.toLowerCase().endsWith('.txt')) continue;
+            pushMediaTask(file, parentFolderId ? `folder_${parentFolderId}` : 'admin', {
+                folderId: parentFolderId,
                 tags,
-                parentId: parentFolderId,
-                forceType: null,
-                caption: null,
-                chunkSize: CHUNK_SIZE,
-                totalChunks: Math.ceil(file.size / CHUNK_SIZE),
-                currentChunk: 0,
-                retryCount: 0
             });
         }
 
-        if (newTasks.length > 0) {
-            setTasks(prev => [...prev, ...newTasks]);
-        }
-    }, []);
+        enqueueTasks(newTasks);
+    }, [buildTask, enqueueTasks]);
 
     const cancelTask = useCallback((taskId: string) => {
-        // Cancel any pending retry timer
         clearRetryTimer(taskId);
+        userCanceled.current.add(taskId);
 
-        // Abort network request if active
         if (abortControllers.current.has(taskId)) {
             abortControllers.current.get(taskId)?.abort();
             abortControllers.current.delete(taskId);
         }
 
+        // Best-effort cleanup of partial chunks on the server (fire-and-forget)
+        const task = tasksRef.current.find(t => t.id === taskId);
+        if (task && task.status !== 'completed') {
+            fetch(`/api/upload-chunk?path=${encodeURIComponent(task.targetPath)}`, { method: 'DELETE' })
+                .catch(() => { /* server cleanup is best-effort */ });
+        }
+
         setTasks(prev => prev.map(t =>
-            t.id === taskId ? { ...t, status: 'canceled' } : t
+            t.id === taskId ? { ...t, status: 'canceled' } : t,
         ));
+
+        resolveWaiter(taskId, { name: task?.name || '', error: 'Canceled' });
 
         setActiveUploads(prev => {
             const next = new Set(prev);
             next.delete(taskId);
             return next;
         });
-    }, [clearRetryTimer]);
+    }, [clearRetryTimer, resolveWaiter]);
 
     const retryTask = useCallback((taskId: string) => {
         clearRetryTimer(taskId);
@@ -297,7 +382,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             if (!taskToRetry) return prev;
 
             const others = prev.filter(t => t.id !== taskId);
-            return [...others, { ...taskToRetry, status: 'pending' as UploadStatus, progress: 0, currentChunk: 0, errorMessage: undefined }];
+            // Manual retry is a fresh attempt: reset the retry budget but keep
+            // chunk progress — startUpload resumes via the status endpoint.
+            return [...others, {
+                ...taskToRetry,
+                status: 'pending' as UploadStatus,
+                errorMessage: undefined,
+                retryCount: 0,
+            }];
         });
     }, [clearRetryTimer]);
 
@@ -305,123 +397,112 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         setTasks(prev => prev.filter(t => t.status !== 'completed' && t.status !== 'canceled'));
     }, []);
 
-    // Main Orchestrator Effect
-    useEffect(() => {
-        const pendingTasks = tasks.filter(t => t.status === 'pending');
+    const uploadAndWait = useCallback(async (files: File[], opts: UploadOpts = {}) => {
+        const results: UploadAndWaitResult[] = [];
+        const promises: Promise<UploadAndWaitResult>[] = [];
+        const newTasks: UploadTask[] = [];
+        const folderPath = opts.folderId ? `folder_${opts.folderId}` : 'admin';
 
-        if (activeUploads.size < MAX_CONCURRENT && pendingTasks.length > 0) {
-            const tasksToStart = pendingTasks.slice(0, MAX_CONCURRENT - activeUploads.size);
+        for (const file of files) {
+            const check = validateFile(file);
+            const task = buildTask(file, folderPath, opts, check.ok);
+            if (!check.ok) task.errorMessage = check.error;
 
-            tasksToStart.forEach(task => {
-                startUpload(task);
-            });
-        }
-    }, [tasks, activeUploads]);
-
-    // Freeze Detection Monitor Loop
-    useEffect(() => {
-        const interval = setInterval(() => {
-            const now = Date.now();
-            const frozen: { taskId: string; task: UploadTask }[] = [];
-
-            activeUploads.forEach(taskId => {
-                const task = tasks.find(t => t.id === taskId);
-                if (!task || task.status !== 'uploading') return;
-
-                const lastMs = lastProgressMs.current.get(taskId) ?? 0;
-                const lastBytes = lastProgressBytes.current.get(taskId) ?? 0;
-                const progressBytes = Math.round((task.currentChunk / task.totalChunks) * task.size);
-
-                // Byte progress increased since the last tick → upload is alive, just slow.
-                const madeProgress = progressBytes > lastBytes;
-                if (madeProgress) {
-                    lastProgressBytes.current.set(taskId, progressBytes);
-                    lastProgressMs.current.set(taskId, now);
-                    return;
-                }
-
-                if (now - lastMs > FREEZE_TIMEOUT_MS) {
-                    frozen.push({ taskId, task });
-                }
-            });
-
-            if (frozen.length === 0) return;
-
-            // Apply freeze transitions (pure state update — no side effects inside updater)
-            setTasks(prev => {
-                let next = prev;
-                for (const { taskId, task } of frozen) {
-                    const nextRetryCount = task.retryCount + 1;
-                    const isFailed = nextRetryCount > MAX_AUTO_RETRIES;
-                    next = next.map(t => t.id === taskId
-                        ? {
-                            ...t,
-                            status: isFailed ? 'error' as UploadStatus : 'frozen' as UploadStatus,
-                            errorMessage: isFailed
-                                ? 'Upload failed after multiple retries.'
-                                : 'Connection stalled. Retrying…'
-                        }
-                        : t);
-                }
-                return next;
-            });
-
-            // Side effects (abort + schedule retry) happen OUTSIDE the state updater
-            for (const { taskId, task } of frozen) {
-                console.warn(`Upload ID ${taskId} frozen! Aborting and scheduling retry.`);
-                if (abortControllers.current.has(taskId)) {
-                    abortControllers.current.get(taskId)?.abort();
-                    abortControllers.current.delete(taskId);
-                }
-                lastProgressBytes.current.delete(taskId);
-
-                setActiveUploads(prevActive => {
-                    const n = new Set(prevActive);
-                    n.delete(taskId);
-                    return n;
+            if (check.ok) {
+                const promise = new Promise<UploadAndWaitResult>((resolve) => {
+                    waiters.current.set(task.id, resolve);
                 });
-
-                // Auto-retry (if retries remain) — re-enqueue as pending after a delay
-                if (task.retryCount + 1 <= MAX_AUTO_RETRIES) {
-                    scheduleRetry(taskId);
-                }
+                promises.push(promise);
+                newTasks.push(task);
+            } else {
+                results.push({ name: file.name, error: check.error });
             }
-        }, 5000);
+        }
 
-        return () => clearInterval(interval);
-    }, [tasks, activeUploads, scheduleRetry]);
+        if (newTasks.length > 0) {
+            enqueueTasks(newTasks);
+            const completed = await Promise.all(promises);
+            results.push(...completed);
+        }
+        return results;
+    }, [buildTask, enqueueTasks]);
 
-    // Cleanup all pending retry timers on unmount
-    useEffect(() => {
-        const timers = retryTimers.current;
-        return () => {
-            timers.forEach(timer => clearTimeout(timer));
-            timers.clear();
-        };
-    }, []);
+    // ── Orchestrator Effect ───────────────────────────────────────────────────
 
-    // Upload Execution logic
-    const startUpload = async (task: UploadTask) => {
+    // startUpload is stable via useCallback; it only reads refs + setState.
+    const startUpload = useCallback(async (task: UploadTask) => {
         setActiveUploads(prev => new Set(prev).add(task.id));
         setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'uploading' } : t));
         lastProgressMs.current.set(task.id, Date.now());
-        lastProgressBytes.current.set(task.id, Math.round((task.currentChunk / task.totalChunks) * task.size));
 
         const controller = new AbortController();
         abortControllers.current.set(task.id, controller);
 
         try {
-            const targetPath = `${task.folderPath ? task.folderPath + '/' : ''}${task.name}`;
-            const userId = (session?.user as any)?.id as string | undefined;
+            // Generate the thumbnail BEFORE uploading chunks (fast seek + draw).
+            // Failure is non-blocking — the upload proceeds without a thumbnail.
+            let thumbFile: File | null = null;
+            if (isVideoFile(task.file) && !thumbnails.current.has(task.id)) {
+                try {
+                    thumbFile = await createVideoThumbnailFile(task.file);
+                    if (thumbFile) thumbnails.current.set(task.id, thumbFile);
+                } catch {
+                    thumbFile = null;
+                }
+            } else {
+                thumbFile = thumbnails.current.get(task.id) || null;
+            }
+
+            // Resume support: query which chunks already exist server-side and
+            // only re-send the missing ones. First attempt (currentChunk === 0)
+            // skips the round-trip.
+            let uploadedChunks = new Set<number>();
+            if (task.currentChunk > 0 || task.retryCount > 0) {
+                try {
+                    const stRes = await fetch(
+                        `/api/upload-chunk/status?path=${encodeURIComponent(task.targetPath)}`,
+                        { signal: controller.signal },
+                    );
+                    if (stRes.ok) {
+                        const st = await stRes.json();
+                        if (Array.isArray(st.chunks)) {
+                            const rawChunks: unknown[] = st.chunks;
+                            uploadedChunks = new Set(
+                                rawChunks.map((c) => Number(c)).filter((n) => Number.isInteger(n)),
+                            );
+                        }
+                    }
+                } catch {
+                    // status query failed — restart from currentChunk
+                }
+            }
 
             let currentChunk = task.currentChunk;
 
             while (currentChunk < task.totalChunks) {
-                if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+                if (controller.signal.aborted) {
+                    throw new DOMException('Aborted', 'AbortError');
+                }
+
+                // Skip chunks already present on the server (resume)
+                if (uploadedChunks.has(currentChunk)) {
+                    currentChunk++;
+                    const progress = Math.round((currentChunk / task.totalChunks) * 100);
+                    setTasks(prev => prev.map(t =>
+                        t.id === task.id ? { ...t, currentChunk, progress } : t,
+                    ));
+                    continue;
+                }
 
                 const start = currentChunk * CHUNK_SIZE;
                 const end = Math.min(start + CHUNK_SIZE, task.size);
                 const chunkBlob = task.file.slice(start, end);
+
+                // Per-chunk controller: aborts on user cancel OR a hard 60s timeout.
+                const chunkController = new AbortController();
+                const timeoutId = setTimeout(() => chunkController.abort(), CHUNK_FETCH_TIMEOUT_MS);
+                const onTaskAbort = () => chunkController.abort();
+                controller.signal.addEventListener('abort', onTaskAbort);
 
                 try {
                     lastProgressMs.current.set(task.id, Date.now());
@@ -431,11 +512,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                         headers: {
                             'x-chunk-index': currentChunk.toString(),
                             'x-total-chunks': task.totalChunks.toString(),
-                            'x-file-name': targetPath,
+                            'x-file-size': task.size.toString(),
+                            'x-file-name': task.targetPath,
                             'Content-Type': 'application/octet-stream',
                         },
                         body: chunkBlob,
-                        signal: controller.signal
+                        signal: chunkController.signal,
                     });
 
                     if (!response.ok) {
@@ -443,88 +525,66 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     }
 
                     lastProgressMs.current.set(task.id, Date.now());
-
                     currentChunk++;
                     const progress = Math.round((currentChunk / task.totalChunks) * 100);
-                    lastProgressBytes.current.set(task.id, Math.round((currentChunk / task.totalChunks) * task.size));
-
-                    if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
-
                     setTasks(prev => prev.map(t =>
-                        t.id === task.id ? { ...t, currentChunk, progress } : t
+                        t.id === task.id ? { ...t, currentChunk, progress } : t,
                     ));
-
-                } catch (chunkError: any) {
-                    if (chunkError.name === 'AbortError') {
-                        throw chunkError;
+                } catch (chunkError: unknown) {
+                    if ((chunkError as { name?: string })?.name === 'AbortError') {
+                        if (userCanceled.current.has(task.id)) {
+                            userCanceled.current.delete(task.id);
+                            throw chunkError; // user cancel — bail out silently
+                        }
+                        // Stall (timeout or freeze-monitor abort) → transient error,
+                        // the retry path resumes from the status endpoint.
+                        throw new Error('Connection stalled during chunk upload');
                     }
-                    console.error(`Chunk ${currentChunk} failed:`, chunkError);
-                    throw new Error(`Chunk ${currentChunk} upload failed. ${chunkError.message || ''}`);
+                    throw new Error(`Chunk ${currentChunk} upload failed. ${(chunkError as Error)?.message || ''}`);
+                } finally {
+                    clearTimeout(timeoutId);
+                    controller.signal.removeEventListener('abort', onTaskAbort);
                 }
             }
 
-            let thumbnailPath: string | null = null;
-            if (userId && task.file.type.startsWith('video/')) {
-                const thumbnailFile = await createVideoThumbnailFile(task.file);
-                if (thumbnailFile) {
-                    thumbnailPath = `${userId}/${task.folderPath ? task.folderPath + '/' : ''}thumbnails/${thumbnailFile.name}`;
-                    const thumbForm = new FormData();
-                    thumbForm.append('file', thumbnailFile);
-                    thumbForm.append('path', thumbnailPath);
-
-                    const thumbRes = await fetch('/api/upload', {
-                        method: 'POST',
-                        body: thumbForm,
-                        signal: controller.signal,
-                    });
-
-                    if (!thumbRes.ok) {
-                        console.warn('Thumbnail upload failed; continuing without thumbnail.');
-                        thumbnailPath = null;
-                    }
-                }
-            }
-
-            // Sync Database record upon final chunk completion
+            // Finalize: create/update the ContentItem (server generates the UUID name)
             const formData = new FormData();
             formData.append('filename', task.name);
-            formData.append('size', task.size.toString());
-            formData.append('path', targetPath);
             formData.append('folderPath', task.folderPath);
-
-            // Type detection: use forceType if set, otherwise auto-detect
-            const detectedType = task.forceType || (task.name.toLowerCase().match(/\.(mp4|mov|mkv|avi|webm)$/) ? 'video' : 'image');
-            formData.append('type', detectedType);
-
-            if (task.tags.length > 0) {
-                formData.append('tags', JSON.stringify(task.tags));
-            }
-            if (task.parentId) {
-                formData.append('parentId', task.parentId);
-            }
-            if (task.caption) {
-                formData.append('caption', task.caption);
-            }
-            if (thumbnailPath) {
-                formData.append('thumbnailPath', thumbnailPath);
-            }
+            if (task.parentId) formData.append('parentId', task.parentId);
+            // forceType wins (e.g. 'carousel_item'); otherwise detect by extension.
+            formData.append('type', task.forceType || detectContentType(task.name));
+            if (task.tags.length > 0) formData.append('tags', JSON.stringify(task.tags));
+            if (task.caption) formData.append('caption', task.caption);
+            if (thumbFile) formData.append('thumbnail', thumbFile);
 
             const metaRes = await fetch('/api/upload-chunk/complete', {
                 method: 'POST',
                 body: formData,
-                signal: controller.signal
+                signal: controller.signal,
             });
 
             if (!metaRes.ok) {
-                throw new Error("Metadata save failed");
+                let detail = '';
+                try {
+                    const errBody = await metaRes.json();
+                    detail = errBody?.error || '';
+                } catch { /* ignore */ }
+                throw new Error(detail || `Metadata save failed (${metaRes.status})`);
             }
 
-            // Finish
-            setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t));
+            const data = await metaRes.json();
+            const item = data?.item || data;
 
+            thumbnails.current.delete(task.id);
+            setTasks(prev => prev.map(t =>
+                t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t,
+            ));
+            resolveWaiter(task.id, { name: task.name, item });
         } catch (error: unknown) {
             const err = error as { name?: string; message?: string };
-            if (err.name === 'AbortError') {
+            if (err.name === 'AbortError' && userCanceled.current.has(task.id)) {
+                userCanceled.current.delete(task.id);
                 return;
             }
 
@@ -538,30 +598,155 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                         status: isFailed ? 'error' as UploadStatus : 'frozen' as UploadStatus,
                         errorMessage: isFailed
                             ? `Upload failed: ${err.message || 'Unknown error'}`
-                            : `Upload failed. Retrying… ${err.message || ''}`
+                            : `Upload stalled. Retrying… ${err.message || ''}`,
                     }
-                    : t
+                    : t,
             ));
 
-            // Auto-retry if retries remain
             if (!isFailed) {
                 scheduleRetry(task.id);
+            } else {
+                resolveWaiter(task.id, { name: task.name, error: err.message || 'Upload failed' });
             }
         } finally {
             abortControllers.current.delete(task.id);
             lastProgressMs.current.delete(task.id);
-            lastProgressBytes.current.delete(task.id);
             setActiveUploads(prev => {
                 const next = new Set(prev);
                 next.delete(task.id);
                 return next;
             });
         }
-    };
+    }, [resolveWaiter, scheduleRetry]);
+
+    // Orchestrator: start pending tasks up to MAX_CONCURRENT
+    useEffect(() => {
+        const pendingTasks = tasks.filter(t => t.status === 'pending');
+        if (activeUploads.size < MAX_CONCURRENT && pendingTasks.length > 0) {
+            const tasksToStart = pendingTasks.slice(0, MAX_CONCURRENT - activeUploads.size);
+            tasksToStart.forEach(task => {
+                startUpload(task);
+            });
+        }
+    }, [tasks, activeUploads, startUpload]);
+
+    // Heartbeat: keep slow-but-alive uploads from being flagged as frozen.
+    // The real per-chunk timeout (60s) is the actual staleness detector.
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const now = Date.now();
+            activeUploadsRef.current.forEach(taskId => {
+                const task = tasksRef.current.find(t => t.id === taskId);
+                if (task && task.status === 'uploading') {
+                    lastProgressMs.current.set(taskId, now);
+                }
+            });
+        }, HEARTBEAT_INTERVAL_MS);
+        return () => clearInterval(interval);
+    }, []);
+
+    // Freeze Detection safety net (rarely fires thanks to the heartbeat)
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const now = Date.now();
+            const frozen: { taskId: string; task: UploadTask }[] = [];
+
+            activeUploads.forEach(taskId => {
+                const task = tasks.find(t => t.id === taskId);
+                if (!task || task.status !== 'uploading') return;
+                const lastMs = lastProgressMs.current.get(taskId) ?? 0;
+                if (now - lastMs > FREEZE_TIMEOUT_MS) {
+                    frozen.push({ taskId, task });
+                }
+            });
+
+            if (frozen.length === 0) return;
+
+            setTasks(prev => {
+                let next = prev;
+                for (const { taskId, task } of frozen) {
+                    const nextRetryCount = task.retryCount + 1;
+                    const isFailed = nextRetryCount > MAX_AUTO_RETRIES;
+                    next = next.map(t => t.id === taskId
+                        ? {
+                            ...t,
+                            status: isFailed ? 'error' as UploadStatus : 'frozen' as UploadStatus,
+                            errorMessage: isFailed
+                                ? 'Upload failed after multiple retries.'
+                                : 'Connection stalled. Retrying…',
+                        }
+                        : t);
+                }
+                return next;
+            });
+
+            // Abort the in-flight fetch (NOT a user cancel — the chunk catch maps
+            // this to a transient error so the retry resumes from the status endpoint).
+            for (const { taskId, task } of frozen) {
+                console.warn(`Upload ${taskId} frozen! Aborting and scheduling retry.`);
+                if (abortControllers.current.has(taskId)) {
+                    abortControllers.current.get(taskId)?.abort();
+                    abortControllers.current.delete(taskId);
+                }
+                setActiveUploads(prev => {
+                    const n = new Set(prev);
+                    n.delete(taskId);
+                    return n;
+                });
+                const nextRetryCount = task.retryCount + 1;
+                if (nextRetryCount <= MAX_AUTO_RETRIES) {
+                    scheduleRetry(taskId);
+                } else {
+                    resolveWaiter(taskId, { name: task.name, error: 'Upload failed after multiple retries.' });
+                }
+            }
+        }, 5000);
+
+        return () => clearInterval(interval);
+    }, [tasks, activeUploads, scheduleRetry, resolveWaiter]);
+
+    // Cleanup timers on unmount
+    useEffect(() => {
+        const timers = retryTimers.current;
+        return () => {
+            timers.forEach(timer => clearTimeout(timer));
+            timers.clear();
+        };
+    }, []);
+
+    // Warn on page unload while uploads are in flight
+    useEffect(() => {
+        const handler = (e: BeforeUnloadEvent) => {
+            if (activeUploadsRef.current.size > 0) {
+                e.preventDefault();
+                e.returnValue = '';
+            }
+        };
+        window.addEventListener('beforeunload', handler);
+        return () => window.removeEventListener('beforeunload', handler);
+    }, []);
+
+    // Memoized value so consumers that only read tasks re-render on queue changes
+    // but NOT on every action identity change.
+    const tasksValue = useMemo<UploadTasksData>(
+        () => ({ tasks, activeUploads: activeUploads.size }),
+        [tasks, activeUploads],
+    );
+
+    const actionsValue = useMemo<UploadActions>(() => ({
+        addFiles,
+        addFolderFiles,
+        cancelTask,
+        retryTask,
+        clearCompleted,
+        uploadAndWait,
+    }), [addFiles, addFolderFiles, cancelTask, retryTask, clearCompleted, uploadAndWait]);
 
     return (
-        <UploadContext.Provider value={{ tasks, addFiles, addFolderFiles, cancelTask, retryTask, clearCompleted }}>
-            {children}
-        </UploadContext.Provider>
+        <UploadActionsContext.Provider value={actionsValue}>
+            <UploadTasksContext.Provider value={tasksValue}>
+                {children}
+            </UploadTasksContext.Provider>
+        </UploadActionsContext.Provider>
     );
 }
