@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
     Sliders, Plus, Play, Pause, Trash2, Calendar, Terminal, Eye,
-    X, RefreshCw, Zap, CheckCircle2, XCircle, Clock, Instagram
+    X, RefreshCw, Zap, CheckCircle2, XCircle, Clock, Instagram, Copy
 } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import IOSCard from '@/components/IOSComponents';
@@ -14,9 +14,24 @@ interface Planner {
     config: any;
     status: string;
     channels: any[];
+    channel_ids?: string[];
     last_run?: string;
     created_at: string;
     stats?: { total: number; published: number; failed: number };
+}
+
+interface PlannerLogItem {
+    id: string;
+    level: string;
+    message: string;
+    details?: string | null;
+    created_at: string;
+}
+
+interface LogsResponse {
+    logs?: PlannerLogItem[];
+    nextCursor?: string | null;
+    total?: number;
 }
 
 function frequencyText(config: any): string {
@@ -80,19 +95,71 @@ function parsePlannerConfig(config: any): any {
     }
 }
 
+// ── Next-run helpers ──────────────────────────────────────────────────────────
+function isInSleepWindow(config: any, now: Date): boolean {
+    const sleep = config?.sleep_schedule;
+    if (!sleep?.start || !sleep?.end) return false;
+    const tz = config.timezone || 'America/Sao_Paulo';
+    const local = new Date(now.toLocaleString('en-US', { timeZone: tz }));
+    const hhmm = `${String(local.getHours()).padStart(2, '0')}:${String(local.getMinutes()).padStart(2, '0')}`;
+    const s = sleep.start;
+    const e = sleep.end;
+    if (s <= e) return hhmm >= s && hhmm < e;
+    return hhmm >= s || hhmm < e;
+}
+
+function formatNextRun(d: Date): string {
+    const diff = d.getTime() - Date.now();
+    if (diff <= 0) return 'Agora';
+    const m = Math.round(diff / 60000);
+    if (m < 60) return `em ${m}min`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `em ${h}h ${m % 60}min`;
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+/** Local estimate of the next run. The backend preview returns the authoritative value. */
+function computeNextRun(planner: Planner): { label: string; due: boolean } {
+    if (planner.status === 'paused') return { label: 'Pausado', due: false };
+    const cfg = planner.config;
+    const freq = cfg?.frequency;
+    const val = Number(freq?.value);
+    if (!freq || !Number.isFinite(val) || val <= 0) return { label: 'Manual (on demand)', due: false };
+    if (isInSleepWindow(cfg, new Date())) return { label: 'Em pausa (sleep)', due: false };
+    if (cfg?.start_time) {
+        const st = new Date(cfg.start_time);
+        if (!Number.isNaN(st.getTime()) && st.getTime() > Date.now()) return { label: formatNextRun(st), due: false };
+    }
+    if (!planner.last_run) return { label: 'Agora', due: true };
+    const unit = freq.unit === 'hours' ? 3600e3
+        : freq.unit === 'days' ? 86400e3
+            : freq.unit === 'weeks' ? 7 * 86400e3
+                : 60e3;
+    const next = new Date(new Date(planner.last_run).getTime() + val * unit);
+    return next.getTime() <= Date.now() ? { label: 'Agora', due: true } : { label: formatNextRun(next), due: false };
+}
+
+const LOGS_PAGE_SIZE = 50;
+const LOGS_AUTO_REFRESH_MS = 15000;
+
 export default function PlannersPage() {
     const [planners, setPlanners] = useState<Planner[]>([]);
     const [loading, setLoading] = useState(true);
     const [isWizardOpen, setIsWizardOpen] = useState(false);
     const [editingPlanner, setEditingPlanner] = useState<Planner | null>(null);
     const [viewingLogs, setViewingLogs] = useState<Planner | null>(null);
-    const [logs, setLogs] = useState<any[]>([]);
+    const [logs, setLogs] = useState<PlannerLogItem[]>([]);
     const [logFilter, setLogFilter] = useState<'all' | 'info' | 'error'>('all');
     const [loadingLogs, setLoadingLogs] = useState(false);
+    const [logCursor, setLogCursor] = useState<string | null>(null);
+    const [logTotal, setLogTotal] = useState<number | null>(null);
+    const [hasMoreLogs, setHasMoreLogs] = useState(false);
+    const [clearingLogs, setClearingLogs] = useState(false);
     const [viewingPreview, setViewingPreview] = useState<Planner | null>(null);
     const [previewData, setPreviewData] = useState<any>(null);
     const [loadingPreview, setLoadingPreview] = useState(false);
     const [runningId, setRunningId] = useState<string | null>(null);
+    const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
 
@@ -124,25 +191,41 @@ export default function PlannersPage() {
                 body: JSON.stringify({ status: newStatus }),
             });
             if (!res.ok) throw new Error();
+            showToast(newStatus === 'paused' ? 'Planner pausado' : 'Planner ativado');
             fetchData();
         } catch { showToast('Failed to update status', 'err'); }
+    }
+
+    async function duplicatePlanner(planner: Planner) {
+        setDuplicatingId(planner.id);
+        try {
+            const res = await fetch(`/api/planners/${planner.id}/duplicate`, { method: 'POST' });
+            if (!res.ok) throw new Error();
+            showToast('Planner duplicado');
+            fetchData();
+        } catch { showToast('Falha ao duplicar planner', 'err'); }
+        finally { setDuplicatingId(null); }
     }
 
     async function runNow(planner: Planner) {
         setRunningId(planner.id);
         try {
             const res = await fetch(`/api/planners/${planner.id}/run`, { method: 'POST' });
+            const data: { error?: string; created?: number; posts_created?: number } = await res.json().catch(() => ({}));
             if (!res.ok) {
-                const err = await res.json().catch(() => ({}));
-                throw new Error((err as any).error || 'Request failed');
+                if (res.status === 409) {
+                    showToast('Planner pausado — ative antes de executar', 'err');
+                } else {
+                    showToast(data.error || 'Run failed', 'err');
+                }
+                return;
             }
-            const data = await res.json();
-            showToast(`${planner.name} — ${data.posts_created ?? 'N'} post(s) queued ✓`);
+            const n = data.created ?? data.posts_created ?? 'N';
+            showToast(`${planner.name} — ${n} post(s) enfileirados ✓`);
             fetchData();
         } catch (e: any) { showToast(`Run failed: ${e.message}`, 'err'); }
         finally { setRunningId(null); }
     }
-
 
     async function confirmDelete() {
         if (!deletingId) return;
@@ -154,30 +237,72 @@ export default function PlannersPage() {
         } catch { showToast('Failed to delete planner', 'err'); setDeletingId(null); }
     }
 
-    async function fetchLogs(plannerId: string) {
+    // ── Logs (server-side pagination + level filter + auto-refresh) ────────────
+    async function fetchLogs(plannerId: string, mode: 'refresh' | 'more' = 'refresh', level?: string) {
         setLoadingLogs(true);
         try {
-            const res = await fetch(`/api/planners/logs/${plannerId}`);
-            setLogs(res.ok ? await res.json() : []);
+            const lv = level ?? logFilter;
+            const params = new URLSearchParams({ take: String(LOGS_PAGE_SIZE) });
+            if (lv && lv !== 'all') params.set('level', lv);
+            if (mode === 'more' && logCursor) params.set('cursor', logCursor);
+
+            const res = await fetch(`/api/planners/logs/${plannerId}?${params.toString()}`);
+            if (!res.ok) throw new Error('Failed to load logs');
+            const data: LogsResponse | PlannerLogItem[] = await res.json();
+
+            const items: PlannerLogItem[] = Array.isArray(data) ? data : (data.logs ?? []);
+            setLogs(prev => mode === 'more' ? [...prev, ...items] : items);
+            if (!Array.isArray(data)) {
+                setLogCursor(data.nextCursor ?? null);
+                setLogTotal(data.total ?? items.length);
+                setHasMoreLogs(Boolean(data.nextCursor));
+            } else {
+                // Legacy array response — no pagination info
+                setLogCursor(null);
+                setLogTotal(items.length);
+                setHasMoreLogs(false);
+            }
         } catch (e: any) {
             console.error('Error fetching logs:', e);
-            showToast('Failed to load logs', 'err');
-            setLogs([]);
+            showToast('Falha ao carregar logs', 'err');
         } finally { setLoadingLogs(false); }
     }
 
-    useEffect(() => { if (viewingLogs) fetchLogs(viewingLogs.id); }, [viewingLogs]);
+    useEffect(() => {
+        if (!viewingLogs) return;
+        // Reset pagination state for the newly opened planner
+        setLogs([]);
+        setLogCursor(null);
+        setLogTotal(null);
+        setHasMoreLogs(false);
+        fetchLogs(viewingLogs.id, 'refresh', logFilter);
+        const t = setInterval(() => fetchLogs(viewingLogs.id, 'refresh', logFilter), LOGS_AUTO_REFRESH_MS);
+        return () => clearInterval(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [viewingLogs, logFilter]);
 
-    const filteredLogs = useMemo(() => {
-        if (logFilter === 'all') return logs;
-        return logs.filter(log => log.level === logFilter);
-    }, [logs, logFilter]);
+    async function clearLogs(plannerId: string) {
+        // Two-tap confirm: first tap arms, second tap executes (3s window)
+        if (!clearingLogs) {
+            setClearingLogs(true);
+            setTimeout(() => setClearingLogs(false), 3000);
+            return;
+        }
+        try {
+            const res = await fetch(`/api/planners/logs/${plannerId}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error();
+            showToast('Logs apagados');
+            setClearingLogs(false);
+            fetchLogs(plannerId, 'refresh', logFilter);
+        } catch { showToast('Falha ao limpar logs', 'err'); setClearingLogs(false); }
+    }
 
+    // ── Preview ────────────────────────────────────────────────────────────────
     async function fetchPreview(plannerId: string) {
         setLoadingPreview(true);
         try {
             const res = await fetch(`/api/planners/${plannerId}/preview`);
-            const data = await res.json().catch(() => ({}));
+            const data: { error?: string } = await res.json().catch(() => ({}));
             setPreviewData(res.ok ? data : { error: data.error || 'Failed to load preview' });
         } catch (e: any) {
             console.error('Error fetching preview:', e);
@@ -233,10 +358,12 @@ export default function PlannersPage() {
 
                         const stats = planner.stats ?? { total: 0, published: 0, failed: 0 };
                         const isRunning = runningId === planner.id;
+                        const isDuplicating = duplicatingId === planner.id;
+                        const nextRun = computeNextRun(planner);
                         return (
-                            <IOSCard key={planner.id} className="p-5 group">
-                                <div className="flex items-center gap-4">
-                                    {/* Status toggle */}
+                            <IOSCard key={planner.id} className="p-5">
+                                <div className="flex items-center gap-3">
+                                    {/* Status toggle (one-tap pause/resume) */}
                                     <button
                                         onClick={() => toggleStatus(planner)}
                                         title={planner.status === 'active' ? 'Pause planner' : 'Activate planner'}
@@ -271,6 +398,10 @@ export default function PlannersPage() {
                                                 <Instagram size={11} />
                                                 {(planner.channels || []).length} channels
                                             </span>
+                                            <span className={`flex items-center gap-1 ${nextRun.due ? 'text-ios-green font-semibold' : ''}`}>
+                                                <Zap size={11} />
+                                                Next: {nextRun.label}
+                                            </span>
                                         </div>
 
                                         {/* Post counts */}
@@ -283,45 +414,55 @@ export default function PlannersPage() {
                                         )}
                                     </div>
 
-                                    {/* Actions */}
-                                    <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    {/* Actions — always visible (touch-friendly) */}
+                                    <div className="flex gap-1 shrink-0">
                                         <button
                                             onClick={() => runNow(planner)}
                                             disabled={isRunning}
                                             title="Run now"
-                                            className="p-2 rounded-lg text-ios-blue hover:bg-ios-blue/10 transition-colors disabled:opacity-50"
+                                            className="p-1.5 rounded-lg text-ios-blue bg-ios-blue/5 hover:bg-ios-blue/10 transition-colors disabled:opacity-50"
                                         >
                                             {isRunning
-                                                ? <RefreshCw size={18} className="animate-spin" />
-                                                : <Zap size={18} />}
+                                                ? <RefreshCw size={16} className="animate-spin" />
+                                                : <Zap size={16} />}
+                                        </button>
+                                        <button
+                                            onClick={() => duplicatePlanner(planner)}
+                                            disabled={isDuplicating}
+                                            title="Duplicate planner"
+                                            className="p-1.5 rounded-lg text-ios-text-secondary bg-ios-gray-5/40 hover:bg-ios-gray-5 transition-colors disabled:opacity-50"
+                                        >
+                                            {isDuplicating
+                                                ? <RefreshCw size={16} className="animate-spin" />
+                                                : <Copy size={16} />}
                                         </button>
                                         <button
                                             onClick={() => setViewingLogs(planner)}
                                             title="View logs"
-                                            className="p-2 rounded-lg text-ios-text-secondary hover:bg-ios-gray-5 transition-colors"
+                                            className="p-1.5 rounded-lg text-ios-text-secondary bg-ios-gray-5/40 hover:bg-ios-gray-5 transition-colors"
                                         >
-                                            <Terminal size={18} />
+                                            <Terminal size={16} />
                                         </button>
                                         <button
                                             onClick={() => setViewingPreview(planner)}
                                             title="Preview next run"
-                                            className="p-2 rounded-lg text-ios-text-secondary hover:bg-ios-gray-5 transition-colors"
+                                            className="p-1.5 rounded-lg text-ios-text-secondary bg-ios-gray-5/40 hover:bg-ios-gray-5 transition-colors"
                                         >
-                                            <Eye size={18} />
+                                            <Eye size={16} />
                                         </button>
                                         <button
                                             onClick={() => { setEditingPlanner(planner); setIsWizardOpen(true); }}
                                             title="Edit planner"
-                                            className="p-2 rounded-lg text-ios-blue hover:bg-ios-blue/10 transition-colors"
+                                            className="p-1.5 rounded-lg text-ios-blue bg-ios-blue/5 hover:bg-ios-blue/10 transition-colors"
                                         >
-                                            <Sliders size={18} />
+                                            <Sliders size={16} />
                                         </button>
                                         <button
                                             onClick={() => setDeletingId(planner.id)}
                                             title="Delete planner"
-                                            className="p-2 rounded-lg text-ios-red hover:bg-ios-red/10 transition-colors"
+                                            className="p-1.5 rounded-lg text-ios-red bg-ios-red/5 hover:bg-ios-red/10 transition-colors"
                                         >
-                                            <Trash2 size={18} />
+                                            <Trash2 size={16} />
                                         </button>
                                     </div>
                                 </div>
@@ -375,7 +516,9 @@ export default function PlannersPage() {
                         <div className="p-5 border-b border-ios-separator flex items-center justify-between">
                             <div>
                                 <h2 className="text-[17px] font-bold text-ios-text">Logs: {viewingLogs.name}</h2>
-                                <p className="text-[12px] text-ios-text-secondary">Execution history</p>
+                                <p className="text-[12px] text-ios-text-secondary">
+                                    {logTotal !== null ? `${logTotal} logs · auto-refresh 15s` : 'Execution history'}
+                                </p>
                             </div>
                             <div className="flex items-center gap-2">
                                 {/* Level filter */}
@@ -390,7 +533,14 @@ export default function PlannersPage() {
                                         </button>
                                     ))}
                                 </div>
-                                <button onClick={() => fetchLogs(viewingLogs.id)} className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors" disabled={loadingLogs}>
+                                <button
+                                    onClick={() => clearLogs(viewingLogs.id)}
+                                    title="Clear logs (tap twice to confirm)"
+                                    className={`px-2 py-1.5 text-[11px] font-bold rounded-lg transition-colors ${clearingLogs ? 'bg-ios-red text-white' : 'text-ios-red bg-ios-red/5 hover:bg-ios-red/10'}`}
+                                >
+                                    {clearingLogs ? 'Confirmar?' : 'Limpar'}
+                                </button>
+                                <button onClick={() => fetchLogs(viewingLogs.id, 'refresh', logFilter)} className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors" disabled={loadingLogs} title="Refresh logs">
                                     <RefreshCw size={18} className={loadingLogs ? 'animate-spin' : ''} />
                                 </button>
                                 <button onClick={() => setViewingLogs(null)} className="p-2 text-ios-text-secondary hover:bg-ios-gray-5 rounded-full transition-colors">
@@ -399,13 +549,13 @@ export default function PlannersPage() {
                             </div>
                         </div>
                         <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar bg-ios-background">
-                            {filteredLogs.length === 0 ? (
+                            {logs.length === 0 ? (
                                 <div className="text-center py-12 text-ios-text-secondary">
                                     <Terminal size={32} className="mx-auto mb-2 opacity-20" />
-                                    <p>{logs.length === 0 ? 'No logs found for this planner.' : `No ${logFilter} logs.`}</p>
+                                    <p>{loadingLogs ? 'Carregando logs...' : `Nenhum log ${logFilter === 'all' ? '' : logFilter} encontrado.`}</p>
                                 </div>
                             ) : (
-                                filteredLogs.map(log => (
+                                logs.map((log: PlannerLogItem) => (
                                     <div key={log.id} className="bg-ios-card p-3 rounded-xl border border-ios-separator text-sm">
                                         <div className="flex items-center justify-between mb-1">
                                             <span className={`font-bold uppercase text-[10px] px-1.5 py-0.5 rounded ${log.level === 'error' ? 'bg-ios-red/10 text-ios-red' : 'bg-ios-blue/10 text-ios-blue'}`}>
@@ -422,6 +572,19 @@ export default function PlannersPage() {
                                     </div>
                                 ))
                             )}
+                        </div>
+                        {/* Pagination footer */}
+                        <div className="border-t border-ios-separator p-3 flex items-center justify-between bg-ios-card">
+                            <span className="text-[11px] text-ios-text-secondary">
+                                {logs.length}{logTotal !== null && logTotal > logs.length ? ` de ${logTotal}` : ''} logs
+                            </span>
+                            <button
+                                onClick={() => fetchLogs(viewingLogs.id, 'more', logFilter)}
+                                disabled={!hasMoreLogs || loadingLogs}
+                                className="px-3 py-1.5 text-[12px] font-semibold rounded-lg text-ios-blue bg-ios-blue/5 hover:bg-ios-blue/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {loadingLogs ? 'Carregando...' : 'Mais antigos'}
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -462,6 +625,18 @@ export default function PlannersPage() {
                                             {previewData.runtime.warnings.map((warning: string) => (
                                                 <div key={warning}>{warning}</div>
                                             ))}
+                                        </div>
+                                    )}
+                                    {previewData?.next_run_at && (
+                                        <div className="bg-ios-card border border-ios-separator rounded-xl p-4 flex items-center gap-2">
+                                            <Zap size={16} className="text-ios-blue" />
+                                            <div>
+                                                <div className="text-xs uppercase tracking-wide text-ios-text-secondary mb-0.5">Next run</div>
+                                                <div className="font-semibold text-ios-text">{new Date(previewData.next_run_at).toLocaleString('pt-BR')}</div>
+                                            </div>
+                                            {previewData?.gated && (
+                                                <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-amber-100 text-amber-800">Gated</span>
+                                            )}
                                         </div>
                                     )}
                                     <div className="grid gap-2">
