@@ -51,6 +51,45 @@ export function extractUploadPathFromUrl(url: string | null | undefined): string
 }
 
 /**
+ * Minimal shape of a content item needed to resolve its files on disk.
+ */
+export interface ItemFileInfo {
+    url?: string | null;
+    thumbnail_url?: string | null;
+    path?: string | null;
+    name?: string | null;
+}
+
+/**
+ * Resolve every disk-relative path that a content item owns (main file +
+ * thumbnail). The stored URL is the source of truth (new uploads use UUID
+ * filenames); for legacy items without a URL we fall back to path+name.
+ *
+ * @param userId - owner id (used by the path+name fallback)
+ * @param item - item file metadata
+ */
+export function collectItemFiles(userId: string, item: ItemFileInfo): string[] {
+    const files: string[] = [];
+
+    // URL is the primary source (survives renames, UUID-based).
+    const fromUrl = extractUploadPathFromUrl(item.url ?? null);
+    if (fromUrl) {
+        files.push(fromUrl);
+    } else if (item.name) {
+        // Legacy item without a url — reconstruct from path+name.
+        const diskPath = buildDiskPath(userId, item.path ?? null, item.name ?? "");
+        if (diskPath) files.push(diskPath);
+    }
+
+    const thumb = extractUploadPathFromUrl(item.thumbnail_url ?? null);
+    if (thumb) {
+        files.push(thumb);
+    }
+
+    return files;
+}
+
+/**
  * Build the disk-relative path for a content item.
  * DB stores: path = folderPath (e.g. "admin"), name = filename (e.g. "video.mp4")
  * Disk path: {userId}/{folderPath}/{filename}
