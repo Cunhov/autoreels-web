@@ -19,89 +19,98 @@ import { Prisma } from "@prisma/client";
  *   the fields the calendar UI needs.
  */
 export async function GET(req: Request) {
-    const session = await getServerSession(authOptions);
-    const userId = getSessionUserId(session);
-    if (!userId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+	const session = await getServerSession(authOptions);
+	const userId = getSessionUserId(session);
+	if (!userId) {
+		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+	}
 
-    let searchParams: URLSearchParams;
-    try {
-        searchParams = new URL(req.url).searchParams;
-    } catch {
-        return NextResponse.json({ error: "Invalid request URL" }, { status: 400 });
-    }
-    const startRaw = searchParams.get("start");
-    const endRaw = searchParams.get("end");
+	let searchParams: URLSearchParams;
+	try {
+		searchParams = new URL(req.url).searchParams;
+	} catch {
+		return NextResponse.json({ error: "Invalid request URL" }, { status: 400 });
+	}
+	const startRaw = searchParams.get("start");
+	const endRaw = searchParams.get("end");
 
-    if (!startRaw || !endRaw) {
-        return NextResponse.json(
-            { error: "start and end are required ISO date params" },
-            { status: 400 }
-        );
-    }
+	if (!startRaw || !endRaw) {
+		return NextResponse.json(
+			{ error: "start and end are required ISO date params" },
+			{ status: 400 },
+		);
+	}
 
-    const start = new Date(startRaw);
-    const end = new Date(endRaw);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-        return NextResponse.json(
-            { error: "start and end must be valid ISO dates" },
-            { status: 400 }
-        );
-    }
+	const start = new Date(startRaw);
+	const end = new Date(endRaw);
+	if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+		return NextResponse.json(
+			{ error: "start and end must be valid ISO dates" },
+			{ status: 400 },
+		);
+	}
 
-    const channelId = searchParams.get("channel_id");
-    const status = searchParams.get("status");
-    const mediaType = searchParams.get("media_type");
-    const requestedLimit = Number(searchParams.get("limit") || "500");
-    const limit = Number.isFinite(requestedLimit)
-        ? Math.min(Math.max(requestedLimit, 1), 1000)
-        : 500;
+	const channelId = searchParams.get("channel_id");
+	const status = searchParams.get("status");
+	const mediaType = searchParams.get("media_type");
+	const requestedLimit = Number(searchParams.get("limit") || "500");
+	const limit = Number.isFinite(requestedLimit)
+		? Math.min(Math.max(requestedLimit, 1), 1000)
+		: 500;
 
-    const where: Prisma.PostWhereInput = {
-        user_id: userId,
-        scheduled_at: { gte: start, lte: end },
-    };
+	const where: Prisma.PostWhereInput = {
+		user_id: userId,
+		scheduled_at: { gte: start, lte: end },
+	};
 
-    if (channelId) {
-        const ids = channelId.split(",").map(item => item.trim()).filter(Boolean);
-        if (ids.length > 0) where.channel_id = { in: ids };
-    }
-    if (status) {
-        const statuses = status.split(",").map(item => item.trim()).filter(Boolean);
-        if (statuses.length > 0) where.status = { in: statuses };
-    }
-    if (mediaType) {
-        const types = mediaType.split(",").map(item => item.trim().toUpperCase()).filter(Boolean);
-        if (types.length > 0) where.media_type = { in: types };
-    }
+	if (channelId) {
+		const ids = channelId
+			.split(",")
+			.map((item) => item.trim())
+			.filter(Boolean);
+		if (ids.length > 0) where.channel_id = { in: ids };
+	}
+	if (status) {
+		const statuses = status
+			.split(",")
+			.map((item) => item.trim())
+			.filter(Boolean);
+		if (statuses.length > 0) where.status = { in: statuses };
+	}
+	if (mediaType) {
+		const types = mediaType
+			.split(",")
+			.map((item) => item.trim().toUpperCase())
+			.filter(Boolean);
+		if (types.length > 0) where.media_type = { in: types };
+	}
 
-    const posts = await prisma.post.findMany({
-        where,
-        orderBy: { scheduled_at: "asc" },
-        take: limit,
-        select: {
-            id: true,
-            status: true,
-            scheduled_at: true,
-            published_at: true,
-            media_type: true,
-            video_url: true,
-            image_url: true,
-            thumbnail_url: true,
-            caption: true,
-            channel_id: true,
-            planner_id: true,
-            error_message: true,
-            failed_reason: true,
-            children_urls: true,
-            collaborators: true,
-            audio_configuration: true,
-            user_tags: true,
-            share_to_feed: true,
-            location_id: true,
-        },
-    });
+	const posts = await prisma.post.findMany({
+		where,
+		orderBy: { scheduled_at: "asc" },
+		take: limit,
+		select: {
+			id: true,
+			status: true,
+			scheduled_at: true,
+			published_at: true,
+			media_type: true,
+			video_url: true,
+			image_url: true,
+			thumbnail_url: true,
+			caption: true,
+			channel_id: true,
+			planner_id: true,
+			error_message: true,
+			failed_reason: true,
+			children_urls: true,
+			collaborators: true,
+			audio_configuration: true,
+			user_tags: true,
+			share_to_feed: true,
+			location_id: true,
+		},
+	});
 
-    return NextResponse.json({ posts });
+	return NextResponse.json({ posts });
 }

@@ -24,11 +24,11 @@ URL="${URL:-file:/app/data/prod.db}"
 MIGRATIONS_DIR="$(dirname "$SCHEMA")/migrations"
 
 if [ -z "${PRISMA_CLI:-}" ]; then
-  if [ -f /app/node_modules/prisma/build/index.js ]; then
-    PRISMA_CLI="node /app/node_modules/prisma/build/index.js"
-  else
-    PRISMA_CLI="npx prisma"
-  fi
+	if [ -f /app/node_modules/prisma/build/index.js ]; then
+		PRISMA_CLI="node /app/node_modules/prisma/build/index.js"
+	else
+		PRISMA_CLI="npx prisma"
+	fi
 fi
 
 # prisma.config.ts (repo or generated) reads DATABASE_URL
@@ -45,12 +45,12 @@ echo "[db-migrate] cli=${PRISMA_CLI}"
 # Fallbacks: generate in $PWD (normal local dev) or, as a last resort, in /tmp
 # with an absolute import into the project's own node_modules.
 if [ -f /app/prisma.config.ts ]; then
-  TMP_CONFIG="/app/prisma.config.ts"
-  echo "[db-migrate] using repo prisma.config.ts"
+	TMP_CONFIG="/app/prisma.config.ts"
+	echo "[db-migrate] using repo prisma.config.ts"
 elif touch "${PWD}/.prisma-config-write-test" 2>/dev/null; then
-  rm -f "${PWD}/.prisma-config-write-test"
-  TMP_CONFIG="${PWD}/prisma.config.generated.ts"
-  cat > "${TMP_CONFIG}" <<EOF
+	rm -f "${PWD}/.prisma-config-write-test"
+	TMP_CONFIG="${PWD}/prisma.config.generated.ts"
+	cat >"${TMP_CONFIG}" <<EOF
 import { defineConfig } from "prisma/config";
 
 export default defineConfig({
@@ -59,10 +59,10 @@ export default defineConfig({
   datasource: { url: process.env["DATABASE_URL"] ?? "file:/app/data/prod.db" },
 });
 EOF
-  trap 'rm -f "${TMP_CONFIG}"' EXIT INT TERM
+	trap 'rm -f "${TMP_CONFIG}"' EXIT INT TERM
 else
-  TMP_CONFIG="/tmp/prisma.config.generated.ts"
-  cat > "${TMP_CONFIG}" <<EOF
+	TMP_CONFIG="/tmp/prisma.config.generated.ts"
+	cat >"${TMP_CONFIG}" <<EOF
 import { defineConfig } from "${PWD}/node_modules/prisma/config.js";
 
 export default defineConfig({
@@ -71,7 +71,7 @@ export default defineConfig({
   datasource: { url: process.env["DATABASE_URL"] ?? "file:/app/data/prod.db" },
 });
 EOF
-  trap 'rm -f "${TMP_CONFIG}"' EXIT INT TERM
+	trap 'rm -f "${TMP_CONFIG}"' EXIT INT TERM
 fi
 
 # ─── 1) Ensure journal DELETE + busy_timeout ──────────────────────────────────
@@ -120,43 +120,43 @@ echo "[db-migrate] state=${STATE}"
 # set above, so a concurrent writer can fail it with "database is locked".
 # Migrations are idempotent — retrying until the lock clears is safe.
 run_prisma() {
-  local attempt=1 max_attempts=12
-  while true; do
-    local out code
-    if out=$("$@" 2>&1); then
-      echo "$out"
-      return 0
-    else
-      code=$?
-    fi
-    if ! echo "$out" | grep -qiE "database is locked|SQLITE_BUSY"; then
-      echo "$out" >&2
-      return "$code"
-    fi
-    if [ "$attempt" -ge "$max_attempts" ]; then
-      echo "$out" >&2
-      echo "[db-migrate] FAILED after ${max_attempts} attempts — database kept locking" >&2
-      return "$code"
-    fi
-    echo "[db-migrate] database is locked (attempt ${attempt}/${max_attempts}) — retrying in 5s..."
-    sleep 5
-    attempt=$((attempt + 1))
-  done
+	local attempt=1 max_attempts=12
+	while true; do
+		local out code
+		if out=$("$@" 2>&1); then
+			echo "$out"
+			return 0
+		else
+			code=$?
+		fi
+		if ! echo "$out" | grep -qiE "database is locked|SQLITE_BUSY"; then
+			echo "$out" >&2
+			return "$code"
+		fi
+		if [ "$attempt" -ge "$max_attempts" ]; then
+			echo "$out" >&2
+			echo "[db-migrate] FAILED after ${max_attempts} attempts — database kept locking" >&2
+			return "$code"
+		fi
+		echo "[db-migrate] database is locked (attempt ${attempt}/${max_attempts}) — retrying in 5s..."
+		sleep 5
+		attempt=$((attempt + 1))
+	done
 }
 
 # ─── 3) Align legacy schema (additive only) + baseline + deploy ───────────────
 if [ "${STATE}" = "legacy" ]; then
-  echo "[db-migrate] Legacy DB detected — aligning schema additively (NO --accept-data-loss)..."
-  # Fails loudly on destructive drift instead of silently dropping data
-  run_prisma ${PRISMA_CLI} db push --config "${TMP_CONFIG}" --schema "${SCHEMA}"
+	echo "[db-migrate] Legacy DB detected — aligning schema additively (NO --accept-data-loss)..."
+	# Fails loudly on destructive drift instead of silently dropping data
+	run_prisma ${PRISMA_CLI} db push --config "${TMP_CONFIG}" --schema "${SCHEMA}"
 
-  echo "[db-migrate] Marking existing migrations as applied (baseline)..."
-  for dir in "${MIGRATIONS_DIR}"/*/; do
-    [ -d "${dir}" ] || continue
-    name="$(basename "${dir}")"
-    echo "[db-migrate]   resolve --applied ${name}"
-    run_prisma ${PRISMA_CLI} migrate resolve --applied "${name}" --config "${TMP_CONFIG}" --schema "${SCHEMA}"
-  done
+	echo "[db-migrate] Marking existing migrations as applied (baseline)..."
+	for dir in "${MIGRATIONS_DIR}"/*/; do
+		[ -d "${dir}" ] || continue
+		name="$(basename "${dir}")"
+		echo "[db-migrate]   resolve --applied ${name}"
+		run_prisma ${PRISMA_CLI} migrate resolve --applied "${name}" --config "${TMP_CONFIG}" --schema "${SCHEMA}"
+	done
 fi
 
 echo "[db-migrate] Running migrate deploy..."

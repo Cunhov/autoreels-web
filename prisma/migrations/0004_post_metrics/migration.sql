@@ -14,11 +14,14 @@ CREATE TABLE "post_metrics" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "post_metrics_post_id_key" ON "post_metrics"("post_id");
+CREATE UNIQUE INDEX "post_metrics_post_id_key" ON "post_metrics" ("post_id");
 
 -- CreateIndex
-CREATE INDEX "post_metrics_channel_id_fetched_at_idx" ON "post_metrics"("channel_id", "fetched_at");
+CREATE INDEX "post_metrics_channel_id_fetched_at_idx" ON "post_metrics" (
+    "channel_id", "fetched_at"
+);
 
 -- CreateIndex
-CREATE INDEX "posts_channel_id_status_published_at_idx" ON "posts"("channel_id", "status", "published_at");
-
+CREATE INDEX "posts_channel_id_status_published_at_idx" ON "posts" (
+    "channel_id", "status", "published_at"
+);
