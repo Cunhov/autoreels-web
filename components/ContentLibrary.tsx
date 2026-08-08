@@ -1,8 +1,7 @@
 'use client';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { Grid as GridComponent } from 'react-window';
 import { AutoSizer } from 'react-virtualized-auto-sizer';
-import { getPublicUrl } from '@/lib/storage';
 import { useSession } from 'next-auth/react';
 import {
     Folder, Video, MoreVertical,
@@ -15,7 +14,7 @@ import IOSButton from './IOSButton';
 import { useDropzone } from 'react-dropzone';
 import { useRouter, useSearchParams } from 'next/navigation';
 import MoveContentModal from './MoveContentModal';
-import { useUpload } from '@/contexts/UploadContext';
+import { useUploadActions } from '@/contexts/UploadContext';
 import IOSToast, { ToastType } from './IOSToast';
 import { useRef } from 'react';
 import EditContentModal from './EditContentModal';
@@ -38,6 +37,9 @@ const formatTime = (seconds: number) => {
     const s = Math.floor(seconds % 60);
     return `${m}m ${s}s`;
 };
+
+const SORT_OPTIONS = ['name-asc', 'name-desc', 'created-asc', 'created-desc'] as const;
+type SortOption = typeof SORT_OPTIONS[number];
 
 interface ContentItem {
     id: string;
@@ -105,7 +107,38 @@ interface ContentLibraryProps {
     disableUrlNavigation?: boolean;
 }
 
-const GridCell = ({ columnIndex, rowIndex, style, data }: any) => {
+interface GridCellData {
+    columnCount: number;
+    sortedItems: ContentItem[];
+    handleDragStart: (e: React.DragEvent, itemId: string) => void;
+    handleDragEnd: () => void;
+    handleDragOver: (e: React.DragEvent, targetId: string | null, targetItem: ContentItem | null) => void;
+    handleDragLeave: (e: React.DragEvent) => void;
+    handleDrop: (e: React.DragEvent, targetId: string | null) => void;
+    mode: 'manage' | 'select';
+    disableUrlNavigation: boolean;
+    toggleSelection: (id: string) => void;
+    setInternalFolderId: (id: string | null) => void;
+    router: ReturnType<typeof useRouter>;
+    selectedIds: string[];
+    dropTargetId: string | null;
+    draggedItems: string[];
+    openEditModal: (items: ContentItem[]) => void;
+    openImageEditor: (item: ContentItem) => void;
+    deleteItem: (e: React.MouseEvent, item: ContentItem) => void;
+    openMoveModal: (items: ContentItem[]) => void;
+    formatBytes: (bytes: number) => string;
+    formatTime: (seconds: number) => string;
+}
+
+interface GridCellProps {
+    columnIndex: number;
+    rowIndex: number;
+    style: React.CSSProperties;
+    data: GridCellData;
+}
+
+const GridCellInner = ({ columnIndex, rowIndex, style, data }: GridCellProps) => {
     const {
         columnCount,
         sortedItems,
@@ -170,7 +203,7 @@ const GridCell = ({ columnIndex, rowIndex, style, data }: any) => {
                     <div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors relative overflow-hidden">
                         {item.thumbnail_url ? (
                             <>
-                                <img src={item.thumbnail_url} className="absolute inset-0 w-full h-full object-cover opacity-60 blur-[1px] group-hover:blur-0 transition-all duration-300" />
+                                <img src={item.thumbnail_url} loading="lazy" decoding="async" className="absolute inset-0 w-full h-full object-cover opacity-60 blur-[1px] group-hover:blur-0 transition-all duration-300" />
                                 <div className="absolute inset-0 bg-white/30 dark:bg-black/30 group-hover:bg-transparent transition-colors" />
                                 <div className="relative z-10 flex flex-col items-center">
                                     <Folder size={48} strokeWidth={1.5} className="text-white drop-shadow-lg fill-white/20" />
@@ -188,7 +221,7 @@ const GridCell = ({ columnIndex, rowIndex, style, data }: any) => {
                     <div className="w-full h-full relative">
                         {item.type === 'video' ? (
                             item.thumbnail_url ? (
-                                <img src={item.thumbnail_url} alt={item.name} className="w-full h-full object-cover" />
+                                <img src={item.thumbnail_url} alt={item.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                             ) : (
                                 <div className="w-full h-full bg-gray-900 flex items-center justify-center relative">
                                     {/* No <video> tag — avoids loading/decoding video frames (saves RAM & CPU) */}
@@ -198,7 +231,7 @@ const GridCell = ({ columnIndex, rowIndex, style, data }: any) => {
                                 </div>
                             )
                         ) : (
-                            <img src={item.url} alt={item.name} className="w-full h-full object-cover" />
+                            <img src={item.url} alt={item.name} loading="lazy" decoding="async" className="w-full h-full object-cover" />
                         )}
 
                         {/* Overlay Info (Gradient) */}
@@ -288,6 +321,149 @@ const GridCell = ({ columnIndex, rowIndex, style, data }: any) => {
     );
 };
 
+/**
+ * Shallow-compare GridCell props so a parent re-render (toast, bulk loading,
+ * unrelated state) does not re-render every visible cell. `data` (itemData) is
+ * memoized upstream with useMemo; style/position are compared by value because
+ * react-window recreates the style object on resize/scroll.
+ */
+const gridCellComparer = (prev: GridCellProps, next: GridCellProps) =>
+    prev.rowIndex === next.rowIndex &&
+    prev.columnIndex === next.columnIndex &&
+    prev.data === next.data &&
+    prev.style?.width === next.style?.width &&
+    prev.style?.height === next.style?.height &&
+    prev.style?.left === next.style?.left &&
+    prev.style?.top === next.style?.top;
+
+const GridCell = memo(GridCellInner, gridCellComparer) as unknown as (props: { data: GridCellData }) => React.ReactElement | null;
+
+interface GridAreaProps {
+    height: number;
+    width: number;
+    sortedItems: ContentItem[];
+    selectedIds: string[];
+    dropTargetId: string | null;
+    draggedItems: string[];
+    mode: 'manage' | 'select';
+    disableUrlNavigation: boolean;
+    hasMore: boolean;
+    loadingMore: boolean;
+    itemsCount: number;
+    totalCount: number;
+    loadMore: () => void;
+    handleScroll: (e: React.UIEvent<HTMLDivElement>) => void;
+    toggleSelection: (id: string) => void;
+    handleDragStart: (e: React.DragEvent, itemId: string) => void;
+    handleDragEnd: () => void;
+    handleDragOver: (e: React.DragEvent, targetId: string | null, targetItem: ContentItem | null) => void;
+    handleDragLeave: (e: React.DragEvent) => void;
+    handleDrop: (e: React.DragEvent, targetId: string | null) => void;
+    setInternalFolderId: (id: string | null) => void;
+    router: ReturnType<typeof useRouter>;
+    openEditModal: (items: ContentItem[]) => void;
+    openImageEditor: (item: ContentItem) => void;
+    deleteItem: (e: React.MouseEvent, item: ContentItem) => void;
+    openMoveModal: (items: ContentItem[]) => void;
+}
+
+/**
+ * The virtualized grid area. Extracted into a memoized component so the
+ * AutoSizer render-prop stays a thin wrapper: itemData is built with useMemo
+ * here (inside a real component, where hooks are allowed) and the grid only
+ * re-renders when its actual inputs change.
+ */
+const GridArea = memo(function GridArea(props: GridAreaProps) {
+    const {
+        height,
+        width,
+        sortedItems,
+        selectedIds,
+        dropTargetId,
+        draggedItems,
+        mode,
+        disableUrlNavigation,
+        hasMore,
+        loadingMore,
+        itemsCount,
+        totalCount,
+        loadMore,
+        handleScroll,
+        toggleSelection,
+        handleDragStart,
+        handleDragEnd,
+        handleDragOver,
+        handleDragLeave,
+        handleDrop,
+        setInternalFolderId,
+        router,
+        openEditModal,
+        openImageEditor,
+        deleteItem,
+        openMoveModal,
+    } = props;
+
+    // Calculate how many columns fit (min item width ~160px)
+    const MIN_ITEM_WIDTH = 160;
+    const columnCount = Math.max(2, Math.floor(width / MIN_ITEM_WIDTH));
+    const rowCount = Math.ceil(sortedItems.length / columnCount);
+    const columnWidth = width / columnCount;
+    const rowHeight = columnWidth; // aspect-square
+    const footerHeight = hasMore || loadingMore ? 56 : 0;
+
+    const itemData = useMemo(() => ({
+        columnCount,
+        sortedItems,
+        handleDragStart,
+        handleDragEnd,
+        handleDragOver,
+        handleDragLeave,
+        handleDrop,
+        mode,
+        disableUrlNavigation,
+        toggleSelection,
+        setInternalFolderId,
+        router,
+        selectedIds,
+        dropTargetId,
+        draggedItems,
+        openEditModal,
+        openImageEditor,
+        deleteItem,
+        openMoveModal,
+        formatBytes,
+        formatTime,
+    }), [
+        columnCount, sortedItems, selectedIds, dropTargetId, draggedItems,
+        mode, disableUrlNavigation, handleDragStart, handleDragEnd, handleDragOver,
+        handleDragLeave, handleDrop, toggleSelection, setInternalFolderId, router,
+        openEditModal, openImageEditor, deleteItem, openMoveModal,
+    ]);
+
+    return (
+        <>
+            <GridComponent
+                className="scroller outline-none"
+                columnCount={columnCount}
+                columnWidth={columnWidth}
+                rowCount={rowCount}
+                rowHeight={rowHeight}
+                style={{ height: Math.max(0, height - footerHeight), width }}
+                onScroll={handleScroll}
+                cellComponent={GridCell}
+                cellProps={{ data: itemData }}
+            />
+            <div style={{ height: footerHeight }} className="flex items-center justify-center">
+                {loadingMore ? (
+                    <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-ios-blue" />
+                ) : hasMore ? (
+                    <button onClick={loadMore} className="text-sm text-ios-blue hover:underline">Load more ({itemsCount} of {totalCount})</button>
+                ) : null}
+            </div>
+        </>
+    );
+});
+
 export default function ContentLibrary({
     mode = 'manage',
     onSelectionChange,
@@ -319,7 +495,10 @@ export default function ContentLibrary({
     const [filterTags, setFilterTags] = useState<string[]>([]);
     const [excludeTags, setExcludeTags] = useState<string[]>([]);
     const [filterTypes, setFilterTypes] = useState<string[]>([]);
-    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>(() => {
+        if (typeof window === 'undefined') return 'grid';
+        return window.localStorage.getItem('cl.viewMode') === 'list' ? 'list' : 'grid';
+    });
     const [sizeFilter, setSizeFilter] = useState<'all' | 'small' | 'medium' | 'large'>('all');
     const [durationFilter, setDurationFilter] = useState<'all' | 'short' | 'medium' | 'long'>('all');
 
@@ -341,7 +520,22 @@ export default function ContentLibrary({
     const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
     // Sorting inside folders
-    const [sortBy, setSortBy] = useState<'name-asc' | 'name-desc' | 'created-asc' | 'created-desc'>('name-asc');
+    const [sortBy, setSortBy] = useState<SortOption>(() => {
+        if (typeof window === 'undefined') return 'name-asc';
+        const saved = window.localStorage.getItem('cl.sortBy');
+        return (SORT_OPTIONS as readonly string[]).includes(saved ?? '')
+            ? (saved as SortOption)
+            : 'name-asc';
+    });
+
+    // Create-folder dialog (replaces window.prompt)
+    const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+    const [newFolderName, setNewFolderName] = useState('');
+
+    // Bulk move (Select-All) dialog — pick a destination folder server-side
+    const [isBulkMoveOpen, setIsBulkMoveOpen] = useState(false);
+    const [bulkMoveTarget, setBulkMoveTarget] = useState<string | null>(null);
+    const [moveFolders, setMoveFolders] = useState<ContentItem[]>([]);
 
     // Bulk rename modal
     const [isBulkRenameOpen, setIsBulkRenameOpen] = useState(false);
@@ -364,8 +558,9 @@ export default function ContentLibrary({
     // Import URL Modal State
     const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
-    // Global Upload Queue
-    const { addFiles, addFolderFiles } = useUpload();
+    // Global Upload Queue — actions-only hook (stable reference; the tasks
+    // slice lives in useUploadTasks so unrelated re-renders don't flood the grid)
+    const { addFiles, addFolderFiles } = useUploadActions();
 
     // Toast State
     const [toast, setToast] = useState<{ msg: string; type: ToastType; show: boolean }>({ msg: '', type: 'success', show: false });
@@ -377,6 +572,14 @@ export default function ContentLibrary({
         const id = window.setTimeout(() => setDebouncedSearch(search.trim()), 250);
         return () => window.clearTimeout(id);
     }, [search]);
+
+    // Persist view/sort preferences across sessions
+    useEffect(() => {
+        try { window.localStorage.setItem('cl.viewMode', viewMode); } catch { /* ignore quota/security errors */ }
+    }, [viewMode]);
+    useEffect(() => {
+        try { window.localStorage.setItem('cl.sortBy', sortBy); } catch { /* ignore */ }
+    }, [sortBy]);
 
     // -------------------------------------------------------------------------
     // Data Fetching & Navigation
@@ -458,18 +661,21 @@ export default function ContentLibrary({
     }, [currentFolderId, router, disableUrlNavigation]); // Added disableUrlNavigation dependency to re-run if prop changes (unlikely) but correct. Removed currentFolderId from deps of fetchContent call if it was separate, but it's inside effect.
 
 
-    const fetchContent = async (folderId: string | null) => {
+    const fetchContent = useCallback(async (folderId: string | null, opts?: { keepSelection?: boolean }) => {
         // Abort any in-flight request from a previous navigation/filter change
         contentFetchAbortRef.current?.abort();
         const controller = new AbortController();
         contentFetchAbortRef.current = controller;
+        const keepSelection = opts?.keepSelection ?? false;
 
         setLoading(true);
         setFetchError(null);
         setCurrentOffset(0);
         setSelectAllServer(false);
-        setSelectedIds([]);
-        setSelectionOrder([]);
+        if (!keepSelection) {
+            setSelectedIds([]);
+            setSelectionOrder([]);
+        }
         try {
             const res = await fetch(`/api/content-items?${buildQueryParams(folderId, 0).toString()}`, { signal: controller.signal });
             if (!res.ok) throw new Error('Failed to fetch items');
@@ -480,6 +686,12 @@ export default function ContentLibrary({
             if (controller.signal.aborted) return;
 
             setItems((data as any[]).map(normalizeItem));
+            if (keepSelection) {
+                // Keep only the ids that still exist in the refreshed page
+                const visibleIds = new Set((data as ContentItem[]).map(i => i.id));
+                setSelectedIds(prev => prev.filter(id => visibleIds.has(id)));
+                setSelectionOrder(prev => prev.filter(id => visibleIds.has(id)));
+            }
             setTotalCount(json.totalCount ?? data.length);
             setHasMore(json.hasMore ?? false);
             setCurrentOffset(PAGE_SIZE);
@@ -494,7 +706,7 @@ export default function ContentLibrary({
                 contentFetchAbortRef.current = null;
             }
         }
-    };
+    }, [buildQueryParams]);
 
     const loadMore = useCallback(async () => {
         if (loadingMore || !hasMore) return;
@@ -563,8 +775,8 @@ export default function ContentLibrary({
         noKeyboard: true
     });
 
-    const createFolder = async () => {
-        const name = prompt('Enter folder name:');
+    const createFolder = useCallback(async () => {
+        const name = newFolderName.trim();
         if (!name) return;
 
         try {
@@ -578,18 +790,20 @@ export default function ContentLibrary({
                 })
             });
             if (!res.ok) throw new Error('Failed to create folder');
-            fetchContent(currentFolderId);
+            setIsCreateFolderOpen(false);
+            setNewFolderName('');
+            fetchContent(currentFolderId, { keepSelection: true });
         } catch (error) {
             console.error(error);
         }
-    };
+    }, [newFolderName, currentFolderId, fetchContent]);
 
 
     // -------------------------------------------------------------------------
     // Selection & CRUD Logic
     // -------------------------------------------------------------------------
 
-    const toggleSelection = (id: string) => {
+    const toggleSelection = useCallback((id: string) => {
         if (selectedIds.includes(id)) {
             setSelectedIds(selectedIds.filter(sid => sid !== id));
             setSelectionOrder(selectionOrder.filter(sid => sid !== id));
@@ -597,19 +811,19 @@ export default function ContentLibrary({
             setSelectedIds([...selectedIds, id]);
             setSelectionOrder([...selectionOrder, id]);
         }
-    };
+    }, [selectedIds, selectionOrder]);
 
     // Drag-drop handlers for moving items into folders
-    const handleDragStart = (e: React.DragEvent, itemId: string) => {
+    const handleDragStart = useCallback((e: React.DragEvent, itemId: string) => {
         e.stopPropagation();
         // If item is selected, drag all selected; otherwise just this one
         const itemsToDrag = selectedIds.includes(itemId) ? selectedIds : [itemId];
         setDraggedItems(itemsToDrag);
         e.dataTransfer.effectAllowed = 'move';
         e.dataTransfer.setData('text/plain', itemsToDrag.join(','));
-    };
+    }, [selectedIds]);
 
-    const handleDragOver = (e: React.DragEvent, targetId: string | null, targetItem: ContentItem | null) => {
+    const handleDragOver = useCallback((e: React.DragEvent, targetId: string | null, targetItem: ContentItem | null) => {
         e.preventDefault();
         e.stopPropagation();
         // Only allow dropping on folders
@@ -621,14 +835,14 @@ export default function ContentLibrary({
             setDropTargetId('root');
             e.dataTransfer.dropEffect = 'move';
         }
-    };
+    }, [draggedItems, currentFolderId]);
 
-    const handleDragLeave = (e: React.DragEvent) => {
+    const handleDragLeave = useCallback((e: React.DragEvent) => {
         e.preventDefault();
         setDropTargetId(null);
-    };
+    }, []);
 
-    const handleDrop = async (e: React.DragEvent, targetId: string | null) => {
+    const handleDrop = useCallback(async (e: React.DragEvent, targetId: string | null) => {
         e.preventDefault();
         e.stopPropagation();
         setDropTargetId(null);
@@ -647,35 +861,66 @@ export default function ContentLibrary({
                 });
             }
             setToast({ msg: `Moved ${draggedItems.length} item(s)`, type: 'success', show: true });
-            fetchContent(currentFolderId);
-            setSelectedIds([]);
-            setSelectionOrder([]);
+            fetchContent(currentFolderId, { keepSelection: true });
         } catch (error) {
             console.error('Move failed:', error);
             setToast({ msg: 'Failed to move items', type: 'error', show: true });
         }
         setDraggedItems([]);
-    };
+    }, [draggedItems, currentFolderId, fetchContent]);
 
-    const handleDragEnd = () => {
+    const handleDragEnd = useCallback(() => {
         setDraggedItems([]);
         setDropTargetId(null);
-    };
+    }, []);
 
-    // Bulk rename in selection order — uses server-side bulk endpoint
-    const handleBulkRename = async () => {
-        if (!bulkRenamePrefix.trim() || selectionOrder.length === 0) return;
+    // Build filter params for server-side bulk ops
+    const buildFilterParams = useCallback(() => {
+        const params: Record<string, string> = {};
+        if (currentFolderId) params.parent_id = currentFolderId;
+        else params.parent_id = '';
+        const typeSet = new Set<string>();
+        const selectedTypes = filterTypes.length > 0 ? filterTypes : allowedTypes;
+        expandTypeFilters(selectedTypes).forEach(type => typeSet.add(type));
+        const allowedSet = new Set(expandTypeFilters(allowedTypes));
+        const finalTypes = Array.from(typeSet).filter(type => allowedSet.has(type));
+        const defaultAllowedTypes = ['video', 'image', 'carousel_folder', 'carousel_item'];
+        const shouldSendTypes = filterTypes.length > 0 || allowedTypes.join(',') !== defaultAllowedTypes.join(',');
+        if (shouldSendTypes && finalTypes.length > 0) params.types = finalTypes.join(',');
+        if (debouncedSearch) params.search = debouncedSearch;
+        if (filterTags.length > 0) params.include_tags = filterTags.join(',');
+        if (excludeTags.length > 0) params.exclude_tags = excludeTags.join(',');
+        const sizeRange = sizeRangeForFilter(sizeFilter);
+        if (sizeRange.min !== undefined) params.size_min = String(sizeRange.min);
+        if (sizeRange.max !== undefined) params.size_max = String(sizeRange.max);
+        const durationRange = durationRangeForFilter(durationFilter);
+        if (durationRange.min !== undefined) params.duration_min = String(durationRange.min);
+        if (durationRange.max !== undefined) params.duration_max = String(durationRange.max);
+        params.sort_by = sortBy;
+        return params;
+    }, [allowedTypes, currentFolderId, debouncedSearch, durationFilter, excludeTags, filterTags, filterTypes, sizeFilter, sortBy]);
+
+    // Bulk rename — server-side bulk endpoint. When select-all is active, the
+    // server enumerates ALL matching items (all:true + filters).
+    const handleBulkRename = useCallback(async () => {
+        if (!bulkRenamePrefix.trim()) return;
+        if (selectionOrder.length === 0 && !selectAllServer) return;
 
         try {
             setBulkLoading(true);
+            const body: Record<string, unknown> = { action: 'rename' };
+            if (selectAllServer) {
+                body.all = true;
+                body.filters = buildFilterParams();
+                body.data = { new_name: bulkRenamePrefix.trim() };
+            } else {
+                body.ids = selectionOrder;
+                body.data = { prefix: bulkRenamePrefix.trim() };
+            }
             const res = await fetch('/api/content-items/bulk', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: 'rename',
-                    ids: selectionOrder,
-                    data: { prefix: bulkRenamePrefix.trim() }
-                })
+                body: JSON.stringify(body)
             });
             if (!res.ok) throw new Error('Bulk rename failed');
             const result = await res.json();
@@ -685,16 +930,16 @@ export default function ContentLibrary({
             setSelectedIds([]);
             setSelectionOrder([]);
             setSelectAllServer(false);
-            fetchContent(currentFolderId);
+            fetchContent(currentFolderId, { keepSelection: true });
         } catch (error) {
             console.error('Rename failed:', error);
             setToast({ msg: 'Failed to rename items', type: 'error', show: true });
         } finally {
             setBulkLoading(false);
         }
-    };
+    }, [bulkRenamePrefix, selectionOrder, selectAllServer, buildFilterParams, currentFolderId, fetchContent]);
 
-    const deleteItem = async (e: React.MouseEvent, item: ContentItem) => {
+    const deleteItem = useCallback(async (e: React.MouseEvent, item: ContentItem) => {
         e.stopPropagation();
         const message = item.type === 'carousel_folder'
             ? `Delete folder "${item.name}" and ALL its contents? This cannot be undone.`
@@ -704,15 +949,16 @@ export default function ContentLibrary({
 
         try {
             await doDelete(item);
-            fetchContent(currentFolderId);
+            fetchContent(currentFolderId, { keepSelection: true });
             // If we deleted selected items, cleanup
-            setSelectedIds(selectedIds.filter(id => id !== item.id));
+            setSelectedIds(prev => prev.filter(id => id !== item.id));
+            setSelectionOrder(prev => prev.filter(id => id !== item.id));
             setToast({ msg: 'Item deleted', type: 'success', show: true });
         } catch (error) {
             console.error('Delete failed:', error);
             setToast({ msg: 'Failed to delete item', type: 'error', show: true });
         }
-    };
+    }, [currentFolderId, fetchContent]);
 
     // Robust delete function
     const doDelete = async (item: ContentItem) => {
@@ -751,116 +997,58 @@ export default function ContentLibrary({
         if (editingItem) openEditModal([editingItem]);
     };
 
-    const openEditModal = (items: ContentItem[]) => {
+    const openEditModal = useCallback((items: ContentItem[]) => {
         setItemsToEdit(items);
         setIsEditModalOpen(true);
-    };
+    }, []);
 
-    const onEditComplete = () => {
-        fetchContent(currentFolderId);
-        setSelectedIds([]);
+    const onEditComplete = useCallback(() => {
+        fetchContent(currentFolderId, { keepSelection: true });
         setItemsToEdit([]);
-    };
+    }, [currentFolderId, fetchContent]);
 
     // Triggered when "Move" is clicked on an item or selection
-    const openMoveModal = (items: ContentItem[]) => {
+    const openMoveModal = useCallback((items: ContentItem[]) => {
         setMoveItems(items);
         setIsMoveModalOpen(true);
-    };
+    }, []);
 
-    const onMoveComplete = () => {
-        fetchContent(currentFolderId);
+    const onMoveComplete = useCallback(() => {
+        fetchContent(currentFolderId, { keepSelection: true });
         setSelectedIds([]);
+        setSelectionOrder([]);
         setSelectAllServer(false);
-    };
+    }, [currentFolderId, fetchContent]);
 
-    const openImageEditor = (item: ContentItem) => {
+    const openImageEditor = useCallback((item: ContentItem) => {
         setImageEditorItem(item);
         setIsImageEditorOpen(true);
-    };
+    }, []);
 
-    const handleImageEditorSave = async (dataUrl: string) => {
+    const handleImageEditorSave = useCallback(async (dataUrl: string) => {
         if (!imageEditorItem) return;
 
         try {
-            setLoading(true);
             setToast({ msg: 'Saving edited image...', type: 'info', show: true });
 
-            // Convert DataURL to Blob/File
+            // Convert DataURL to Blob/File and push through the shared upload
+            // queue — the global pipeline handles chunking, retries, resume and
+            // server-side UUID naming (no more bespoke chunk loop / Math.random names).
             const res = await fetch(dataUrl);
             const blob = await res.blob();
             const file = new File([blob], `edited_${imageEditorItem.name}`, { type: 'image/png' });
+            addFiles([file], currentFolderId);
 
-            if (!session?.user) throw new Error("Not authenticated");
-
-            const userId = (session.user as any).id;
-            const fileName = `${userId}/${Math.random().toString(36).substring(2)}.png`;
-
-            // Upload via chunked local API
-            const CHUNK_SIZE = 5 * 1024 * 1024;
-            const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-            for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-                const start = chunkIndex * CHUNK_SIZE;
-                const end = Math.min(start + CHUNK_SIZE, file.size);
-                const chunk = file.slice(start, end);
-
-                let retries = 0;
-                let success = false;
-                while (!success && retries < 3) {
-                    try {
-                        const uploadRes = await fetch('/api/upload-chunk', {
-                            method: 'POST',
-                            headers: {
-                                'x-chunk-index': chunkIndex.toString(),
-                                'x-total-chunks': totalChunks.toString(),
-                                'x-file-name': fileName
-                            },
-                            body: chunk
-                        });
-                        if (!uploadRes.ok) {
-                            const err = await uploadRes.json().catch(() => ({}));
-                            throw new Error((err as any).error || 'Failed to upload edited image chunk');
-                        }
-                        success = true;
-                    } catch (err) {
-                        retries++;
-                        if (retries >= 3) throw err;
-                        await new Promise(r => setTimeout(r, 1000 * retries));
-                    }
-                }
-            }
-
-            const publicUrl = getPublicUrl(fileName);
-
-            // Insert into DB
-            const dbRes = await fetch('/api/content-items', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    name: `Edited ${imageEditorItem.name}`,
-                    type: 'image',
-                    url: publicUrl,
-                    path: fileName,
-                    parent_id: currentFolderId,
-                    size: file.size,
-                    duration: 0
-                })
-            });
-
-            if (!dbRes.ok) throw new Error('Failed to save image metadata in DB');
-
-            setToast({ msg: 'Image saved successfully', type: 'success', show: true });
-            fetchContent(currentFolderId);
+            setToast({ msg: 'Image saved — uploading', type: 'success', show: true });
             setIsImageEditorOpen(false);
             setImageEditorItem(null);
-
+            // Refresh so the new item appears once the queue completes it.
+            fetchContent(currentFolderId, { keepSelection: true });
         } catch (error: any) {
             console.error('Save failed:', error);
-            setToast({ msg: 'Failed to save image: ' + error.message, type: 'error', show: true });
-        } finally {
-            setLoading(false);
+            setToast({ msg: 'Failed to save image: ' + (error?.message || 'unknown error'), type: 'error', show: true });
         }
-    };
+    }, [imageEditorItem, currentFolderId, addFiles, fetchContent]);
 
     // -------------------------------------------------------------------------
     // Renders
@@ -881,7 +1069,7 @@ export default function ContentLibrary({
         });
     }, [items]);
 
-    const handleSelectAll = () => {
+    const handleSelectAll = useCallback(() => {
         const allFilteredIds = sortedItems.map(i => i.id);
         const allSelected = allFilteredIds.every(id => selectedIds.includes(id));
 
@@ -897,9 +1085,9 @@ export default function ContentLibrary({
             const newOrder = [...selectionOrder, ...allFilteredIds.filter(id => !selectionOrder.includes(id))];
             setSelectionOrder(newOrder);
         }
-    };
+    }, [sortedItems, selectedIds, selectionOrder, selectAllServer]);
 
-    const handleSelectAllServer = () => {
+    const handleSelectAllServer = useCallback(() => {
         if (selectAllServer) {
             setSelectAllServer(false);
             setSelectedIds([]);
@@ -911,36 +1099,10 @@ export default function ContentLibrary({
             setSelectionOrder(allFilteredIds);
             setSelectAllServer(true);
         }
-    };
-
-    // Build filter params for server-side bulk ops
-    const buildFilterParams = useCallback(() => {
-        const params: Record<string, string> = {};
-        if (currentFolderId) params.parent_id = currentFolderId;
-        else params.parent_id = '';
-        const typeSet = new Set<string>();
-        const selectedTypes = filterTypes.length > 0 ? filterTypes : allowedTypes;
-        expandTypeFilters(selectedTypes).forEach(type => typeSet.add(type));
-        const allowedSet = new Set(expandTypeFilters(allowedTypes));
-        const finalTypes = Array.from(typeSet).filter(type => allowedSet.has(type));
-        const defaultAllowedTypes = ['video', 'image', 'carousel_folder', 'carousel_item'];
-        const shouldSendTypes = filterTypes.length > 0 || allowedTypes.join(',') !== defaultAllowedTypes.join(',');
-        if (shouldSendTypes && finalTypes.length > 0) params.types = finalTypes.join(',');
-        if (debouncedSearch) params.search = debouncedSearch;
-        if (filterTags.length > 0) params.include_tags = filterTags.join(',');
-        if (excludeTags.length > 0) params.exclude_tags = excludeTags.join(',');
-        const sizeRange = sizeRangeForFilter(sizeFilter);
-        if (sizeRange.min !== undefined) params.size_min = String(sizeRange.min);
-        if (sizeRange.max !== undefined) params.size_max = String(sizeRange.max);
-        const durationRange = durationRangeForFilter(durationFilter);
-        if (durationRange.min !== undefined) params.duration_min = String(durationRange.min);
-        if (durationRange.max !== undefined) params.duration_max = String(durationRange.max);
-        params.sort_by = sortBy;
-        return params;
-    }, [allowedTypes, currentFolderId, debouncedSearch, durationFilter, excludeTags, filterTags, filterTypes, sizeFilter, sortBy]);
+    }, [selectAllServer, sortedItems]);
 
     // Bulk delete handler — uses server-side bulk endpoint
-    const handleBulkDelete = async () => {
+    const handleBulkDelete = useCallback(async () => {
         const count = selectAllServer ? totalCount : selectedIds.length;
         if (!confirm(`Delete ${count} items? This cannot be undone.`)) return;
         try {
@@ -963,14 +1125,71 @@ export default function ContentLibrary({
             setSelectedIds([]);
             setSelectionOrder([]);
             setSelectAllServer(false);
-            fetchContent(currentFolderId);
+            fetchContent(currentFolderId, { keepSelection: true });
         } catch (error) {
             console.error('Bulk delete failed:', error);
             setToast({ msg: 'Failed to delete items', type: 'error', show: true });
         } finally {
             setBulkLoading(false);
         }
-    };
+    }, [selectAllServer, totalCount, selectedIds, buildFilterParams, currentFolderId, fetchContent]);
+
+    /**
+     * Open the move flow. With a partial selection it opens the navigable
+     * MoveContentModal; with select-all active it opens an inline destination
+     * picker and moves ALL matching items server-side (all:true + filters).
+     */
+    const openBulkMove = useCallback(async () => {
+        if (selectAllServer) {
+            setBulkMoveTarget(null);
+            try {
+                const params = new URLSearchParams({ parent_id: '', types: 'carousel_folder', limit: '500' });
+                const res = await fetch(`/api/content-items?${params.toString()}`);
+                if (res.ok) {
+                    const json = await res.json();
+                    const data = json.items || json;
+                    setMoveFolders((data as ContentItem[]).map(normalizeItem));
+                } else {
+                    setMoveFolders([]);
+                }
+            } catch {
+                setMoveFolders([]);
+            }
+            setIsBulkMoveOpen(true);
+        } else {
+            openMoveModal(items.filter(i => selectedIds.includes(i.id)));
+        }
+    }, [selectAllServer, items, selectedIds, openMoveModal]);
+
+    const confirmBulkMove = useCallback(async () => {
+        try {
+            setBulkLoading(true);
+            const res = await fetch('/api/content-items/bulk', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'move',
+                    all: true,
+                    filters: buildFilterParams(),
+                    data: { parent_id: bulkMoveTarget }
+                })
+            });
+            if (!res.ok) throw new Error('Bulk move failed');
+            const result = await res.json();
+            setToast({ msg: `Moved ${result.affected} items`, type: 'success', show: true });
+            setIsBulkMoveOpen(false);
+            setBulkMoveTarget(null);
+            setSelectedIds([]);
+            setSelectionOrder([]);
+            setSelectAllServer(false);
+            fetchContent(currentFolderId);
+        } catch (error) {
+            console.error('Bulk move failed:', error);
+            setToast({ msg: 'Failed to move items', type: 'error', show: true });
+        } finally {
+            setBulkLoading(false);
+        }
+    }, [bulkMoveTarget, buildFilterParams, currentFolderId, fetchContent]);
 
 
     // Handle scroll for infinite loading
@@ -980,6 +1199,35 @@ export default function ContentLibrary({
             loadMore();
         }
     }, [hasMore, loadingMore, loadMore]);
+
+    // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+    // Delete/Backspace → bulk delete selection · Cmd/Ctrl+A → select page ·
+    // Escape → clear selection. Ignored while typing in inputs/textareas.
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent) => {
+            const target = e.target as HTMLElement | null;
+            if (target && (
+                target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA' ||
+                target.tagName === 'SELECT' ||
+                target.isContentEditable
+            )) return;
+
+            if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedIds.length > 0 || selectAllServer)) {
+                e.preventDefault();
+                handleBulkDelete();
+            } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && sortedItems.length > 0) {
+                e.preventDefault();
+                handleSelectAll();
+            } else if (e.key === 'Escape') {
+                setSelectedIds([]);
+                setSelectionOrder([]);
+                setSelectAllServer(false);
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [selectedIds.length, selectAllServer, sortedItems.length, handleBulkDelete, handleSelectAll]);
 
     // If we are in 'select' mode (Planner), we generally want to return ID of the item.
     // However, if we select a Folder, we might mean "Use this carousel".
@@ -1073,7 +1321,7 @@ export default function ContentLibrary({
                                     <TextCursorInput size={14} />
                                 </button>
                                 <button
-                                    onClick={() => openMoveModal(items.filter(i => selectedIds.includes(i.id)))}
+                                    onClick={openBulkMove}
                                     className="p-1 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-ios-blue"
                                     title="Move Selected"
                                 >
@@ -1101,7 +1349,7 @@ export default function ContentLibrary({
                             </IOSButton>
                         )}
 
-                        <IOSButton variant="secondary" onClick={createFolder} className="!py-1.5 !px-3 text-sm flex items-center gap-1">
+                        <IOSButton variant="secondary" onClick={() => setIsCreateFolderOpen(true)} className="!py-1.5 !px-3 text-sm flex items-center gap-1">
                             <Plus size={16} /> Folder
                         </IOSButton>
 
@@ -1274,7 +1522,13 @@ export default function ContentLibrary({
                 </div>
             )}
 
-            <div className="flex-1 overflow-y-auto p-4 scroller" ref={scrollContainerRef} onScroll={handleScroll}>
+            <div
+                className="flex-1 overflow-y-auto p-4 scroller"
+                ref={scrollContainerRef}
+                onScroll={handleScroll}
+                onDragOver={(e) => { if (e.dataTransfer?.types?.includes('text/plain')) handleDragOver(e, null, null); }}
+                onDrop={(e) => { if (e.dataTransfer?.types?.includes('text/plain')) handleDrop(e, null); }}
+            >
                 {loading ? (
                     <div className="flex justify-center p-12">
                         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-ios-blue"></div>
@@ -1301,8 +1555,25 @@ export default function ContentLibrary({
                             <Folder size={32} className="text-gray-300" />
                         </div>
                         <div>
-                            <p className="font-medium text-lg">Current folder is empty</p>
-                            <p className="text-sm mt-1 opacity-70">Drag and drop files or create a new folder.</p>
+                            <p className="font-medium text-lg">
+                                {debouncedSearch ? 'Nenhum item encontrado' : 'Current folder is empty'}
+                            </p>
+                            <p className="text-sm mt-1 opacity-70">
+                                {debouncedSearch
+                                    ? `Nada corresponde a "${debouncedSearch}". Tente outro termo ou limpe a busca.`
+                                    : 'Drag and drop files or create a new folder.'}
+                            </p>
+                        </div>
+                        <div className="flex gap-2 mt-2">
+                            {debouncedSearch ? (
+                                <IOSButton variant="secondary" onClick={() => setSearch('')}>
+                                    Limpar busca
+                                </IOSButton>
+                            ) : (
+                                <IOSButton variant="primary" onClick={() => fileInputRef.current?.click()}>
+                                    Fazer upload
+                                </IOSButton>
+                            )}
                         </div>
                     </div>
                 ) : (
@@ -1389,7 +1660,7 @@ export default function ContentLibrary({
                                                             {item.type === 'carousel_folder' ? (
                                                                 item.thumbnail_url ? (
                                                                     <>
-                                                                        <img src={item.thumbnail_url} className="w-full h-full object-cover opacity-80" alt="" />
+                                                                        <img src={item.thumbnail_url} loading="lazy" decoding="async" className="w-full h-full object-cover opacity-80" alt="" />
                                                                         <div className="absolute inset-0 flex items-center justify-center bg-black/20">
                                                                             <Folder size={18} className="text-white drop-shadow" />
                                                                         </div>
@@ -1399,7 +1670,7 @@ export default function ContentLibrary({
                                                                 )
                                                             ) : item.type === 'video' ? (
                                                                 item.thumbnail_url ? (
-                                                                    <img className="w-full h-full object-cover" src={item.thumbnail_url} alt="" />
+                                                                    <img loading="lazy" decoding="async" className="w-full h-full object-cover" src={item.thumbnail_url} alt="" />
                                                                 ) : (
                                                                     /* No <video> tag — static placeholder saves RAM/CPU */
                                                                     <div className="w-full h-full bg-gray-800 flex items-center justify-center">
@@ -1407,7 +1678,7 @@ export default function ContentLibrary({
                                                                     </div>
                                                                 )
                                                             ) : (
-                                                                <img className="w-full h-full object-cover" src={item.url} alt="" />
+                                                                <img loading="lazy" decoding="async" className="w-full h-full object-cover" src={item.url} alt="" />
                                                             )}
                                                         </div>
                                                         {/* Text info */}
@@ -1532,70 +1803,36 @@ export default function ContentLibrary({
                         </div>
                     ) : (
                         <AutoSizer
-                            renderProp={({ height, width }: { height: number | undefined; width: number | undefined }): React.ReactElement => {
-                                // Calculate how many columns fit
-                                // Assuming min item width of ~150px (h-40) + gap
-                                const MIN_ITEM_WIDTH = 160;
-                                const w = width || 0;
-                                const h = height || 0;
-                                const columnCount = Math.max(2, Math.floor(w / MIN_ITEM_WIDTH));
-                                const rowCount = Math.ceil(sortedItems.length / columnCount);
-
-                                // Width per item is exact to fill the area, height matches to keep purely square
-                                const columnWidth = w / columnCount;
-                                const rowHeight = columnWidth; // aspect-square
-
-                                // Reserve space for the load-more footer inside the AutoSizer so the
-                                // grid scrolls internally and onScroll fires on the grid itself.
-                                const footerHeight = hasMore || loadingMore ? 56 : 0;
-
-                                const itemData = {
-                                    columnCount,
-                                    sortedItems,
-                                    handleDragStart,
-                                    handleDragEnd,
-                                    handleDragOver,
-                                    handleDragLeave,
-                                    handleDrop,
-                                    mode,
-                                    disableUrlNavigation,
-                                    toggleSelection,
-                                    setInternalFolderId,
-                                    router,
-                                    selectedIds,
-                                    dropTargetId,
-                                    draggedItems,
-                                    openEditModal,
-                                    openImageEditor,
-                                    deleteItem,
-                                    openMoveModal,
-                                    formatBytes,
-                                    formatTime
-                                };
-
-                                return (
-                                    <>
-                                        <GridComponent
-                                            className="scroller outline-none"
-                                            columnCount={columnCount}
-                                            columnWidth={columnWidth}
-                                            rowCount={rowCount}
-                                            rowHeight={rowHeight}
-                                            style={{ height: Math.max(0, h - footerHeight), width: w }}
-                                            onScroll={handleScroll}
-                                            cellComponent={GridCell}
-                                            cellProps={{ data: itemData }}
-                                        />
-                                        <div style={{ height: footerHeight }} className="flex items-center justify-center">
-                                            {loadingMore ? (
-                                                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-ios-blue" />
-                                            ) : hasMore ? (
-                                                <button onClick={loadMore} className="text-sm text-ios-blue hover:underline">Load more ({items.length} of {totalCount})</button>
-                                            ) : null}
-                                        </div>
-                                    </>
-                                );
-                            }}
+                            renderProp={({ height, width }: { height: number | undefined; width: number | undefined }): React.ReactElement => (
+                                <GridArea
+                                    height={height || 0}
+                                    width={width || 0}
+                                    sortedItems={sortedItems}
+                                    selectedIds={selectedIds}
+                                    dropTargetId={dropTargetId}
+                                    draggedItems={draggedItems}
+                                    mode={mode}
+                                    disableUrlNavigation={disableUrlNavigation}
+                                    hasMore={hasMore}
+                                    loadingMore={loadingMore}
+                                    itemsCount={items.length}
+                                    totalCount={totalCount}
+                                    loadMore={loadMore}
+                                    handleScroll={handleScroll}
+                                    toggleSelection={toggleSelection}
+                                    handleDragStart={handleDragStart}
+                                    handleDragEnd={handleDragEnd}
+                                    handleDragOver={handleDragOver}
+                                    handleDragLeave={handleDragLeave}
+                                    handleDrop={handleDrop}
+                                    setInternalFolderId={setInternalFolderId}
+                                    router={router}
+                                    openEditModal={openEditModal}
+                                    openImageEditor={openImageEditor}
+                                    deleteItem={deleteItem}
+                                    openMoveModal={openMoveModal}
+                                />
+                            )}
                         />
                     )
                 )}
@@ -1646,9 +1883,12 @@ export default function ContentLibrary({
                 isBulkRenameOpen && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
                         <div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl">
-                            <h3 className="text-lg font-semibold text-ios-text mb-4">Rename {selectionOrder.length} Items in Order</h3>
+                            <h3 className="text-lg font-semibold text-ios-text mb-4">Rename {selectAllServer ? totalCount : selectionOrder.length} Items in Order</h3>
                             <p className="text-sm text-ios-secondary mb-4">
-                                Items will be renamed as: <code className="bg-ios-background px-2 py-1 rounded">prefix_001</code>, <code className="bg-ios-background px-2 py-1 rounded">prefix_002</code>, etc.
+                                {selectAllServer
+                                    ? `Todos os ${totalCount} itens (com os filtros atuais) serão renomeados como:`
+                                    : 'Items will be renamed as:'}{" "}
+                                <code className="bg-ios-background px-2 py-1 rounded">prefix_001</code>, <code className="bg-ios-background px-2 py-1 rounded">prefix_002</code>, etc.
                             </p>
                             <input
                                 type="text"
@@ -1664,6 +1904,74 @@ export default function ContentLibrary({
                                 </IOSButton>
                                 <IOSButton variant="primary" onClick={handleBulkRename} disabled={!bulkRenamePrefix.trim()}>
                                     Rename
+                                </IOSButton>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Create Folder Dialog (replaces window.prompt) */}
+            {
+                isCreateFolderOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                        <div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl">
+                            <h3 className="text-lg font-semibold text-ios-text mb-4">Nova pasta</h3>
+                            <input
+                                type="text"
+                                value={newFolderName}
+                                onChange={(e) => setNewFolderName(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') createFolder(); }}
+                                placeholder="Nome da pasta (ex.: Slide 01)"
+                                className="w-full bg-ios-background border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue mb-4"
+                                autoFocus
+                            />
+                            <div className="flex justify-end gap-2">
+                                <IOSButton variant="secondary" onClick={() => { setIsCreateFolderOpen(false); setNewFolderName(''); }}>
+                                    Cancelar
+                                </IOSButton>
+                                <IOSButton variant="primary" onClick={createFolder} disabled={!newFolderName.trim()}>
+                                    Criar
+                                </IOSButton>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
+
+            {/* Bulk Move Dialog (Select-All destination picker) */}
+            {
+                isBulkMoveOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                        <div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl flex flex-col max-h-[85vh]">
+                            <h3 className="text-lg font-semibold text-ios-text mb-1">Mover {totalCount} itens</h3>
+                            <p className="text-sm text-ios-secondary mb-4">Todos os itens com os filtros atuais serão movidos.</p>
+                            <div className="flex-1 overflow-y-auto space-y-1 mb-4">
+                                <button
+                                    onClick={() => setBulkMoveTarget(null)}
+                                    className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm transition-colors ${bulkMoveTarget === null ? 'bg-ios-blue/10 border-ios-blue text-ios-blue' : 'border-ios-separator text-ios-text hover:bg-ios-background'}`}
+                                >
+                                    📁 Raiz da biblioteca
+                                </button>
+                                {moveFolders.length === 0 && (
+                                    <p className="text-xs text-ios-secondary px-1">Nenhuma pasta encontrada na raiz.</p>
+                                )}
+                                {moveFolders.map(folder => (
+                                    <button
+                                        key={folder.id}
+                                        onClick={() => setBulkMoveTarget(folder.id)}
+                                        className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm transition-colors truncate ${bulkMoveTarget === folder.id ? 'bg-ios-blue/10 border-ios-blue text-ios-blue' : 'border-ios-separator text-ios-text hover:bg-ios-background'}`}
+                                    >
+                                        📁 {folder.name}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="flex justify-end gap-2">
+                                <IOSButton variant="secondary" onClick={() => setIsBulkMoveOpen(false)} disabled={bulkLoading}>
+                                    Cancelar
+                                </IOSButton>
+                                <IOSButton variant="primary" onClick={confirmBulkMove} disabled={bulkLoading}>
+                                    {bulkLoading ? 'Movendo…' : 'Mover'}
                                 </IOSButton>
                             </div>
                         </div>
