@@ -240,9 +240,7 @@ export default function UploadPage() {
 								strokeWidth={1.5}
 							/>
 							<h3 className="text-[17px] font-semibold text-ios-text mb-1">
-								{isDragging
-									? "Drop here"
-									: "Drag & drop files or folders"}
+								{isDragging ? "Drop here" : "Drag & drop files or folders"}
 							</h3>
 							<p className="text-[14px] text-ios-text-secondary">
 								or{" "}

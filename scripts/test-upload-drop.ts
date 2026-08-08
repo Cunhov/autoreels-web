@@ -53,6 +53,47 @@ function fakeDataTransfer(entries: MockEntry[]): DataTransfer {
 	} as unknown as DataTransfer;
 }
 
+/**
+ * Mock que simula o comportamento REAL do Chrome: os DataTransferItem são
+ * "tombstoned" (invalidados) assim que a primeira operação async (file() /
+ * readEntries()) é iniciada — `webkitGetAsEntry()` passa a retornar null.
+ * Um collect que intercala `await` no loop só captura a PRIMEIRA pasta.
+ */
+function fakeDataTransferTombstone(entries: MockEntry[]): DataTransfer {
+	let asyncStarted = false;
+	const wrap = (e: MockEntry): MockEntry => {
+		if (e.isFile) {
+			return {
+				...e,
+				file: (cb) => {
+					asyncStarted = true;
+					e.file!(cb);
+				},
+			};
+		}
+		const reader = e.createReader!();
+		return {
+			...e,
+			createReader: () => ({
+				readEntries: (cb) => {
+					asyncStarted = true;
+					reader.readEntries(cb);
+				},
+			}),
+		};
+	};
+	const wrapped = entries.map(wrap);
+	return {
+		items: wrapped.map((e) => ({
+			webkitGetAsEntry: () => {
+				if (asyncStarted) return null;
+				return e;
+			},
+		})),
+		files: [],
+	} as unknown as DataTransfer;
+}
+
 // ── Testes ───────────────────────────────────────────────────────────────
 let failures = 0;
 function check(label: string, cond: boolean) {
@@ -77,7 +118,9 @@ async function main() {
 	// Pipeline real: filtro junk (mesma lógica do isJunkUploadFile do contexto)
 	const isJunk = (f: File) => {
 		const segs = (f.webkitRelativePath || "").split("/");
-		return segs.some((s) => s === "__MACOSX" || (s.startsWith(".") && s !== "." && s !== ".."));
+		return segs.some(
+			(s) => s === "__MACOSX" || (s.startsWith(".") && s !== "." && s !== ".."),
+		);
 	};
 	const clean = r1.filter((f) => !isJunk(f));
 	const p1c = clean.map((f) => f.webkitRelativePath).sort();
@@ -123,11 +166,37 @@ async function main() {
 	);
 
 	// Caso 4: sem Entry API → fallback para dataTransfer.files
-	const dtNoApi = { items: [], files: [new File(["x"], "plain.jpg")] } as unknown as DataTransfer;
+	const dtNoApi = {
+		items: [],
+		files: [new File(["x"], "plain.jpg")],
+	} as unknown as DataTransfer;
 	const r4 = await collectDroppedFiles(dtNoApi);
-	check("Caso 4: fallback files", r4.length === 1 && r4[0].name === "plain.jpg");
+	check(
+		"Caso 4: fallback files",
+		r4.length === 1 && r4[0].name === "plain.jpg",
+	);
 
-	console.log(failures === 0 ? "\n✅ TODOS OS TESTES PASSARAM" : `\n❌ ${failures} FALHA(S)`);
+	// Caso 5: TOMBSTONE — 3 pastas (cenário do bug: só a 1ª era processada)
+	const t5 = fakeDataTransferTombstone([
+		dirEntry("Pasta 1", [fileEntry("1.jpg")]),
+		dirEntry("Pasta 2", [fileEntry("1.jpg")]),
+		dirEntry("Pasta 3", [fileEntry("1.jpg")]),
+	]);
+	const r5 = await collectDroppedFiles(t5);
+	const p5 = r5.map((f) => f.webkitRelativePath).sort();
+	console.log("Caso 5 (tombstone, 3 pastas):", JSON.stringify(p5));
+	check("Caso 5: 3 arquivos (uma de cada pasta)", r5.length === 3);
+	check(
+		"Caso 5: TODAS as pastas capturadas",
+		JSON.stringify(p5) ===
+			JSON.stringify(["Pasta 1/1.jpg", "Pasta 2/1.jpg", "Pasta 3/1.jpg"].sort()),
+	);
+
+	console.log(
+		failures === 0
+			? "\n✅ TODOS OS TESTES PASSARAM"
+			: `\n❌ ${failures} FALHA(S)`,
+	);
 	process.exit(failures === 0 ? 0 : 1);
 }
 

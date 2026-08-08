@@ -60,7 +60,9 @@ async function readEntry(
 		const out: File[] = [];
 		for (const child of children) {
 			// Path relativo à raiz do drop: "Pasta/...", "Pasta/Sub/..."
-			const childBase = basePath ? `${basePath}/${dirEntry.name}` : dirEntry.name;
+			const childBase = basePath
+				? `${basePath}/${dirEntry.name}`
+				: dirEntry.name;
 			out.push(...(await readEntry(child, childBase, depth + 1)));
 		}
 		return out;
@@ -87,15 +89,24 @@ export async function collectDroppedFiles(
 		return Array.from(dataTransfer.files);
 	}
 
-	let usedEntryApi = false;
-	const collected: File[] = [];
+	// IMPORTANTE: DataTransferItem só é válido DURANTE o evento de drop — o
+	// browser "tomba" (invalida) os items assim que a primeira operação async
+	// (readEntry/file()) é iniciada. Por isso TODAS as entries são capturadas
+	// sincronamente primeiro; só depois processamos cada uma. Intercalar o
+	// await no loop faz com que apenas a PRIMEIRA pasta seja capturada.
+	const entries: FileSystemEntry[] = [];
 	for (const item of items) {
 		const entry = item.webkitGetAsEntry();
-		if (!entry) continue;
-		usedEntryApi = true;
-		collected.push(...(await readEntry(entry, "", 0)));
+		if (entry) entries.push(entry);
 	}
 
-	if (usedEntryApi) return collected;
-	return Array.from(dataTransfer.files);
+	if (entries.length === 0) {
+		return Array.from(dataTransfer.files);
+	}
+
+	const collected: File[] = [];
+	for (const entry of entries) {
+		collected.push(...(await readEntry(entry, "", 0)));
+	}
+	return collected;
 }
