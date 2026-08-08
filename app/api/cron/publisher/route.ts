@@ -8,7 +8,7 @@ import {
     refreshInstagramToken,
     resolveAccessToken,
 } from '@/lib/instagram';
-import { describeChannelHealth, resolvePlannerRuntime } from '@/lib/planner-runtime';
+import { runPlannerOnce } from '@/lib/planner-runtime';
 import { sendNotification } from '@/lib/notify';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -216,56 +216,6 @@ async function isChannelThrottled(channel: { id?: string } | null | undefined, n
     return now.getTime() - last.published_at.getTime() < minIntervalMs;
 }
 
-// ─── Caption templates (P1) ────────────────────────────────────────────────────
-
-/**
- * Resolve the variables available to caption templates for a planner run.
- * The content item is looked up with an ownership guard (IDOR-safe).
- */
-async function resolveCaptionTemplateVars(
-    selectedContent: { id?: string; title?: string | null; caption?: string | null; title_fallback?: string | null; caption_fallback?: string | null } | null | undefined,
-    planner: { user_id: string },
-    config: { timezone?: string },
-    channelName: string,
-    now: Date
-): Promise<Record<string, string>> {
-    let title = selectedContent?.title_fallback || selectedContent?.title || '';
-    let itemCaption = selectedContent?.caption_fallback || selectedContent?.caption || '';
-    if (selectedContent?.id) {
-        const libItem = await prisma.contentItem.findFirst({
-            where: { id: selectedContent.id, user_id: planner.user_id },
-            select: { title: true, caption: true },
-        });
-        if (libItem) {
-            title = libItem.title || title;
-            itemCaption = libItem.caption || itemCaption;
-        }
-    }
-    const tz = config.timezone || 'America/Sao_Paulo';
-    const dateStr = new Intl.DateTimeFormat('pt-BR', { timeZone: tz, day: '2-digit', month: '2-digit', year: 'numeric' }).format(now);
-    return {
-        '{post_title}': title || '',
-        '{post_caption}': itemCaption || '',
-        '{date}': dateStr,
-        '{channel_name}': channelName || '',
-        '{hashtags}': '',
-    };
-}
-
-/** Wall-clock "HH:MM" in a given IANA timezone, without fragile string re-parsing. */
-function getTimeInTimeZone(date: Date, tz: string): { hh: string; mm: string } {
-    const fmt = new Intl.DateTimeFormat('en-CA', {
-        timeZone: tz,
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-    });
-    const parts = fmt.formatToParts(date);
-    const hh = (parts.find(p => p.type === 'hour')?.value || '00').padStart(2, '0');
-    const mm = (parts.find(p => p.type === 'minute')?.value || '00').padStart(2, '0');
-    return { hh, mm };
-}
-
 /** Insert a planner log entry. */
 async function logPlanner(plannerId: string, message: string, level: 'info' | 'error' = 'info', details: any = {}) {
     if (!plannerId || plannerId === 'unknown') return;
@@ -280,6 +230,21 @@ async function logPlanner(plannerId: string, message: string, level: 'info' | 'e
             },
         });
     } catch { /* Don't crash on log failures */ }
+}
+
+/**
+ * Log de rotina com throttle (ex.: 'start_time not reached', 'Sleep schedule
+ * active') — evita ~1440 linhas/dia/planner. Loga no máximo 1x a cada TTL.
+ */
+const lastThrottledLogAt = new Map<string, number>();
+const LOG_THROTTLE_MS = 30 * 60 * 1000; // 30 min
+
+async function throttledLog(plannerId: string, message: string, level: 'info' | 'error' = 'info', details: any = {}) {
+    const key = `${plannerId}:${message}`;
+    const last = lastThrottledLogAt.get(key) || 0;
+    if (Date.now() - last < LOG_THROTTLE_MS) return;
+    lastThrottledLogAt.set(key, Date.now());
+    await logPlanner(plannerId, message, level, details);
 }
 
 async function refreshDueChannelTokens(now: Date, startTime: number, maxExecMs: number) {
@@ -398,164 +363,33 @@ async function handler(request: Request) {
             for (const planner of planners) {
                 if (Date.now() - startTime > MAX_EXEC_MS) { results.timeout = true; break; }
                 try {
-                    let rawConfig = planner.config || '{}';
-                    let config: any;
-                    try {
-                        const first = JSON.parse(rawConfig);
-                        config = typeof first === 'string' ? JSON.parse(first) : first;
-                    } catch (e: any) {
-                        await logPlanner(planner.id, `[Phase0] Config parse error: ${e.message}`, 'error', { raw: rawConfig.slice(0, 200) });
-                        continue;
-                    }
+                    const outcome = await runPlannerOnce(prisma, planner, now);
 
-                    const lastRun = planner.last_run ? new Date(planner.last_run) : null;
-
-                    // Calculate interval
-                    const freqVal = config.frequency?.value || 10;
-                    const freqUnit = config.frequency?.unit || 'minutes';
-                    let intervalMs = freqVal * 60 * 1000;
-                    if (freqUnit === 'hours') intervalMs = freqVal * 60 * 60 * 1000;
-                    else if (freqUnit === 'days') intervalMs = freqVal * 24 * 60 * 60 * 1000;
-                    else if (freqUnit === 'weeks') intervalMs = freqVal * 7 * 24 * 60 * 60 * 1000;
-
-                    const isDue = !lastRun || (now.getTime() >= lastRun.getTime() + intervalMs - 15000);
-                    if (!isDue) continue;
-
-                    if (config.start_time && now < new Date(config.start_time)) {
-                        await logPlanner(planner.id, `[Phase0] start_time not reached`, 'info');
-                        continue;
-                    }
-
-                    if (config.sleep_schedule) {
-                        const tz = config.timezone || 'America/Sao_Paulo';
-                        const { hh, mm } = getTimeInTimeZone(now, tz);
-                        const hhmm = `${hh}:${mm}`;
-                        const sleepStart = config.sleep_schedule.start || '00:00';
-                        const sleepEnd = config.sleep_schedule.end || '06:00';
-                        const isSleeping = sleepStart <= sleepEnd
-                            ? (hhmm >= sleepStart && hhmm < sleepEnd)
-                            : (hhmm >= sleepStart || hhmm < sleepEnd);
-                        if (isSleeping) {
-                            await logPlanner(planner.id, `[Phase0] Sleep schedule active`, 'info');
-                            continue;
+                    if (outcome.ok) {
+                        results.planners_processed++;
+                        results.claimed++;
+                        await logPlanner(planner.id, `[Phase0] Created ${outcome.created ?? 0} post(s)`, 'info');
+                    } else if (outcome.skipped) {
+                        if (outcome.skipped === 'not_due') {
+                            // Rotina normal — silêncio total (sem spam)
+                        } else if (outcome.skipped === 'start_time' || outcome.skipped === 'sleep') {
+                            // Rotina com throttle de 30 min (não ~1440/dia)
+                            await throttledLog(planner.id, `[Phase0] ${outcome.error || outcome.skipped}`, 'info');
+                        } else if (outcome.skipped === 'already_running') {
+                            results.skipped++;
+                        } else {
+                            // Erros reais: config inválido, sem canais, resolução falhou...
+                            await logPlanner(planner.id, `[Phase0] ${outcome.error || outcome.skipped}`, 'error');
                         }
+                    } else {
+                        await logPlanner(planner.id, `[Phase0] ${outcome.error || 'Planner skipped'}`, 'error');
                     }
-
-                    if (!planner.channels || planner.channels.length === 0) {
-                        await logPlanner(planner.id, `[Phase0] No channels connected`, 'error');
-                        continue;
-                    }
-
-                    // Atomic claim on last_run: only one overlapping run may process this planner.
-                    // (updateMany with the previously-read last_run; count===1 means we won the claim.)
-                    const claim = await prisma.planner.updateMany({
-                        where: { id: planner.id, last_run: planner.last_run },
-                        data: { last_run: now },
-                    });
-                    if (claim.count !== 1) {
-                        results.skipped++;
-                        continue;
-                    }
-
-                    const runtime = await resolvePlannerRuntime(prisma, planner, now);
-                    if (!runtime.ok) {
-                        await logPlanner(planner.id, `[Phase0] Planner preview blocked: ${runtime.errors.join('; ')}`, 'error', runtime);
-                        continue;
-                    }
-
-                    const publishableChannels = (planner.channels || []).filter((channel: any) => describeChannelHealth(channel, now).ok);
-                    const blockedChannels = (planner.channels || []).filter((channel: any) => !describeChannelHealth(channel, now).ok);
-                    if (blockedChannels.length > 0) {
-                        await logPlanner(planner.id, `[Phase0] ${blockedChannels.length} channel(s) blocked`, 'info', {
-                            blocked: blockedChannels.map((channel: any) => channel.id),
-                        });
-                    }
-                    if (publishableChannels.length === 0) {
-                        await logPlanner(planner.id, `[Phase0] No publishable channels available`, 'error');
-                        continue;
-                    }
-
-                    const { selectedIndex, selectedContent, mediaUrl, mediaType, caption, locationId, shareToFeed, thumbnailUrl, children, collaborators, audioConfiguration, userTags, nextState, warnings } = runtime;
-                    const safeChildren = children || [];
-                    for (const warning of warnings) {
-                        await logPlanner(planner.id, `[Phase0] ${warning}`, 'info');
-                    }
-
-                    await logPlanner(planner.id, `[Phase0] Selected content[${selectedIndex}]: type=${selectedContent?.type}, id=${selectedContent?.id}, url=${mediaUrl || selectedContent?.url}`, 'info');
-
-                    // ── Caption templates (P1) ──
-                    // config.caption_templates: string[] + config.caption_rotation:
-                    // 'off' | 'sequential' | 'random'. The UI (PlannerWizard) writes these;
-                    // here we only read them. Variables: {post_title} {post_caption} {date}
-                    // {channel_name} {hashtags}. Sequential advances per planner cycle via
-                    // config.state.template_index (persisted with nextState).
-                    const captionTemplates = Array.isArray(config.caption_templates)
-                        ? config.caption_templates.filter((t: unknown) => typeof t === 'string' && t.trim().length > 0)
-                        : [];
-                    const captionRotation = config.caption_rotation || 'off';
-                    const useCaptionTemplates = captionTemplates.length > 0 && captionRotation !== 'off';
-                    const templateIndex = typeof config.state?.template_index === 'number'
-                        ? Number(config.state.template_index)
-                        : 0;
-                    const finalState = {
-                        ...nextState,
-                        ...(useCaptionTemplates && captionRotation === 'sequential'
-                            ? { template_index: templateIndex + 1 }
-                            : {}),
-                    };
-
-                    const isVideoStory = mediaType === 'STORIES' && !!mediaUrl && mediaUrl.includes('.mp4');
-                    let postsCreated = 0;
-                    for (const channel of publishableChannels) {
-                        let finalCaption = caption;
-                        if (useCaptionTemplates) {
-                            const chosen = captionRotation === 'random'
-                                ? captionTemplates[Math.floor(Math.random() * captionTemplates.length)]
-                                : captionTemplates[templateIndex % captionTemplates.length];
-                            const vars = await resolveCaptionTemplateVars(selectedContent, planner, config, channel.name || '', now);
-                            finalCaption = chosen.replace(/\{post_title\}|\{post_caption\}|\{date\}|\{channel_name\}|\{hashtags\}/g, (m: string) => vars[m] ?? '');
-                        }
-                        await prisma.post.create({
-                            data: {
-                                user_id: planner.user_id,
-                                channel_id: channel.id,
-                                status: 'pending',
-                                media_type: mediaType,
-                                // STORIES with an .mp4 URL must be stored in video_url (Phase 1 sends video_url for it)
-                                video_url: (mediaType === 'REELS' || isVideoStory) ? mediaUrl : null,
-                                image_url: (mediaType === 'IMAGE') ? mediaUrl
-                                    : (mediaType === 'STORIES' && mediaUrl && !mediaUrl.includes('.mp4')) ? mediaUrl
-                                    : (mediaType === 'CAROUSEL' && safeChildren.length > 0) ? safeChildren[0].url // Set first child as thumbnail
-                                    : null,
-                                thumbnail_url: thumbnailUrl || (safeChildren.length > 0 ? safeChildren[0].url : null),
-                                children_urls: safeChildren.length > 0 ? JSON.stringify(safeChildren) : null,
-                                share_to_feed: shareToFeed,
-                                location_id: locationId,
-                                collaborators: collaborators,
-                                audio_configuration: audioConfiguration ? JSON.stringify(audioConfiguration) : null,
-                                user_tags: userTags,
-                                caption: finalCaption,
-                                scheduled_at: now,
-                                planner_id: planner.id,
-                            },
-                        });
-                        postsCreated++;
-                    }
-
-                    await logPlanner(planner.id, `[Phase0] Created ${postsCreated} post(s) for mediaType=${mediaType}`, 'info');
-                    // last_run was already claimed above — only persist the state/config here
-                    await prisma.planner.update({
-                        where: { id: planner.id },
-                        data: { config: JSON.stringify({ ...config, state: finalState }) },
-                    });
-                    results.planners_processed++;
                 } catch (err: any) {
                     await logPlanner(planner.id, `[Phase0] Uncaught error: ${err.message}`, 'error', { stack: err.stack });
                 }
             }
 
-            // ═══════════════════════════════════════════════════════════════════════
-            // PHASE 1: Pending → Processing (create IG media containers)
+// PHASE 1: Pending → Processing (create IG media containers)
             // ═══════════════════════════════════════════════════════════════════════
 
             // Posts with scheduled_at = NULL (manual posts without a date) must be included
@@ -1022,8 +856,10 @@ async function handler(request: Request) {
                 }
             }
 
-            // Summarize failures — one digest notification instead of flooding per-post alerts
-            if (results.errors > 0) {
+            // Summarize failures — digest notification only for batches with
+            // several failures (single post failures already notify individually
+            // via notifyPostFailed, avoiding double alerts on the common case).
+            if (results.errors > 3) {
                 await sendNotification(`⚠️ ${results.errors} publicação(ões) falharam no último ciclo do publisher.`);
             }
 
