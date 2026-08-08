@@ -128,9 +128,14 @@ RUN chmod +x ./docker-entrypoint.sh
 # won't persist across Easypanel deploys.
 VOLUME ["/app/data"]
 
-# Healthcheck: verify the HTTP server responds (API route checks the DB too)
-HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=90s \
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
+# Healthcheck: verify the HTTP server responds (API route checks the DB too).
+# Use 127.0.0.1 (NOT "localhost"): Alpine's busybox wget resolves localhost to
+# ::1 (IPv6), while Next.js binds IPv4 0.0.0.0 — the check would always fail.
+# Use ${PORT} because orchestrators (e.g. Easypanel) override PORT via env;
+# fall back to 3000 for plain `docker compose up`. Kept in sync with
+# docker-compose.yml healthcheck.
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 --start-period=120s \
+  CMD wget -qO- http://127.0.0.1:${PORT:-3000}/api/health || exit 1
 
 USER nextjs
 

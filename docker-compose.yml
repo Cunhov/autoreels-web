@@ -17,12 +17,15 @@ services:
       - autoreels-data:/app/data
     restart: always
     healthcheck:
-      test: [ "CMD", "wget", "-qO-", "http://localhost:3000/api/health" ]
+      # 127.0.0.1 (NOT localhost): busybox wget resolves localhost to ::1 (IPv6)
+      # while Next.js binds IPv4 0.0.0.0. $$ escapes compose interpolation so
+      # the container shell expands ${PORT} at runtime (Easypanel sets PORT=80).
+      test: [ "CMD-SHELL", "wget -qO- http://127.0.0.1:$${PORT:-3000}/api/health || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 5
       # Entrypoint runs migrations + WAL setup before boot — give it room
-      start_period: 90s
+      start_period: 120s
     logging:
       driver: json-file
       options:
@@ -38,7 +41,11 @@ services:
     env_file:
       - .env
     environment:
-      # Points to the app service by its Docker Compose service name
+      # Points to the app service by its Docker Compose service name.
+      # Plain `docker compose up` uses the Dockerfile default PORT=3000.
+      # (On Easypanel, configure the worker separately with
+      # APP_URL=http://aplicativos_autoreels:80 — the orchestrator overrides
+      # the app port to 80 and renames the service.)
       - APP_URL=http://app:3000
       # Override interval (seconds) if needed: e.g. WORKER_INTERVAL=30
       - WORKER_INTERVAL=${WORKER_INTERVAL:-60}

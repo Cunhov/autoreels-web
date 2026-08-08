@@ -7,7 +7,7 @@
  * doesn't need any external cron scheduler.
  *
  * Environment Variables:
- *   APP_URL          - Base URL of the Next.js app  (default: http://app:80)
+ *   APP_URL          - Base URL of the Next.js app  (default: http://app:${PORT:-80})
  *   CRON_SECRET      - Must match the app's CRON_SECRET env var
  *   WORKER_INTERVAL  - Interval between runs in seconds (default: 60, min 5)
  *
@@ -17,7 +17,10 @@
 
 'use strict';
 
-const APP_URL = (process.env.APP_URL || 'http://app:80').replace(/\/$/, '');
+// The app may listen on a non-default port (Easypanel sets PORT=80).
+// Honour PORT when APP_URL is not explicitly provided.
+const DEFAULT_APP_PORT = process.env.PORT || '80';
+const APP_URL = (process.env.APP_URL || `http://app:${DEFAULT_APP_PORT}`).replace(/\/$/, '');
 const CRON_SECRET = process.env.CRON_SECRET || '';
 
 const RAW_INTERVAL = process.env.WORKER_INTERVAL || '60';
