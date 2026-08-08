@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { cleanPathSegment } from "@/lib/upload-path";
+import { normalizeTags } from "./shared";
 
 // Fields a client may set when creating a content item. Server-owned fields
 // (id, user_id, created_at, path) are excluded to prevent mass assignment.
@@ -35,14 +36,23 @@ export function buildContentWhere(
     const parent_id = (rawParentId && rawParentId !== 'null' && rawParentId !== 'undefined')
         ? rawParentId
         : null;
-    const types = searchParams.get('types')?.split(',').filter(Boolean) || undefined;
+    // Accept both `types` (list) and singular `type` (pickers send this)
+    const typesParam = searchParams.get('types') ?? searchParams.get('type');
+    const types = typesParam?.split(',').filter(Boolean) || undefined;
     const search = searchParams.get('search')?.trim().toLowerCase() || undefined;
     const includeTags = searchParams.get('include_tags')?.split(',').map(t => t.trim()).filter(Boolean) || [];
     const excludeTags = searchParams.get('exclude_tags')?.split(',').map(t => t.trim()).filter(Boolean) || [];
-    const sizeMin = searchParams.get('size_min') ? parseInt(searchParams.get('size_min')!, 10) : undefined;
-    const sizeMax = searchParams.get('size_max') ? parseInt(searchParams.get('size_max')!, 10) : undefined;
-    const durationMin = searchParams.get('duration_min') ? parseFloat(searchParams.get('duration_min')!) : undefined;
-    const durationMax = searchParams.get('duration_max') ? parseFloat(searchParams.get('duration_max')!) : undefined;
+
+    // Numeric filters — ignore non-finite values (NaN would poison the where)
+    const parseNum = (raw: string | null): number | undefined => {
+        if (raw === null || raw === '') return undefined;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : undefined;
+    };
+    const sizeMin = parseNum(searchParams.get('size_min'));
+    const sizeMax = parseNum(searchParams.get('size_max'));
+    const durationMin = parseNum(searchParams.get('duration_min'));
+    const durationMax = parseNum(searchParams.get('duration_max'));
 
     const where: Prisma.ContentItemWhereInput = {
         user_id: userId,
@@ -50,40 +60,44 @@ export function buildContentWhere(
         type: types ? { in: types } : undefined,
     };
 
-    // Server-side search (name, title, caption — tags stored as JSON string)
+    // Server-side search (name, title, caption — NOT tags: tags have their own filter)
     if (search) {
         where.OR = [
             { name: { contains: search } },
             { title: { contains: search } },
             { caption: { contains: search } },
-            { tags: { contains: search } },
         ];
     }
 
+    // Tag filters: match the serialized JSON token (e.g. `"cat"`) instead of a
+    // raw substring, so `cat` never matches `category`. Tags are always stored
+    // as a JSON array string (see normalizeTags), so the quoted token is exact.
     if (includeTags.length > 0 || excludeTags.length > 0) {
         where.AND = where.AND ? [...(Array.isArray(where.AND) ? where.AND : [where.AND])] : [];
         if (Array.isArray(where.AND)) {
             for (const tag of includeTags) {
-                where.AND.push({ tags: { contains: tag } });
+                where.AND.push({ tags: { contains: JSON.stringify(tag) } });
             }
             for (const tag of excludeTags) {
-                where.AND.push({ NOT: { tags: { contains: tag } } });
+                where.AND.push({ NOT: { tags: { contains: JSON.stringify(tag) } } });
             }
         }
     }
 
     // Size filter
     if (sizeMin !== undefined || sizeMax !== undefined) {
-        where.size = {};
-        if (sizeMin !== undefined) (where.size as any).gte = sizeMin;
-        if (sizeMax !== undefined) (where.size as any).lte = sizeMax;
+        where.size = {
+            ...(sizeMin !== undefined ? { gte: sizeMin } : {}),
+            ...(sizeMax !== undefined ? { lte: sizeMax } : {}),
+        } as Prisma.IntNullableFilter;
     }
 
     // Duration filter
     if (durationMin !== undefined || durationMax !== undefined) {
-        where.duration = {};
-        if (durationMin !== undefined) (where.duration as any).gte = durationMin;
-        if (durationMax !== undefined) (where.duration as any).lte = durationMax;
+        where.duration = {
+            ...(durationMin !== undefined ? { gte: durationMin } : {}),
+            ...(durationMax !== undefined ? { lte: durationMax } : {}),
+        } as Prisma.FloatNullableFilter;
     }
 
     return where;
@@ -131,16 +145,15 @@ export async function GET(req: Request) {
     ]);
 
     // Post-process to map 'children' to 'thumbnail_url'
-    const mappedItems = contentItems.map(item => {
-        let thumbnail_url = item.thumbnail_url || null;
+    const mappedItems = contentItems.map(({ children, ...rest }) => {
+        let thumbnail_url = rest.thumbnail_url || null;
         let thumbnail_type = null;
 
-        if (item.type === 'carousel_folder' && item.children && item.children.length > 0) {
-            thumbnail_url = item.children[0].thumbnail_url || item.children[0].url;
-            thumbnail_type = item.children[0].type;
+        if (rest.type === 'carousel_folder' && children && children.length > 0) {
+            thumbnail_url = children[0].thumbnail_url || children[0].url;
+            thumbnail_type = children[0].type;
         }
 
-        const { children, ...rest } = item;
         return { ...rest, thumbnail_url, thumbnail_type };
     });
 
@@ -194,9 +207,9 @@ export async function POST(req: Request) {
             }
         }
 
-        // Tags: store as JSON string
-        if (payload.tags !== undefined && typeof payload.tags !== "string") {
-            payload.tags = JSON.stringify(payload.tags);
+        // Tags: always store as a JSON array string (normalized)
+        if (payload.tags !== undefined) {
+            payload.tags = normalizeTags(payload.tags);
         }
 
         const contentItem = await prisma.contentItem.create({
