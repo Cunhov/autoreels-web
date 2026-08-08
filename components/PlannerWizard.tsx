@@ -1,12 +1,11 @@
 'use client';
 import { useState, useEffect, useMemo } from 'react';
-import { getPublicUrl } from '@/lib/storage';
-import { createVideoThumbnailFile } from '@/lib/video-thumbnail';
 import { useSession } from 'next-auth/react';
 import { X, ChevronRight, ChevronLeft, Calendar, Clock, Instagram, Layers, ArrowUpDown, Check, Image as ImageIcon, Film } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import MediaUploader from './MediaUploader';
 import ContentLibrary from './ContentLibrary';
+import { useUploadActions } from '@/contexts/UploadContext';
 
 interface Channel {
     id: string;
@@ -41,6 +40,8 @@ interface ContentEntry {
 }
 
 export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData }: PlannerWizardProps) {
+    const { uploadAndWait } = useUploadActions();
+
     const [step, setStep] = useState(0);
     const [loading, setLoading] = useState(false);
     const { data: session } = useSession();
@@ -272,78 +273,30 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
         }
     };
 
-    const uploadFiles = async (userId: string) => {
+    // Upload direct files through the global upload queue (chunked, resumable,
+    // with automatic thumbnail extraction). Returns the same shape the planner
+    // config expects ({ url, type, thumbnail_url }).
+    const uploadFiles = async (): Promise<{ url: string, type: string, thumbnail_url?: string | null }[]> => {
+        if (files.length === 0) return [];
+
+        const results = await uploadAndWait(files, {});
         const uploadedItems: { url: string, type: string, thumbnail_url?: string | null }[] = [];
 
-        for (const file of files) {
-            try {
-                const fileExt = file.name.split('.').pop();
-                const fileName = `${userId}/${Math.random().toString(36).substring(2)}.${fileExt}`;
-                const fileType = file.type.startsWith('image/') ? 'image' : 'video';
-
-                // Upload via chunked local API
-                const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB chunks
-                const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-
-                for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-                    const start = chunkIndex * CHUNK_SIZE;
-                    const end = Math.min(start + CHUNK_SIZE, file.size);
-                    const chunk = file.slice(start, end);
-
-                    let retries = 0;
-                    let success = false;
-
-                    while (!success && retries < 3) {
-                        try {
-                            const uploadRes = await fetch('/api/upload-chunk', {
-                                method: 'POST',
-                                headers: {
-                                    'x-chunk-index': chunkIndex.toString(),
-                                    'x-total-chunks': totalChunks.toString(),
-                                    'x-file-name': fileName
-                                },
-                                body: chunk,
-                            });
-
-                            if (!uploadRes.ok) {
-                                const err = await uploadRes.json().catch(() => ({}));
-                                throw new Error((err as any).error || `Failed to upload chunk ${chunkIndex} for ${file.name}`);
-                            }
-                            success = true;
-                        } catch (err) {
-                            retries++;
-                            if (retries >= 3) throw err;
-                            await new Promise(r => setTimeout(r, 1000 * retries));
-                        }
-                    }
-                }
-
-                const publicUrl = getPublicUrl(fileName);
-                let thumbnailUrl: string | null = null;
-
-                if (fileType === 'video') {
-                    const thumbnailFile = await createVideoThumbnailFile(file);
-                    if (thumbnailFile) {
-                        const thumbnailPath = `${userId}/thumbnails/${thumbnailFile.name}`;
-                        const thumbnailForm = new FormData();
-                        thumbnailForm.append('file', thumbnailFile);
-                        thumbnailForm.append('path', thumbnailPath);
-
-                        const thumbRes = await fetch('/api/upload', {
-                            method: 'POST',
-                            body: thumbnailForm,
-                        });
-
-                        if (thumbRes.ok) {
-                            thumbnailUrl = getPublicUrl(thumbnailPath);
-                        }
-                    }
-                }
-
-                uploadedItems.push({ url: publicUrl, type: fileType, thumbnail_url: thumbnailUrl });
-            } catch (err) {
-                console.error(`Error processing ${file.name}:`, err);
+        for (const result of results) {
+            if (result.error || !result.item?.url) {
+                console.error(`Upload failed for ${result.name}:`, result.error || 'no url returned');
+                continue;
             }
+            const item = result.item;
+            uploadedItems.push({
+                url: item.url as string,
+                type: item.type || (
+                    /\\.(mp4|mov|mkv|webm|m4v)(\?\|$)/i.test(item.url || '')
+                        ? 'video'
+                        : 'image'
+                ),
+                thumbnail_url: item.thumbnail_url || null,
+            });
         }
         return uploadedItems;
     };
@@ -369,7 +322,7 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
             if (!session?.user) throw new Error('Not authenticated');
 
             // 1. Upload New Files
-            const uploadedItems = await uploadFiles((session.user as any).id);
+            const uploadedItems = await uploadFiles();
 
             // Comma-separated usernames => array of username strings (the cron
             // converts this to the Instagram Graph API object format).
