@@ -85,6 +85,19 @@ export const VIDEO_EXTS = ["mp4", "mov", "m4v", "webm", "mkv"];
 export const IMAGE_EXTS = ["jpg", "jpeg", "png", "webp", "gif"];
 
 const CHUNK_FETCH_TIMEOUT_MS = 60_000; // real per-chunk network timeout (5MB in 60s ≈ 83KB/s floor)
+const STATUS_FETCH_TIMEOUT_MS = 30_000; // resume query — never stall the queue on a dead status endpoint
+const COMPLETE_FETCH_TIMEOUT_MS = 120_000; // finalize (concat + ffprobe + thumbnail) can legitimately take a while
+
+/** Signal combinado: aborta no cancelamento do usuário OU no timeout. */
+function withTimeoutSignal(
+	external: AbortSignal,
+	timeoutMs: number,
+): AbortSignal {
+	if (typeof AbortSignal.any === "function") {
+		return AbortSignal.any([external, AbortSignal.timeout(timeoutMs)]);
+	}
+	return external;
+}
 const FREEZE_TIMEOUT_MS = 30_000; // safety net; the heartbeat keeps slow-but-alive tasks fresh
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const RETRY_DELAY_MS = 5000;
@@ -616,7 +629,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 					try {
 						const stRes = await fetch(
 							`/api/upload-chunk/status?path=${encodeURIComponent(task.targetPath)}`,
-							{ signal: controller.signal },
+							{ signal: withTimeoutSignal(controller.signal, STATUS_FETCH_TIMEOUT_MS) },
 						);
 						if (stRes.ok) {
 							const st = await stRes.json();
@@ -738,7 +751,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 				const metaRes = await fetch("/api/upload-chunk/complete", {
 					method: "POST",
 					body: formData,
-					signal: controller.signal,
+					signal: withTimeoutSignal(controller.signal, COMPLETE_FETCH_TIMEOUT_MS),
 				});
 
 				if (!metaRes.ok) {
