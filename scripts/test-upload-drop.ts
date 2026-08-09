@@ -189,7 +189,9 @@ async function main() {
 	check(
 		"Caso 5: TODAS as pastas capturadas",
 		JSON.stringify(p5) ===
-			JSON.stringify(["Pasta 1/1.jpg", "Pasta 2/1.jpg", "Pasta 3/1.jpg"].sort()),
+			JSON.stringify(
+				["Pasta 1/1.jpg", "Pasta 2/1.jpg", "Pasta 3/1.jpg"].sort(),
+			),
 	);
 
 	console.log(
