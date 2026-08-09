@@ -140,15 +140,19 @@ function getFileExtension(name: string): string {
 }
 
 function isVideoFile(file: File): boolean {
+	// `file.type` pode ser undefined quando o File é sintetizado (ex.:
+	// detectContentType passa `{ name } as File`) — nunca quebre no check.
+	const type = file.type || "";
 	return (
-		file.type.startsWith("video/") ||
+		type.startsWith("video/") ||
 		VIDEO_EXTS.includes(getFileExtension(file.name))
 	);
 }
 
 function isImageFile(file: File): boolean {
+	const type = file.type || "";
 	return (
-		file.type.startsWith("image/") ||
+		type.startsWith("image/") ||
 		IMAGE_EXTS.includes(getFileExtension(file.name))
 	);
 }
