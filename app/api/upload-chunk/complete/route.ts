@@ -312,11 +312,16 @@ export async function POST(req: Request) {
         if (finalizeToken) {
             await rm(join(getUploadsDir(), ".finalizing", finalizeToken), { recursive: true, force: true }).catch(() => { });
         }
-        // Remove any straggler `.part.*` left under the staging path (normally
-        // none: we renamed them all before concatenating).
-        await cleanupParts();
-        // Release the lock LAST: while we hold it, no other request can write
-        // parts or cancel, so this cleanup cannot race a new upload.
-        await lock?.release();
+        // Only the lock OWNER may clean the staging parts. The 409 loser (lock
+        // not acquired) must never touch `.part.*` — deleting them would destroy
+        // the winner's parts mid-consume (the exact ENOENT race this guard fixes).
+        if (lock) {
+            // Remove any straggler `.part.*` left under the staging path (normally
+            // none: we renamed them all before concatenating).
+            await cleanupParts();
+            // Release the lock LAST: while we hold it, no other request can write
+            // parts or cancel, so this cleanup cannot race a new upload.
+            await lock.release();
+        }
     }
 }
