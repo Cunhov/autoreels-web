@@ -157,6 +157,10 @@ export async function POST(req: Request) {
         finalizeToken = randomUUID();
         const finalizeDir = join(uploadDir, ".finalizing", finalizeToken);
         await mkdir(finalizeDir, { recursive: true });
+        // Marker for the staging GC (lib/upload-gc.ts): records the owning staging
+        // path so the sweep can skip this dir while the finalize lock is fresh
+        // (a very slow concat must never have its parts swept).
+        await writeFile(join(finalizeDir, "source"), partBase).catch(() => { });
         for (let i = 0; i < totalChunks; i++) {
             try {
                 await rename(`${partBase}.part.${i}`, join(finalizeDir, `part.${i}`));

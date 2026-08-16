@@ -481,12 +481,18 @@ async function scenarioC() {
 async function scenarioD() {
 	await logTail();
 	const channelId = "chan-gauntlet-d";
+	// token_expires_at = now + 7d (NOT null): exercises the selection query's third
+	// OR condition (`token_expires_at <= now+14d`). Without the round-03 fix this
+	// re-selects the channel EVERY tick after a permanent failure that only set
+	// token_refreshed_at → the [ChannelRefresh] spam returns. A NULL seed would hide it.
+	const soonExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 	await prisma.channel.upsert({
 		where: { id: channelId },
 		update: {
 			status: "active",
 			access_token: GARBAGE_TOKEN,
 			token_refreshed_at: null,
+			token_expires_at: soonExpiry,
 		},
 		create: {
 			id: channelId,
@@ -496,6 +502,7 @@ async function scenarioD() {
 			status: "active",
 			access_token: GARBAGE_TOKEN,
 			token_source: "manual",
+			token_expires_at: soonExpiry,
 		},
 	});
 

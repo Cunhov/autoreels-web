@@ -6,6 +6,7 @@ import { stat } from "fs/promises";
 import { join } from "path";
 import { normalizeUploadPath } from "@/lib/upload-path";
 import { isLocked } from "@/lib/upload-lock";
+import { sweepStaleStaging } from "@/lib/upload-gc";
 import { listPartIndices, getUploadsDir } from "@/app/api/upload-chunk/route";
 
 /**
@@ -53,5 +54,10 @@ export async function GET(req: Request) {
     } catch (error: unknown) {
         console.error("Chunk status error:", error);
         return NextResponse.json({ error: "Failed to read upload status" }, { status: 500 });
+    } finally {
+        // Opportunistic staging GC (debounced 60s, best-effort): the client hits
+        // status on every resume — the cheapest place to reclaim crash leftovers
+        // and TOCTOU orphans before the next upload to the same path.
+        void sweepStaleStaging(getUploadsDir()).catch(() => { });
     }
 }
