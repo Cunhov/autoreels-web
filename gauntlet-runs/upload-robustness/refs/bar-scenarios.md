@@ -33,16 +33,26 @@ Pass:
 - Final file intact and hash-matches; no orphan `.part.*` files; no `.finalizing`/lock litter.
 - All subsequent uploads to the same path work normally.
 
-## Scenario C — duplicate names / staging collision
+## Scenario C — duplicate names / staging collision (reframed in round 02)
 
 Reproduce: two tasks uploading the SAME filename into the SAME folder concurrently (the
 production log shows identical filenames failing repeatedly — e.g. Botox…mp4 × 5 attempts).
 
-Pass:
+The fix has TWO layers, each with its own pass criteria:
 
-- No chunk from task B can clobber a part task A is reading; no ENOENT; both finalize
-  successfully (dedupe-by-name semantics may merge them into one ContentItem — that is the
-  existing contract — but never a corrupt file or a 500).
+C1 — client contract (unique staging paths): the UploadContext must build a UNIQUE
+`targetPath` per task (`folder/name.<taskId-suffix>`), so two tasks can never share parts.
+Pass: two tasks with unique paths, chunks interleaved concurrently → BOTH finalize, the
+final file hash-matches its own source, exactly one ContentItem (dedupe by name+parent is
+the existing contract), zero ENOENT, zero process warnings.
+
+C2 — server safety under forced abuse: even if raw clients ignore the contract and share
+one path, the server must not ENOENT, must not 500, and concurrent completes must CONVERGE
+(loser gets 409 and replays the winner's item idempotently through the client's backoff
+protocol). Mixed final hash under a shared path is EXPECTED (interleaved writers produce a
+frankenstein file — the client contract is what prevents that in production; C2 proves the
+server never deletes the winner's parts or crashes mid-read).
+
 - Resume (status endpoint) still works within a retry of the same task.
 
 ## Scenario D — invalid IG token (ChannelRefresh)
