@@ -400,9 +400,10 @@ async function main() {
 		`status badge "${badgeText}" (expected ${statuses.length}) consoleErrors=${consoleErrors.length} pageErrors=${pageErrors.length}`,
 	);
 	// The bar's C5 requires the planner name IN the modal (the post was created
-// by a planner; the modal must say which). Current code does NOT render it —
-// this assertion is the honest FAIL (baseline finding).
-const c5ModalOk = modalVisible && modalCaption && plannerNameInModal;
+	// by a planner; the modal must say which). Fixed: the LocalPreviewModal (the
+	// layer that opens for pending/scheduled posts) renders post.planner.name —
+	// the DayDetailsModal list card also shows it. The assertion now requires it.
+	const c5ModalOk = modalVisible && modalCaption && plannerNameInModal;
 	record(
 		"C5",
 		Boolean(c5ModalOk),

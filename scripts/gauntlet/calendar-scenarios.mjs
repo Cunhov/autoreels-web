@@ -615,6 +615,70 @@ async function scenarioC6() {
 		.catch(() => {});
 }
 
+/**
+ * C6b — >500-post window: the page passes limit=1000 (the route's max) so the
+ * NEWEST posts are never silently truncated. The route's DEFAULT cap is 500
+ * (ordered asc → the newest are dropped); the page's explicit limit=1000 is
+ * what fixes the truncation the critic found. Seeds 520 posts in the current
+ * month and asserts both behaviors.
+ */
+async function scenarioC6b() {
+	const now = new Date();
+	const year = now.getFullYear();
+	const month = now.getMonth();
+	const rows = [];
+	for (let day = 1; day <= 26; day++) {
+		for (let i = 0; i < 20; i++) {
+			rows.push({
+				id: `${NS_POST_PREFIX}c6b-d${day}-${i}`,
+				user_id: "admin",
+				status: i % 3 === 0 ? "published" : "pending",
+				media_type: "REELS",
+				caption: `C6b d${day} i${i}`,
+				scheduled_at: new Date(year, month, day, 9 + (i % 10), i % 60, 0),
+			});
+		}
+	}
+	for (let start = 0; start < rows.length; start += 200) {
+		await prisma.post.createMany({ data: rows.slice(start, start + 200) });
+	}
+
+	const startIso = `${year}-${String(month + 1).padStart(2, "0")}-01T00:00:00Z`;
+	const endIso = new Date(year, month + 1, 0).toISOString();
+	const newestId = `${NS_POST_PREFIX}c6b-d26-19`; // last seeded → newest by asc order
+
+	// Page contract: explicit limit=1000 → all 520 returned, newest present.
+	const full = await req(
+		`/api/calendar?start=${startIso}&end=${endIso}&limit=1000`,
+	);
+	const fullPosts = full.json?.posts || [];
+	const newestPresent = fullPosts.some((p) => p.id === newestId);
+
+	// Documented default: no limit → route cap 500 drops the newest (ordered
+	// asc) — the exact silent truncation the page's limit=1000 avoids.
+	const def = await req(`/api/calendar?start=${startIso}&end=${endIso}`);
+	const defPosts = def.json?.posts || [];
+	const newestAbsentAtDefault = !defPosts.some((p) => p.id === newestId);
+
+	const pass =
+		full.status === 200 &&
+		fullPosts.length === 520 &&
+		newestPresent &&
+		defPosts.length === 500 &&
+		newestAbsentAtDefault;
+	record(
+		"C6b",
+		Boolean(pass),
+		`520-post window: limit=1000 → ${fullPosts.length}/520 newestPresent=${newestPresent} | default(500 cap) → ${defPosts.length} newestAbsent=${newestAbsentAtDefault}`,
+		{ full: fullPosts.length, default: defPosts.length, newestPresent },
+	);
+	await prisma.post
+		.deleteMany({
+			where: { id: { startsWith: NS_POST_PREFIX + "c6b" } },
+		})
+		.catch(() => {});
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Run
 // ═══════════════════════════════════════════════════════════════════════════
@@ -627,6 +691,7 @@ const scenarios = [
 	["C4", scenarioC4],
 	["C5", scenarioC5],
 	["C6", scenarioC6],
+	["C6b", scenarioC6b],
 ];
 let failed = 0;
 for (const [label, fn] of scenarios) {

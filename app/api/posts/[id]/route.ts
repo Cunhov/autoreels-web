@@ -173,6 +173,11 @@ export async function DELETE(
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    // Deleting a PUBLISHED post is allowed at the API layer (the record is
+    // removed; the media files are shared across posts and stay on disk). The
+    // UI deliberately hides the delete action for published posts — this is a
+    // documented contract (bar C3: "rejected or documented"), not an omission.
+
     try {
         const post = await prisma.post.findFirst({
             where: { id, user_id: userId },

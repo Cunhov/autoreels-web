@@ -75,6 +75,10 @@ export default function CalendarPage() {
 
   const lastFetchRef = useRef(0);
   const postsRef = useRef<Post[]>([]);
+  // Monotonic fetch sequence: guards against a stale response from a rapid
+  // month navigation overwriting a newer window's data (critic finding: rapid
+  // ArrowLeft/Right could apply an older window's response last).
+  const fetchSeqRef = useRef(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
   // `today` is computed after mount so the Today bar / Upcoming strip never
   // render during SSR (avoids hydration mismatches from wall-clock reads).
@@ -89,13 +93,16 @@ export default function CalendarPage() {
     // Keep the current data visible on refetch — spinner only on the first load.
     setLoading(!hasData);
     lastFetchRef.current = Date.now();
+    const seq = ++fetchSeqRef.current;
     try {
       // Two parallel, lean fetches: the visible month/week range and the
       // upcoming strip (today..+30d). Dedupe by id when they overlap.
+      // limit=1000: the route's default cap is 500 — without an explicit limit,
+      // windows with >500 posts silently drop the NEWEST ones (critic finding).
       const visible = getVisibleRange(currentDate, viewMode);
       const upcoming = getUpcomingRange();
-      const visibleParams = new URLSearchParams({ start: toApiDate(visible.start), end: toApiDate(visible.end) });
-      const upcomingParams = new URLSearchParams({ start: toApiDate(upcoming.start), end: toApiDate(upcoming.end) });
+      const visibleParams = new URLSearchParams({ start: toApiDate(visible.start), end: toApiDate(visible.end), limit: '1000' });
+      const upcomingParams = new URLSearchParams({ start: toApiDate(upcoming.start), end: toApiDate(upcoming.end), limit: '1000' });
       const [visibleRes, upcomingRes] = await Promise.all([
         fetch(`/api/calendar?${visibleParams.toString()}`),
         fetch(`/api/calendar?${upcomingParams.toString()}`),
@@ -111,14 +118,18 @@ export default function CalendarPage() {
         if (p && p.id) merged.set(p.id, p);
       });
       const nextPosts = Array.from(merged.values());
+      // Stale-response guard: a newer navigation may have started while this
+      // fetch was in flight — its response must not overwrite the newer window.
+      if (seq !== fetchSeqRef.current) return;
       postsRef.current = nextPosts;
       setPosts(nextPosts);
       setFetchError(null);
     } catch (err) {
+      if (seq !== fetchSeqRef.current) return;
       console.error('Error fetching data:', err);
       setFetchError('Falha ao carregar os dados do calendário.');
     } finally {
-      setLoading(false);
+      if (seq === fetchSeqRef.current) setLoading(false);
     }
   }, [currentDate, viewMode]);
 
