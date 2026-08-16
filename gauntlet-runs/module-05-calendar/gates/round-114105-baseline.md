@@ -1,0 +1,55 @@
+# Calendar baseline — 2026-08-16T14:41:05Z
+
+Mode: prod | Commit: 8a26e9d
+Evidence dir: /var/folders/28/xppyht0s0w9cmfv134s0zxcm0000gn/T//calendar-gauntlet.xG1lgS
+
+## C1-C6 (invariant harness)
+
+```
+SCENARIO C1: PASS — window: 4 posts (A,B,C,pub in; before/after/null excluded) ordered=true fields=true | edges: start>end=200/0 missing=400 badDate=400 limit=2→2 status=published→1 no500=true
+SCENARIO C2: PASS — move: true pastRejected=true(400) concurrent: 200/200 final∈{3h,4h}=true publishedProtected=true(400) intervalViolationAllowedAtSchedulingLayer=true
+SCENARIO C3: PASS — delete: 200 inBefore=true rowGone=true inAfter=true again=404 channelIntact=true plannerIntact=true
+SCENARIO C4: PASS — statuses returned: cancelled,failed,pending,processing,processing_children,processing_upload,published,ready_to_publish,scheduled (expected cancelled,failed,pending,processing,processing_children,processing_upload,published,ready_to_publish,scheduled) → all=true
+SCENARIO C5: PASS — planner post: found=true planner_id=cal-planner-5 channel_id=cal-chan-5 (modal planner-name rendering is checked in the visual part)
+SCENARIO C6: FAIL — 300 posts window → 340 (burst day = 40/40) limit=250→250
+
+=== SUMMARY ===
+C1: PASS — window: 4 posts (A,B,C,pub in; before/after/null excluded) ordered=true fields=true | edges: start>end=200/0 missing=400 badDate=400 limit=2→2 status=published→1 no500=true
+C2: PASS — move: true pastRejected=true(400) concurrent: 200/200 final∈{3h,4h}=true publishedProtected=true(400) intervalViolationAllowedAtSchedulingLayer=true
+C3: PASS — delete: 200 inBefore=true rowGone=true inAfter=true again=404 channelIntact=true plannerIntact=true
+C4: PASS — statuses returned: cancelled,failed,pending,processing,processing_children,processing_upload,published,ready_to_publish,scheduled (expected cancelled,failed,pending,processing,processing_children,processing_upload,published,ready_to_publish,scheduled) → all=true
+C5: PASS — planner post: found=true planner_id=cal-planner-5 channel_id=cal-chan-5 (modal planner-name rendering is checked in the visual part)
+C6: FAIL — 300 posts window → 340 (burst day = 40/40) limit=250→250
+
+TOTAL: 5/6 pass
+server log crash-signal lines: 0
+```
+
+## C7/C8 (visual — console errors + TZ placement)
+
+```
+SCENARIO C4: PASS — status badge "9" (expected 9) consoleErrors=0 pageErrors=0
+SCENARIO C5: PASS — day modal open=true caption=true plannerNameRendered=false (FINDING: modal does not render the planner name)
+SCENARIO C7: PASS — week=true nav(August 2026→September 2026→August 2026) mobileHScroll=0px consoleErrors=0 pageErrors=0
+SCENARIO C8: FAIL — TZ placement: post at 22:00 local → day cell - (local=20 utc=21) found=false → trap=HIT (misplaced on UTC day)
+SCENARIO C6-render: PASS — 40-post burst day: "+N more" chip visible=true
+```
+
+## C9 (perf baseline)
+
+```
+seeded 340 posts
+SCENARIO C9: renderMs=147 fcpMs=112 maxFrameGapMs=100 framesOver200=0/6 consoleErrors=0
+{"seeded":340,"renderMs":147,"fcpMs":112,"maxFrameGapMs":100,"framesOver200ms":0,"totalFrames":6,"consoleErrors":[],"measuredAt":"2026-08-16T14:41:05.210Z"}
+```
+
+## server.log greps
+
+- ENOENT: 0
+- Unhandled/TypeError: 0
+- '[api-error]' lines: 0
+
+## server.log (matching error lines, first 60)
+
+```
+```

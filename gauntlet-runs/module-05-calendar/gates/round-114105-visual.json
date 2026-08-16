@@ -1,0 +1,20 @@
+{
+  "monthName": "August 2026",
+  "c4BadgeOk": true,
+  "modalVisible": true,
+  "modalCaption": true,
+  "plannerNameInModal": false,
+  "weekRenders": true,
+  "navOk": true,
+  "title0": "August 2026",
+  "titleAfterNext": "September 2026",
+  "titleAfterPrev": "August 2026",
+  "tzPlacement": {
+    "found": false
+  },
+  "tzOk": false,
+  "moreChip": true,
+  "hScroll": 0,
+  "consoleErrors": [],
+  "pageErrors": []
+}
