@@ -56,8 +56,9 @@ Exit 0 only when all scenarios pass. Evidence: `gauntlet-runs/module-01-publishe
 - **P9**: `next build`/start overhead excluded from the 60s wall assertion (measured from the
   tick HTTP call itself).
 - **P2** is split into P2a/P2b/P2c rows but reported as a single P2 verdict (bar groups them).
-- **P3** needs three ticks (children init → carousel group container → poll+publish): the bar's
-  "exactly 3 child creates" is asserted across the first two ticks (a third tick with the same
+- **P3** needs three ticks (children init → carousel group container → poll+publish): the bar
+  asserts 4 total child-create calls (2 ok + 1 deterministic 500 + 1 retry of the missing child),
+  3 unique stored ids, 0 dupes, 0 orphans (a third tick with the same
   rules reaches `published`). Current code re-creates all children after a partial failure → 6.
 - **P9** split into P9a (order + bounded tick: 10 ready posts, 5 per tick cap, each post exactly
   once) and P9b (budget: one pending post with a 44s media-create delay forces

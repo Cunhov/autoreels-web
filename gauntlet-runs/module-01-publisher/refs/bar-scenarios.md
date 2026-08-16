@@ -22,7 +22,7 @@ Pass: `results.published` increments consistently; no post ever goes published�
 ## P3 — carousel partial failure, no duplicate children
 
 Seed a carousel post (children_urls = 3) with the mock failing child #2 (500) on container init.
-Pass: post → `processing_children` with the 2 good children recorded (instagram_child_ids), failure recorded; EXACTLY 2 container-create calls (no re-creation of good children on the retry tick); next tick with mock healthy creates ONLY the missing child (total container-create calls == 3); post eventually `published` exactly once.
+Pass (invariants — calibrated to the round-01 fix): every child index is created AT MOST ONCE SUCCESSFULLY. Deterministic counts with this mock: tick 1 attempts all 3 (2 ok + 1 deterministic 500) = 3 calls; tick 2 (healthy) creates ONLY the missing child = 1 call → **total child-create calls == 4, unique stored child ids == 3, 0 duplicated indices, 0 orphans** (no container id created-but-never-referenced). Post eventually `published` exactly once (media_publish calls == 1). This guards the regression: old code re-created ALL children on retry (6 calls) and leaked 2 orphan containers on IG; a future dupe pushes total calls > 4.
 
 ## P4 — rate-limit (429) stops the batch, nothing lost
 
