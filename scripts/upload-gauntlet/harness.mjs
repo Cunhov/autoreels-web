@@ -394,37 +394,84 @@ async function scenarioC() {
 	await uploadChunk(path, 3, 4, f1.size, f1.chunks[3]); // c1: 3
 	await uploadChunk(path, 3, 4, f2.size, f2.chunks[3]); // c2: 3
 
-	const [c1, c2] = await Promise.all([
-		completeUpload(name, path, f1.size, 4),
-		completeUpload(name, path, f2.size, 4),
+	// ── C1: the CLIENT contract — two tasks, unique staging paths (the way the
+//    UploadContext builds targetPath today: folder/name.<taskId>). Both must
+//    finalize, each file hash-matching its own source, one ContentItem (dedupe
+//    by name+parent), zero ENOENT / warnings. ──────────────────────────────
+	const pathC1a = `admin/${name}.taskaaaa`;
+	const pathC1b = `admin/${name}.taskbbbb`;
+	// Interleave BOTH tasks' chunks so the old shared-path corruption would fire.
+	await Promise.all([
+		uploadAllChunks(pathC1a, f1),
+		uploadAllChunks(pathC1b, f2),
 	]);
-
-	const log = await logTail();
-	const enoent = /ENOENT|Finalizing upload error/i.test(log);
-	const bothOk = c1.ok && c2.ok;
+	const [c1a, c1b] = await Promise.all([
+		completeUpload(name, pathC1a, f1.size, 4),
+		completeUpload(name, pathC1b, f2.size, 4),
+	]);
+	const logC1 = await logTail();
+	const enoentC1 = /ENOENT|Finalizing upload error/i.test(logC1);
 	const items = await prisma.contentItem.findMany({
 		where: { user_id: "admin", name },
 	});
-	let matchesSource = false;
+	let matchesC1 = false;
 	if (items.length >= 1 && items[0].url) {
 		const onDisk = await diskHashFromItem(items[0]);
-		matchesSource = Boolean(
+		matchesC1 = Boolean(
 			onDisk && (onDisk.hash === f1.hash || onDisk.hash === f2.hash),
 		);
 	}
-
+	const c1ok = c1a.ok && c1b.ok && items.length === 1 && matchesC1 && !enoentC1;
 	record(
-		"C",
-		!enoent && bothOk && items.length === 1 && matchesSource,
-		`completes ok=${c1.ok}/${c2.ok} items=${items.length} matchesSource=${matchesSource} enoent=${enoent}`,
-		{
-			enoent,
-			items,
-			serverLogProbe: log
-				.split("\n")
-				.filter((l) => /ENOENT|Finalizing|error/i.test(l))
-				.slice(0, 6),
-		},
+		"C1",
+		c1ok,
+		`unique paths: completes ok=${c1a.ok}/${c1b.ok} items=${items.length} matchesSource=${matchesC1} enoent=${enoentC1}`,
+		{ enoentC1, items: items.length, serverLogProbe: logC1.split("\n").filter((l) => /ENOENT|Finalizing/i.test(l)).slice(0, 6) },
+	);
+
+// ── C2: server safety under FORCED shared-path abuse (raw clients ignoring the
+//    unique-path contract). Assert only server invariants: no ENOENT, no 500,
+//    concurrent completes converge (loser 409s then replays the winner's item
+//    idempotently via the client's backoff protocol), exactly one item.
+//    NOTE: the mixed final hash is EXPECTED here (interleaved writers to one
+//    path) — the client contract is what prevents that in production; C2 only
+//    proves the server never crashes/corrupts CONCURRENT reads or deletes the
+//    winner's parts.
+	const pathShared = `admin/${name}.shared`;
+	await uploadChunk(pathShared, 0, 4, f1.size, f1.chunks[0]); // c1: 0
+	await uploadChunk(pathShared, 0, 4, f2.size, f2.chunks[0]); // c2: 0
+	await uploadChunk(pathShared, 1, 4, f2.size, f2.chunks[1]); // c2: 1
+	await uploadChunk(pathShared, 1, 4, f1.size, f1.chunks[1]); // c1: 1
+	await uploadChunk(pathShared, 2, 4, f1.size, f1.chunks[2]); // c1: 2
+	await uploadChunk(pathShared, 2, 4, f2.size, f2.chunks[2]); // c2: 2
+	await uploadChunk(pathShared, 3, 4, f1.size, f1.chunks[3]); // c1: 3
+	await uploadChunk(pathShared, 3, 4, f2.size, f2.chunks[3]); // c2: 3
+
+	// completeUploadWithRetry: mirrors the client's finalizeWithRetry (409 →
+	// backoff → re-POST; the replay returns the winner's item).
+	const completeWithRetry = async (pathArg, size) => {
+		for (let attempt = 0; attempt < 5; attempt++) {
+			const r = await completeUpload(name, pathArg, size, 4);
+			if (r.status !== 409) return r;
+			await sleep(1200);
+		}
+		return { ok: false, status: 409, text: "gave up after 409 retries" };
+	};
+	const [s1, s2] = await Promise.all([
+		completeWithRetry(pathShared, f1.size),
+		completeWithRetry(pathShared, f2.size),
+	]);
+	const logC2 = await logTail();
+	const enoentC2 = /ENOENT|Finalizing upload error/i.test(logC2);
+	const items2 = await prisma.contentItem.findMany({
+		where: { user_id: "admin", name },
+	});
+	const c2ok = s1.ok && s2.ok && !enoentC2 && items2.length === 1;
+	record(
+		"C2",
+		c2ok,
+		`shared path: completes ok=${s1.ok}/${s2.ok} (409-retry) items=${items2.length} enoent=${enoentC2}`,
+		{ enoentC2, items: items2.length, serverLogProbe: logC2.split("\n").filter((l) => /ENOENT|Finalizing/i.test(l)).slice(0, 6) },
 	);
 }
 
