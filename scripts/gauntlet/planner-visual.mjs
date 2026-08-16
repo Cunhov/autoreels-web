@@ -314,14 +314,17 @@ async function main() {
 			document.documentElement.clientWidth,
 	);
 
+	// Capture the wizard-created planner presence BEFORE closing the browser
+	// (querying after close always returns 0 — that was a harness bug).
+	const wizardCreatedCount = await page
+		.getByText("Wizard Created")
+		.count()
+		.catch(() => 0);
+
 	await browser.close();
 
 	const createdOk =
-		createdFreqVisible === true &&
-		(await page
-			.getByText("Wizard Created")
-			.count()
-			.catch(() => 0)) >= 1;
+		createdFreqVisible === true && wizardCreatedCount >= 1;
 	const pass =
 		consoleErrors.length === 0 &&
 		pageErrors.length === 0 &&
