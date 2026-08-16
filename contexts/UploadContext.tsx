@@ -629,7 +629,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 					try {
 						const stRes = await fetch(
 							`/api/upload-chunk/status?path=${encodeURIComponent(task.targetPath)}`,
-							{ signal: withTimeoutSignal(controller.signal, STATUS_FETCH_TIMEOUT_MS) },
+							{
+								signal: withTimeoutSignal(
+									controller.signal,
+									STATUS_FETCH_TIMEOUT_MS,
+								),
+							},
 						);
 						if (stRes.ok) {
 							const st = await stRes.json();
@@ -751,7 +756,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 				const metaRes = await fetch("/api/upload-chunk/complete", {
 					method: "POST",
 					body: formData,
-					signal: withTimeoutSignal(controller.signal, COMPLETE_FETCH_TIMEOUT_MS),
+					signal: withTimeoutSignal(
+						controller.signal,
+						COMPLETE_FETCH_TIMEOUT_MS,
+					),
 				});
 
 				if (!metaRes.ok) {
