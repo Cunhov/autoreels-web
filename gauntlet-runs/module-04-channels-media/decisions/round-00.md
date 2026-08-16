@@ -1,4 +1,5 @@
 # Module 04 rounds — summary
+
 - R00: harness (M1-M7) baseline ALL PASS on current code — suspicious; critic NOT-WIN with real findings: insights silent zeros (200 on IG 400, errors array dead code), trim min-duration bypass via clamp, corrupt/non-video → 500, backup mkdir unhandled → HTML 500, refresh revoked → 500 generic; harness had rewritten the bar leniently + M3(a) flake + truncated evidence.
 - R01 (f5d97a3): insights 4xx on total failure + partial errors surfaced + no zero rows in cron/metrics; trim validates clamped duration; corrupt/non-video → 400; backup dir failure → JSON error; permanent token errors → 400 actionable. Harness: atomic mock writes (temp+rename), no per-scenario truncation (whole-run tagged evidence), M2 window-scoped count (found by own regression: calls=4 → delta fix).
 - Re-verify: WIN — all leniencies closed, evidence artifacts corroborate (M1 short-exchange in calls.jsonl, M2 delta=2, M3 4xx, M4 roDir JSON, M5 minBypass/wideEnd/notVideo 400, M6 imgThumb/corrupt 400). MODULE 04: WON.
