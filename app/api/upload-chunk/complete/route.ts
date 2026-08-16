@@ -7,10 +7,12 @@ import { cleanPathSegment, normalizeUploadPath, safeMediaExtension, isVideoExten
 import { isFfmpegAvailable, getVideoDurationSec } from "@/lib/ffmpeg";
 import { randomUUID } from "crypto";
 import { createReadStream, createWriteStream } from "fs";
-import { mkdir, unlink, stat, writeFile } from "fs/promises";
+import { mkdir, rename, rm, stat, unlink, writeFile } from "fs/promises";
 import { join, dirname } from "path";
+import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { listPartIndices, getUploadsDir } from "@/app/api/upload-chunk/route";
+import { acquireFinalizeLock, type FinalizeLock } from "@/lib/upload-lock";
 
 const MAX_THUMBNAIL_BYTES = 8 * 1024 * 1024; // 8MB
 const DEFAULT_USER_QUOTA_BYTES = 20 * 1024 * 1024 * 1024; // 20GB per user
@@ -31,6 +33,8 @@ export async function POST(req: Request) {
     let thumbnailDiskPath: string | null = null;
     let partBase: string | null = null;
     let totalChunks = 0;
+    let finalizeToken: string | null = null;
+    let lock: FinalizeLock | null = null;
 
     const cleanupParts = async () => {
         if (!partBase) return;
@@ -97,7 +101,34 @@ export async function POST(req: Request) {
 
         const uploadDir = getUploadsDir();
         partBase = join(uploadDir, stagingPath);
+
+        // ── Finalize lock: only ONE finalize may consume this part set ─────────
+        // While held, chunk POSTs / cancels get 409 and the parts are exclusively
+        // ours: no concurrent complete can delete them mid-concatenation.
+        lock = await acquireFinalizeLock(partBase);
+        if (!lock) {
+            return NextResponse.json({ error: "Finalize in progress", finalizing: true }, { status: 409 });
+        }
+
         const stagedIndices = await listPartIndices(partBase);
+
+        // ── Idempotent replay ───────────────────────────────────────────────────
+        // No parts left: either a previous finalize already created the item
+        // (return it — the client's 409-backoff/retry converges here) or there is
+        // genuinely nothing to finalize.
+        if (stagedIndices.length === 0) {
+            const existingItem = await prisma.contentItem.findFirst({
+                where: {
+                    user_id: userId,
+                    name: safeFilename,
+                    ...(parentId ? { parent_id: parentId } : { parent_id: null }),
+                },
+            });
+            if (existingItem) {
+                return NextResponse.json({ success: true, item: existingItem, idempotent: true });
+            }
+            return NextResponse.json({ error: "No uploaded chunks found" }, { status: 400 });
+        }
 
         // totalChunks: prefer the explicit field; fall back to max index + 1 for
         // backward compatibility with clients that don't send it yet.
@@ -105,10 +136,6 @@ export async function POST(req: Request) {
         totalChunks = Number.isInteger(explicitTotal) && explicitTotal > 0
             ? explicitTotal
             : (stagedIndices.length > 0 ? Math.max(...stagedIndices) + 1 : 0);
-
-        if (totalChunks < 1) {
-            return NextResponse.json({ error: "No uploaded chunks found" }, { status: 400 });
-        }
 
         // Verify EVERY part 0..totalChunks-1 is present — no silent corruption.
         const present = new Set(stagedIndices);
@@ -123,21 +150,47 @@ export async function POST(req: Request) {
             );
         }
 
-        // ── Concatenate parts into the final file (streams, no full buffering) ──
+        // ── Consume: rename parts into a private finalize dir ───────────────────
+        // After this, no other request can see or delete the parts (atomic rename
+        // within the same volume). A chunk POST that slips past the lock check
+        // cannot corrupt us: we only read the renamed copies.
+        finalizeToken = randomUUID();
+        const finalizeDir = join(uploadDir, ".finalizing", finalizeToken);
+        await mkdir(finalizeDir, { recursive: true });
+        for (let i = 0; i < totalChunks; i++) {
+            try {
+                await rename(`${partBase}.part.${i}`, join(finalizeDir, `part.${i}`));
+            } catch (err: unknown) {
+                const code = (err as { code?: string })?.code;
+                if (code === "ENOENT") {
+                    throw new Error(`Part ${i} missing while consuming staged parts (concurrent delete?)`);
+                }
+                throw err;
+            }
+        }
+
+        // ── Concatenate parts into the final file ───────────────────────────────
+        // EXACTLY ONE pipeline() call over an async generator of part streams:
+        // the out WriteStream gets a single close/error listener pair instead of
+        // accumulating one per chunk (the old MaxListenersExceededWarning leak).
         const uuidName = `${randomUUID()}.${ext}`;
         const finalRelativePath = `${userId}/${uuidName}`;
         finalDiskPath = join(uploadDir, finalRelativePath);
         await mkdir(dirname(finalDiskPath), { recursive: true });
 
         const out = createWriteStream(finalDiskPath, { flags: "w" });
+        const source = Readable.from(
+            (async function* () {
+                for (let i = 0; i < totalChunks; i++) {
+                    const partStream = createReadStream(join(finalizeDir, `part.${i}`));
+                    for await (const chunk of partStream) {
+                        yield chunk;
+                    }
+                }
+            })(),
+        );
         try {
-            for (let i = 0; i < totalChunks; i++) {
-                await pipeline(
-                    createReadStream(`${partBase}.part.${i}`),
-                    out,
-                    { end: i === totalChunks - 1 }
-                );
-            }
+            await pipeline(source, out);
         } catch (error: unknown) {
             out.destroy();
             await unlink(finalDiskPath).catch(() => { });
@@ -243,15 +296,27 @@ export async function POST(req: Request) {
             });
         }
 
-        await cleanupParts();
+        // The finalize dir and any straggler parts are removed in `finally`
+        // (the lock guarantees no new parts can appear while we still hold it).
 
         return NextResponse.json({ success: true, item: savedItem });
     } catch (error: unknown) {
         console.error("Finalizing upload error:", error);
-        // On any failure, remove the final/thumbnail files and the staged parts.
+        // On any failure, remove the final/thumbnail files (the staged parts and
+        // the finalize dir are cleaned in `finally`).
         if (finalDiskPath) await unlink(finalDiskPath).catch(() => { });
         if (thumbnailDiskPath) await unlink(thumbnailDiskPath).catch(() => { });
-        await cleanupParts();
         return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
+    } finally {
+        // Remove the private finalize dir (idempotent — success already emptied it).
+        if (finalizeToken) {
+            await rm(join(getUploadsDir(), ".finalizing", finalizeToken), { recursive: true, force: true }).catch(() => { });
+        }
+        // Remove any straggler `.part.*` left under the staging path (normally
+        // none: we renamed them all before concatenating).
+        await cleanupParts();
+        // Release the lock LAST: while we hold it, no other request can write
+        // parts or cancel, so this cleanup cannot race a new upload.
+        await lock?.release();
     }
 }

@@ -5,6 +5,7 @@ import { getSessionUserId } from "@/lib/api";
 import { stat } from "fs/promises";
 import { join } from "path";
 import { normalizeUploadPath } from "@/lib/upload-path";
+import { isLocked } from "@/lib/upload-lock";
 import { listPartIndices, getUploadsDir } from "@/app/api/upload-chunk/route";
 
 /**
@@ -15,7 +16,7 @@ import { listPartIndices, getUploadsDir } from "@/app/api/upload-chunk/route";
  * from chunk 0.
  *
  * Auth: session (uploads are per-user). Response:
- *   { path, chunks: number[], file_size: number }
+ *   { path, chunks: number[], file_size: number, finalizing: boolean }
  */
 export async function GET(req: Request) {
     const session = await getServerSession(authOptions);
@@ -35,6 +36,7 @@ export async function GET(req: Request) {
         const uploadDir = getUploadsDir();
         const partBase = join(uploadDir, path);
         const chunks = await listPartIndices(partBase);
+        const finalizing = await isLocked(partBase);
 
         // Sum the bytes of the parts that exist (client uses it for progress).
         let fileSize = 0;
@@ -47,7 +49,7 @@ export async function GET(req: Request) {
             }
         }
 
-        return NextResponse.json({ path, chunks, file_size: fileSize });
+        return NextResponse.json({ path, chunks, file_size: fileSize, finalizing });
     } catch (error: unknown) {
         console.error("Chunk status error:", error);
         return NextResponse.json({ error: "Failed to read upload status" }, { status: 500 });
