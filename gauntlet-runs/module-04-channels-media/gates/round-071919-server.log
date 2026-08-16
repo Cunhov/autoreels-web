@@ -1,0 +1,56 @@
+▲ Next.js 16.1.6
+- Local:         http://127.0.0.1:64407
+- Network:       http://127.0.0.1:64407
+
+✓ Starting...
+✓ Ready in 56ms
+[channels/refresh] permanent token error: Session has expired on Tuesday, August 15th 2026
+[restore] integrity check failed: SqliteError: file is not a database
+    at i (.next/server/chunks/[root-of-the-server]__71f12116._.js:1:4014)
+    at async b (.next/server/chunks/[root-of-the-server]__d1e4c055._.js:1:5346)
+    at async u (.next/server/chunks/[root-of-the-server]__d1e4c055._.js:1:8664)
+    at async l (.next/server/chunks/[root-of-the-server]__d1e4c055._.js:1:9705)
+    at async Module.T (.next/server/chunks/[root-of-the-server]__d1e4c055._.js:1:10783) {
+  code: 'SQLITE_NOTADB'
+}
+[backup] cannot create backups dir: Error: EEXIST: file already exists, mkdir '/Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/backups'
+    at async s (.next/server/chunks/[root-of-the-server]__71f12116._.js:1:2691)
+    at async E (.next/server/chunks/[root-of-the-server]__71f12116._.js:1:5496)
+    at async u (.next/server/chunks/[root-of-the-server]__71f12116._.js:1:8756)
+    at async l (.next/server/chunks/[root-of-the-server]__71f12116._.js:1:9797)
+    at async Module.T (.next/server/chunks/[root-of-the-server]__71f12116._.js:1:10875) {
+  errno: -17,
+  code: 'EEXIST',
+  syscall: 'mkdir',
+  path: '/Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/backups'
+}
+[video/trim] ffprobe rejected source: Error: ffprobe failed: Command failed: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0x7b5080000] moov atom not found
+/Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4: Invalid data found when processing input
+
+    at a (.next/server/chunks/[root-of-the-server]__63bd7390._.js:1:3219)
+    at async P (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:6182)
+    at async u (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:10239)
+    at async l (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:11280)
+    at async Module._ (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:12358)
+[video/trim] ffprobe rejected source: Error: ffprobe failed: Could not read video duration
+    at a (.next/server/chunks/[root-of-the-server]__63bd7390._.js:1:3219)
+    at async P (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:6182)
+    at async u (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:10239)
+    at async l (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:11280)
+    at async Module._ (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:12358)
+[video/thumbnail] ffprobe rejected source: Error: ffprobe failed: Command failed: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0x76d060000] moov atom not found
+/Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4: Invalid data found when processing input
+
+    at a (.next/server/chunks/[root-of-the-server]__63bd7390._.js:1:3219)
+    at async P (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:6187)
+    at async u (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:10013)
+    at async l (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:11054)
+    at async Module.T (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:12132)
+[video/thumbnail] ffprobe rejected source: Error: ffprobe failed: Could not read video duration
+    at a (.next/server/chunks/[root-of-the-server]__63bd7390._.js:1:3219)
+    at async P (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:6187)
+    at async u (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:10013)
+    at async l (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:11054)
+    at async Module.T (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:12132)

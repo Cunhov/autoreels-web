@@ -427,6 +427,7 @@ async function scenarioM2() {
 	const revoked = await req(`/api/channels/chan-m2/refresh`, {
 		method: "POST",
 	});
+	const callsBeforeConcurrent = countCalls({ urlIncludes: "refresh_access_token" });
 	const afterRevoked = await prisma.channel.findUnique({
 		where: { id: "chan-m2" },
 	});
@@ -464,10 +465,14 @@ async function scenarioM2() {
 		req(`/api/channels/chan-m2/refresh`, { method: "POST" }),
 		req(`/api/channels/chan-m2/refresh`, { method: "POST" }),
 	]);
+	// Window-scoped count: the calls file is no longer truncated per scenario
+	// (evidence now covers the whole run), so count the DELTA of this window.
+	const refreshCallsWindow = countCalls({ urlIncludes: "refresh_access_token" }) -
+		callsBeforeConcurrent;
 	const afterConcurrent = await prisma.channel.findUnique({
 		where: { id: "chan-m2" },
 	});
-	const refreshCalls = countCalls({ urlIncludes: "refresh_access_token" });
+	const refreshCalls = refreshCallsWindow;
 	const concurrentOk =
 		c1.ok &&
 		c2.ok &&
