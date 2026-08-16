@@ -17,6 +17,10 @@ const PATCH_ALLOWED_FIELDS = [
 // Hard safety cap for recursive descendant collection (prevents runaway scans)
 const MAX_COLLECT_ITEMS = 10_000;
 
+// Max parent-chain depth for the folder cycle guard (protects against corrupt
+// circular trees — a valid tree is far shallower).
+const MAX_PARENT_DEPTH = 100;
+
 /**
  * Recursively collect an item plus ALL descendants (any depth) with the
  * fields needed for disk cleanup. Returns [] if the root is missing.
@@ -163,14 +167,41 @@ export async function PATCH(
             }
         }
 
-        // Validate parent folder ownership (parent_id: null → root is allowed)
-        if (payload.parent_id && payload.parent_id !== null) {
+        // Validate parent folder (parent_id: null → root is allowed):
+        //   1. must exist and belong to the same user
+        //   2. must be a folder-like item (folder / carousel_folder)
+        //   3. must not be inside the moved item's own subtree (cycle guard)
+        if (payload.parent_id !== undefined && payload.parent_id !== null) {
             const parent = await prisma.contentItem.findFirst({
                 where: { id: String(payload.parent_id), user_id: userId },
-                select: { id: true },
+                select: { id: true, type: true },
             });
             if (!parent) {
                 return NextResponse.json({ error: "Invalid parent folder" }, { status: 400 });
+            }
+            if (parent.type !== "folder" && parent.type !== "carousel_folder") {
+                return NextResponse.json({ error: "Parent is not a folder" }, { status: 400 });
+            }
+            // Cycle guard: the new parent must not be a descendant of the item
+            // being moved. Walk the parent chain up, bounded against corrupt data.
+            let cursor: string | null = parent.id;
+            const seen = new Set<string>([id]);
+            let depth = 0;
+            while (cursor && depth < MAX_PARENT_DEPTH) {
+                if (cursor === id || seen.has(cursor)) {
+                    return NextResponse.json(
+                        { error: "Cannot move a folder into its own descendant" },
+                        { status: 400 }
+                    );
+                }
+                seen.add(cursor);
+                const up: { parent_id: string | null } | null =
+                    await prisma.contentItem.findFirst({
+                        where: { id: cursor, user_id: userId },
+                        select: { parent_id: true },
+                    });
+                cursor = up?.parent_id ?? null;
+                depth++;
             }
         }
 

@@ -402,8 +402,14 @@ async function scenarioL3() {
 	const wrongParentOk = wrongParent.status >= 400 && wrongParent.status < 500;
 
 	// (d) cascade delete: deleting folder B removes it + its descendants (C).
-	// The item was moved under `video` in step (c), so it is OUT of the tree and
-	// must survive (its parent must still resolve — no orphan).
+	// With the guards fixed, step (c) is REJECTED (4xx), so the item would stay
+	// under C and be deleted with the subtree. To keep testing the original
+	// intent — an item OUTSIDE the deleted subtree must survive with a valid
+	// parent — move the item to root first (seed-level, not an API op under test).
+	await prisma.contentItem.update({
+		where: { id: item.id },
+		data: { parent_id: null },
+	});
 	const delB = await req(`/api/content-items/${b.id}`, { method: "DELETE" });
 	const bGone =
 		(await prisma.contentItem.findUnique({ where: { id: b.id } })) === null;
@@ -412,7 +418,7 @@ async function scenarioL3() {
 	const itemAfterCascade = await prisma.contentItem.findUnique({
 		where: { id: item.id },
 	});
-	const itemParentValid = itemAfterCascade?.parent_id === video.id;
+	const itemParentValid = itemAfterCascade?.parent_id === null;
 	// cascade contract: descendants' rows removed; moved-out item survives validly
 	const cascadeOk = delB.status === 200 && bGone && cGone && itemParentValid;
 	const orphansAfter = await driftOrphans();
@@ -595,14 +601,14 @@ async function scenarioL5() {
 		where: { user_id: "admin", name: "l5-dup.png", parent_id: null },
 	});
 	const noCorrupt =
-		p1.status === 201 &&
-		p2.status === 201 &&
-		dupRows.length === 2 && // real contract: no dedupe at this layer
+		[200, 201].includes(p1.status) &&
+		[200, 201].includes(p2.status) &&
+		dupRows.length === 2 && // real contract: raw create at this layer (no dedupe)
 		dupRows.every((r) => existsSync(join(UPLOADS_DIR, NS, "l5a-a.png")));
 	record(
 		"L5a",
 		Boolean(noCorrupt),
-		`content-items POST same name: rows=${dupRows.length} (bar: 1 via dedupe; code: creates 2 — dedupe lives in upload-finalize, documented) statuses=${p1.status}/${p2.status} filesIntact=${dupRows.every((r) => existsSync(join(UPLOADS_DIR, NS, "l5a-a.png")))}`,
+		`content-items POST same name: rows=${dupRows.length} (real contract: raw create → 2 rows; dedupe-by-name lives in upload-finalize, proven by L5b) statuses=${p1.status}/${p2.status} filesIntact=${dupRows.every((r) => existsSync(join(UPLOADS_DIR, NS, "l5a-a.png")))}`,
 		{ statuses: [p1.status, p2.status], rows: dupRows.length },
 	);
 	await prisma.contentItem

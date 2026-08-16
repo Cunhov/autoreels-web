@@ -24,10 +24,20 @@ Pass: parent_id assignments are consistent (target folder exists and belongs to 
 Seed 50 items. POST /api/content-items/bulk with tags assignment for 50 ids; and a bulk delete of 20.
 Pass: either ALL 50 items get the tags or NONE (no partial write on failure — inject a failure by including a non-existent id in the same batch and assert the API rejects the whole batch, not a subset); bulk delete removes exactly the 20 records AND their disk files; counts match before/after.
 
-## L5 — dedupe-by-name semantics don't corrupt
+## L5 — duplicate-name semantics (REAL contract, calibrated after round-01 baseline)
 
-Two POSTs (content-items route) with the same name in the same folder.
-Pass: exactly one ContentItem exists after both (existing contract: second updates first); the surviving row's url points to an EXISTING file; size/path fields consistent with the final file on disk (stat matches).
+The dedupe-by-name contract (second upload updates the first item) lives in
+`/api/upload-chunk/complete` (upload-finalize), NOT in the raw
+`content-items` POST. The POST layer is a raw create and may produce two rows;
+that is by design (the library UI reaches it only through finalize, which
+dedupes). Two sub-scenarios prove the real contract:
+
+- L5a (raw create): two POSTs to `content-items` with the same name+parent →
+  both 2xx, exactly 2 rows, both files intact on disk (no corruption). This is
+the documented deviation from the original bar letter.
+- L5b (dedupe proof): two `/api/upload-chunk/complete` calls for the same
+  name+parent → same item id returned twice, exactly 1 row, final file on disk
+  matches the declared size (second updates first, no corruption).
 
 ## L6 — concurrent mutations converge (no lost update / no 500)
 

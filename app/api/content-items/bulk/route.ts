@@ -13,6 +13,9 @@ const IN_BATCH_SIZE = 500;
 // Keep rename transactions small to avoid long-lived write locks on SQLite.
 const RENAME_BATCH_SIZE = 200;
 const MAX_COLLECT_ITEMS = 10_000;
+// Max parent-chain depth for the folder cycle guard (protects against corrupt
+// circular trees — a valid tree is far shallower).
+const MAX_PARENT_DEPTH = 100;
 
 function chunkArray<T>(arr: T[], size: number): T[][] {
     const chunks: T[][] = [];
@@ -183,6 +186,37 @@ export async function POST(req: Request) {
                             { error: "Destination is not a folder" },
                             { status: 400 }
                         );
+                    }
+                }
+
+                // Cycle guard: moving a folder under its own descendant must be
+                // rejected for the WHOLE batch (no partial moves). Walk the parent
+                // chain from the destination for every moved folder-like item.
+                const movedItems = await prisma.contentItem.findMany({
+                    where: ownershipWhere,
+                    select: { id: true, type: true },
+                });
+                for (const item of movedItems) {
+                    if (item.type !== "folder" && item.type !== "carousel_folder") continue;
+                    if (targetParentId === null) continue;
+                    let cursor: string | null = targetParentId;
+                    const seen = new Set<string>([item.id]);
+                    let depth = 0;
+                    while (cursor && depth < MAX_PARENT_DEPTH) {
+                        if (cursor === item.id || seen.has(cursor)) {
+                            return NextResponse.json(
+                                { error: "Cannot move a folder into its own descendant" },
+                                { status: 400 }
+                            );
+                        }
+                        seen.add(cursor);
+                        const up: { parent_id: string | null } | null =
+                            await prisma.contentItem.findFirst({
+                                where: { id: cursor, user_id: userId },
+                                select: { parent_id: true },
+                            });
+                        cursor = up?.parent_id ?? null;
+                        depth++;
                     }
                 }
 

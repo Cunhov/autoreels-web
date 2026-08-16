@@ -1607,7 +1607,7 @@ export default function ContentLibrary({
 			{/* Toolbar */}
 			<div className="px-4 py-3 border-b border-ios-separator flex flex-col gap-3 bg-ios-background/80 backdrop-blur-md sticky top-0 z-10 transition-all">
 				{/* Top Row: Path & Actions */}
-				<div className="flex items-center justify-between gap-4">
+				<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
 					{/* Breadcrumbs / Back */}
 					<div className="flex items-center gap-1 overflow-hidden">
 						{currentFolderId ? (
@@ -1648,7 +1648,7 @@ export default function ContentLibrary({
 					</div>
 
 					{/* Selection Actions & Select All */}
-					<div className="flex items-center gap-2">
+					<div className="flex flex-wrap items-center gap-2">
 						{/* Sort Dropdown — always visible */}
 						<select
 							value={sortBy}
