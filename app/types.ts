@@ -11,6 +11,8 @@ export interface Post {
     instagram_child_ids?: string;
     channel_id: string;
     planner_id?: string;
+    /** Planner relation name, when the calendar feed includes it (posts created by a planner). */
+    planner?: { name?: string | null } | null;
     share_to_feed?: boolean;
     location_id?: string;
     title?: string;

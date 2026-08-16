@@ -339,6 +339,13 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
                                                         {post.status.replace('_', ' ')}
                                                     </span>
                                                 </div>
+                                                {/* Planner attribution: which planner created this post (hidden when none). */}
+                                                {post.planner?.name ? (
+                                                    <div className="flex items-center gap-1.5 text-[11px] text-ios-secondary mb-1">
+                                                        <CalendarClock size={12} className="shrink-0" />
+                                                        <span className="font-medium text-ios-text">{post.planner.name}</span>
+                                                    </div>
+                                                ) : null}
                                                 <p className="text-sm text-ios-text font-medium line-clamp-2 leading-relaxed">
                                                     {post.caption || <span className="text-ios-secondary italic">No caption</span>}
                                                 </p>
