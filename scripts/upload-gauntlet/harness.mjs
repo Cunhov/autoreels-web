@@ -395,9 +395,9 @@ async function scenarioC() {
 	await uploadChunk(path, 3, 4, f2.size, f2.chunks[3]); // c2: 3
 
 	// ── C1: the CLIENT contract — two tasks, unique staging paths (the way the
-//    UploadContext builds targetPath today: folder/name.<taskId>). Both must
-//    finalize, each file hash-matching its own source, one ContentItem (dedupe
-//    by name+parent), zero ENOENT / warnings. ──────────────────────────────
+	//    UploadContext builds targetPath today: folder/name.<taskId>). Both must
+	//    finalize, each file hash-matching its own source, one ContentItem (dedupe
+	//    by name+parent), zero ENOENT / warnings. ──────────────────────────────
 	const pathC1a = `admin/${name}.taskaaaa`;
 	const pathC1b = `admin/${name}.taskbbbb`;
 	// Interleave BOTH tasks' chunks so the old shared-path corruption would fire.
@@ -426,17 +426,24 @@ async function scenarioC() {
 		"C1",
 		c1ok,
 		`unique paths: completes ok=${c1a.ok}/${c1b.ok} items=${items.length} matchesSource=${matchesC1} enoent=${enoentC1}`,
-		{ enoentC1, items: items.length, serverLogProbe: logC1.split("\n").filter((l) => /ENOENT|Finalizing/i.test(l)).slice(0, 6) },
+		{
+			enoentC1,
+			items: items.length,
+			serverLogProbe: logC1
+				.split("\n")
+				.filter((l) => /ENOENT|Finalizing/i.test(l))
+				.slice(0, 6),
+		},
 	);
 
-// ── C2: server safety under FORCED shared-path abuse (raw clients ignoring the
-//    unique-path contract). Assert only server invariants: no ENOENT, no 500,
-//    concurrent completes converge (loser 409s then replays the winner's item
-//    idempotently via the client's backoff protocol), exactly one item.
-//    NOTE: the mixed final hash is EXPECTED here (interleaved writers to one
-//    path) — the client contract is what prevents that in production; C2 only
-//    proves the server never crashes/corrupts CONCURRENT reads or deletes the
-//    winner's parts.
+	// ── C2: server safety under FORCED shared-path abuse (raw clients ignoring the
+	//    unique-path contract). Assert only server invariants: no ENOENT, no 500,
+	//    concurrent completes converge (loser 409s then replays the winner's item
+	//    idempotently via the client's backoff protocol), exactly one item.
+	//    NOTE: the mixed final hash is EXPECTED here (interleaved writers to one
+	//    path) — the client contract is what prevents that in production; C2 only
+	//    proves the server never crashes/corrupts CONCURRENT reads or deletes the
+	//    winner's parts.
 	const pathShared = `admin/${name}.shared`;
 	await uploadChunk(pathShared, 0, 4, f1.size, f1.chunks[0]); // c1: 0
 	await uploadChunk(pathShared, 0, 4, f2.size, f2.chunks[0]); // c2: 0
@@ -471,7 +478,14 @@ async function scenarioC() {
 		"C2",
 		c2ok,
 		`shared path: completes ok=${s1.ok}/${s2.ok} (409-retry) items=${items2.length} enoent=${enoentC2}`,
-		{ enoentC2, items: items2.length, serverLogProbe: logC2.split("\n").filter((l) => /ENOENT|Finalizing/i.test(l)).slice(0, 6) },
+		{
+			enoentC2,
+			items: items2.length,
+			serverLogProbe: logC2
+				.split("\n")
+				.filter((l) => /ENOENT|Finalizing/i.test(l))
+				.slice(0, 6),
+		},
 	);
 }
 
