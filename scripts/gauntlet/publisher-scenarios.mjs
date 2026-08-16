@@ -289,7 +289,7 @@ async function scenarioP1() {
 	);
 
 	writeState([inProgressPoll]);
-	await tick();
+	const r = await tick();
 
 	const [pa, pb, pc] = await Promise.all([
 		prisma.post.findUnique({ where: { id: "p1a" } }),
@@ -342,7 +342,7 @@ async function scenarioP2() {
 		).id,
 	);
 	writeState([publishOk]);
-	await tick();
+	let r = await tick();
 	let p2a = await prisma.post.findUnique({ where: { id: "p2a" } });
 	const aOk =
 		p2a?.status === "published" &&
@@ -554,7 +554,7 @@ async function scenarioP4() {
 			okId("media-4"),
 		]),
 	]);
-	await tick();
+	const r1 = await tick();
 	const [p41a, p42a] = await Promise.all([
 		prisma.post.findUnique({ where: { id: "p4-1" } }),
 		prisma.post.findUnique({ where: { id: "p4-2" } }),
@@ -572,7 +572,7 @@ async function scenarioP4() {
 	});
 
 	writeState([publishOk]);
-	await tick();
+	const r2 = await tick();
 	const [p41b, p42b] = await Promise.all([
 		prisma.post.findUnique({ where: { id: "p4-1" } }),
 		prisma.post.findUnique({ where: { id: "p4-2" } }),
@@ -723,7 +723,7 @@ async function scenarioP7() {
 	);
 
 	writeState([publishOk]);
-	await tick();
+	const r1 = await tick();
 	const [p71a, p72a] = await Promise.all([
 		prisma.post.findUnique({ where: { id: "p7-1" } }),
 		prisma.post.findUnique({ where: { id: "p7-2" } }),
