@@ -427,7 +427,9 @@ async function scenarioM2() {
 	const revoked = await req(`/api/channels/chan-m2/refresh`, {
 		method: "POST",
 	});
-	const callsBeforeConcurrent = countCalls({ urlIncludes: "refresh_access_token" });
+	const callsBeforeConcurrent = countCalls({
+		urlIncludes: "refresh_access_token",
+	});
 	const afterRevoked = await prisma.channel.findUnique({
 		where: { id: "chan-m2" },
 	});
@@ -467,8 +469,8 @@ async function scenarioM2() {
 	]);
 	// Window-scoped count: the calls file is no longer truncated per scenario
 	// (evidence now covers the whole run), so count the DELTA of this window.
-	const refreshCallsWindow = countCalls({ urlIncludes: "refresh_access_token" }) -
-		callsBeforeConcurrent;
+	const refreshCallsWindow =
+		countCalls({ urlIncludes: "refresh_access_token" }) - callsBeforeConcurrent;
 	const afterConcurrent = await prisma.channel.findUnique({
 		where: { id: "chan-m2" },
 	});
@@ -784,7 +786,12 @@ async function scenarioM4() {
 		"M4",
 		Boolean(pass),
 		`create=${fileOk}/name=${fileName} idem=${idemOk} prune=${pruneOk}/count=${afterPrune.length} traversal=${traversal1.status}/${traversal2.status} missing=${missing.status} corrupt=${corrupt.status} dbUntouched=${dbHashBefore === dbHashAfter} list=${listOk}/count=${list.json?.backups?.length} roDir=${roOk}/${ro.status}/json=${Boolean(ro.json?.error)}`,
-		{ create: create.json, pruneCreate: pruneCreate.json, afterPrune, ro: ro.json },
+		{
+			create: create.json,
+			pruneCreate: pruneCreate.json,
+			afterPrune,
+			ro: ro.json,
+		},
 	);
 }
 

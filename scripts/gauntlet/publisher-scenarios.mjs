@@ -116,9 +116,15 @@ function parseChildIdEntriesForTest(raw) {
 	}
 	if (!Array.isArray(parsed)) return entries;
 	const first = parsed[0];
-	if (first && typeof first === "object" && typeof first.index === "number" && typeof first.id === "string") {
+	if (
+		first &&
+		typeof first === "object" &&
+		typeof first.index === "number" &&
+		typeof first.id === "string"
+	) {
 		for (const item of parsed) {
-			if (item && typeof item.index === "number" && typeof item.id === "string") entries.set(item.index, item.id);
+			if (item && typeof item.index === "number" && typeof item.id === "string")
+				entries.set(item.index, item.id);
 		}
 	} else {
 		for (let i = 0; i < parsed.length; i++) entries.set(i, parsed[i]);
@@ -492,7 +498,9 @@ async function scenarioP3() {
 	// Invariants (bar P3): every child index created AT MOST ONCE successfully —
 	// t1 attempts all 3 (2 ok + 1 deterministic 500), t2 retries ONLY the failed
 	// child (1 ok) → 4 calls total, 3 UNIQUE stored ids, 0 duplicates, 0 orphans.
-	const stored = parseChildIdEntriesForTest(p3after2?.instagram_child_ids ?? null);
+	const stored = parseChildIdEntriesForTest(
+		p3after2?.instagram_child_ids ?? null,
+	);
 	const uniqueStored = stored.size; // index→id map
 	const noDupeIndices =
 		new Set([...stored.keys()]).size === uniqueStored && uniqueStored === 3;
@@ -1183,9 +1191,13 @@ async function scenarioP12() {
 	writeState(p12aRules);
 	await tick();
 	const p12aCreations2 = mediaCreates("acct-p12a");
-	const p12aPublish = readCalls().filter((c) => c.url.includes("media_publish"));
+	const p12aPublish = readCalls().filter((c) =>
+		c.url.includes("media_publish"),
+	);
 	const p12a = await prisma.post.findUnique({ where: { id: "p12a" } });
-	const p12aStored = parseChildIdEntriesForTest(p12a?.instagram_child_ids ?? null);
+	const p12aStored = parseChildIdEntriesForTest(
+		p12a?.instagram_child_ids ?? null,
+	);
 	const p12aOk =
 		p12aChild1.length === 1 &&
 		p12aChild1[0]?.body?.includes("xa2.mp4") &&
@@ -1238,7 +1250,9 @@ async function scenarioP12() {
 	writeState(p12bRules);
 	await tick();
 	const p12bCreations2 = mediaCreates("acct-p12b");
-	const p12bPublish = readCalls().filter((c) => c.url.includes("media_publish"));
+	const p12bPublish = readCalls().filter((c) =>
+		c.url.includes("media_publish"),
+	);
 	const p12b = await prisma.post.findUnique({ where: { id: "p12b" } });
 	const p12bOk =
 		p12bCreations1.length === 0 && // guard fired: NO group re-create
@@ -1254,8 +1268,20 @@ async function scenarioP12() {
 		Boolean(p12aOk && p12bOk),
 		`a(reconcile): childCreates=${p12aChild1.length} groupCreates=${p12aGroup1.length} mid=${p12aMid?.status}/${p12aMid?.instagram_container_id} final=${p12a?.status} stored=${p12aStored.size} | b(guard): creations=${p12bCreations1.length}/${p12bCreations2.length} mid=${p12bMid?.status}/${p12bMid?.instagram_container_id} final=${p12b?.status} publish=${p12bPublish.length}`,
 		{
-			reconcile: { childCreates: p12aChild1.length, groupCreates: p12aGroup1.length, midStatus: p12aMid?.status, finalStatus: p12a?.status, stored: p12aStored.size },
-			guard: { creations1: p12bCreations1.length, creations2: p12bCreations2.length, midContainer: p12bMid?.instagram_container_id, finalStatus: p12b?.status, publishCalls: p12bPublish.length },
+			reconcile: {
+				childCreates: p12aChild1.length,
+				groupCreates: p12aGroup1.length,
+				midStatus: p12aMid?.status,
+				finalStatus: p12a?.status,
+				stored: p12aStored.size,
+			},
+			guard: {
+				creations1: p12bCreations1.length,
+				creations2: p12bCreations2.length,
+				midContainer: p12bMid?.instagram_container_id,
+				finalStatus: p12b?.status,
+				publishCalls: p12bPublish.length,
+			},
 		},
 	);
 	await cleanupScenario(ids);

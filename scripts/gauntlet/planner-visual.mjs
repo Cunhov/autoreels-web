@@ -323,8 +323,7 @@ async function main() {
 
 	await browser.close();
 
-	const createdOk =
-		createdFreqVisible === true && wizardCreatedCount >= 1;
+	const createdOk = createdFreqVisible === true && wizardCreatedCount >= 1;
 	const pass =
 		consoleErrors.length === 0 &&
 		pageErrors.length === 0 &&
