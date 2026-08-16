@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
-import { refreshInstagramToken } from "@/lib/instagram";
+import { classifyTokenRefreshError, refreshInstagramToken } from "@/lib/instagram";
 import { prisma } from "@/lib/prisma";
 
 export async function POST(
@@ -42,6 +42,17 @@ export async function POST(
 
         return NextResponse.json({ success: true, channel: updated });
     } catch (error: unknown) {
+        // Definitive token problems (revoked / expired / malformed session key) are
+        // a 4xx-class user problem with a fix (reconnect the channel) — a generic
+        // 500 would imply a server fault. Transient/unknown errors stay 5xx.
+        if (classifyTokenRefreshError(error) === "permanent") {
+            const message = error instanceof Error ? error.message : "Token inválido ou expirado";
+            console.error("[channels/refresh] permanent token error:", message);
+            return NextResponse.json(
+                { error: message, detail: "Reconecte o canal em /channels para obter um novo token." },
+                { status: 400 }
+            );
+        }
         return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
     }
 }
