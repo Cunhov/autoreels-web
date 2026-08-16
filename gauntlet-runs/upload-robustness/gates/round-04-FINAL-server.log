@@ -1,0 +1,9 @@
+▲ Next.js 16.1.6
+- Local:         http://127.0.0.1:63006
+- Network:       http://127.0.0.1:63006
+
+✓ Starting...
+✓ Ready in 52ms
+[Cron] NEXTAUTH_URL is "http://localhost:3000" — the Instagram API will not be able to reach media URLs. Set PUBLIC_BASE_URL to the public domain (e.g. https://your-domain.com).
+[ChannelRefresh] chan-gauntlet-d: INSTAGRAM_CLIENT_ID and INSTAGRAM_CLIENT_SECRET must be configured to refresh Facebook-based tokens. — server credentials missing; refresh paused (fix INSTAGRAM_CLIENT_ID/SECRET)
+[Cron] NEXTAUTH_URL is "http://localhost:3000" — the Instagram API will not be able to reach media URLs. Set PUBLIC_BASE_URL to the public domain (e.g. https://your-domain.com).
