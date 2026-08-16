@@ -142,7 +142,7 @@ mkdir -p "$RUN_DIR/gates"
 	grep -E "MaxListeners|ENOENT|Finalizing|Local chunk|ChannelRefresh|\[api-error\]" \
 		"$TMP/server.log" | head -80 || true
 	echo '```'
-} >"$RUN_DIR/gates/round-00-baseline.md"
+} >"$RUN_DIR/gates/round-$(date +%H%M%S)-baseline.md"
 cp "$TMP/server.log" "$RUN_DIR/gates/round-$(date +%H%M%S)-server.log" 2>/dev/null || true
 
 echo
