@@ -410,19 +410,14 @@ async function scenarioPL3() {
 		rNoCh.skipped === "no_channels" &&
 		rRes.skipped === "resolution_failed" &&
 		rTpl.ok &&
-		tplCaption.includes("{unknown_var}") === false
-			? false
-			: (() => {
-					// The finding: unknown vars stay LITERAL (not replaced, not rejected).
-					return (
-						tplCaption.includes("{unknown_var}") &&
-						tplCaption.includes("Hello ")
-					);
-				})();
+		// unknown vars must NOT leak literal braces; known vars still resolve
+		!tplCaption.includes("{unknown_var}") &&
+		!tplCaption.includes("{") &&
+		tplCaption.includes("Hello");
 	record(
 		"PL3",
 		Boolean(pass),
-		`arr=${rArr.skipped} freq0=${rFreq0.skipped} noCh=${rNoCh.skipped} res=${rRes.skipped} tpl=ok/caption="${tplCaption.slice(0, 40)}" (literal unknown var = finding, documented)`,
+		`arr=${rArr.skipped} freq0=${rFreq0.skipped} noCh=${rNoCh.skipped} res=${rRes.skipped} tpl=ok/caption="${tplCaption.slice(0, 40)}" (unknown vars → "", no literal leak)`,
 	);
 	await cleanupScenario({
 		planners: ["pl3-arr", "pl3-freq0", "pl3-noch", "pl3-res", "pl3-tpl"],

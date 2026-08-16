@@ -287,8 +287,11 @@ async function applyCaptionTemplate(opts: {
 			? templates[Math.floor(Math.random() * templates.length)]
 			: templates[(opts.templateIndex + opts.postOrdinal) % templates.length];
 
+	// Replace KNOWN template variables with their resolved value and strip any
+	// UNKNOWN {placeholder} to empty string (never leak raw braces into a
+	// published caption — unknown vars were previously kept literal).
 	return chosen.replace(
-		/\{post_title\}|\{post_caption\}|\{date\}|\{channel_name\}|\{hashtags\}/g,
+		/\{[a-zA-Z0-9_]+\}/g,
 		(m: string) => vars[m] ?? "",
 	);
 }

@@ -171,7 +171,11 @@ export function validatePlannerConfig(config: unknown): { ok: boolean; errors: s
     }
 
     // start_time
-    if (c.start_time !== undefined && c.start_time !== null) {
+    // Contract: '' ≡ undefined ≡ null ≡ "no start restriction" (the runtime's
+    // gate is `config.start_time && now < new Date(...)` — an empty string is
+    // already falsy there). The wizard sends '' when "Start When?" is left
+    // empty; rejecting it made the default create/edit flow impossible.
+    if (c.start_time !== undefined && c.start_time !== null && c.start_time !== '') {
         const d = new Date(String(c.start_time));
         if (Number.isNaN(d.getTime())) {
             errors.push('start_time deve ser uma data ISO válida');
