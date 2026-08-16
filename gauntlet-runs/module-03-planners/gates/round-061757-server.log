@@ -1,0 +1,63 @@
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://127.0.0.1:63909
+- Network:       http://127.0.0.1:63909
+- Environments: .env.local, .env
+
+✓ Starting...
+✓ Ready in 369ms
+ GET /api/health 200 in 172ms (compile: 113ms, render: 59ms)
+ GET /api/health 200 in 5ms (compile: 2ms, render: 3ms)
+ GET /planners 200 in 787ms (compile: 642ms, render: 145ms)
+ GET /api/auth/session 200 in 552ms (compile: 538ms, render: 14ms)
+ GET /api/planners 200 in 87ms (compile: 26ms, render: 60ms)
+ GET /api/summary 200 in 91ms (compile: 44ms, render: 47ms)
+ GET /api/planners 200 in 12ms (compile: 1456µs, render: 11ms)
+ GET /api/summary 200 in 16ms (compile: 3ms, render: 13ms)
+ GET /api/summary 200 in 9ms (compile: 2ms, render: 7ms)
+ GET /api/summary 200 in 7ms (compile: 1160µs, render: 6ms)
+ GET /api/channels 200 in 57ms (compile: 46ms, render: 11ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 36ms (compile: 33ms, render: 3ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 12ms (compile: 1427µs, render: 11ms)
+ GET /api/file/admin/planner-video.png 200 in 491ms (compile: 484ms, render: 6ms)
+ POST /api/planners 200 in 28ms (compile: 3ms, render: 25ms)
+ GET /api/planners 200 in 7ms (compile: 1185µs, render: 6ms)
+ GET /api/channels 200 in 12ms (compile: 2ms, render: 10ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 8ms (compile: 1206µs, render: 7ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 9ms (compile: 1237µs, render: 8ms)
+ GET /api/admin/fix-planners 200 in 44ms (compile: 34ms, render: 10ms)
+ GET /api/admin/fix-planners?fix=true 200 in 15ms (compile: 1583µs, render: 14ms)
+[PlannerLog][INFO] pl8-seed: [Phase0] Created 1 post(s) {}
+[PlannerLog][INFO] d7240e45-cf98-4606-8457-75c88e4b343a: [Phase0] Created 1 post(s) {}
+[PlannerLog][INFO] pl7: [Phase0] Created 1 post(s) {}
+[PlannerLog][INFO] pl8-seed: [Phase1] Sending to IG: mediaType=REELS, url=https://example.com/v.mp4 {}
+[PlannerLog][ERROR] pl8-seed: Media creation failed for post 0807f659-37d6-42a6-8b48-aee3dd8c3f32 {
+  error: {
+    message: 'Invalid OAuth access token - Cannot parse access token',
+    type: 'OAuthException',
+    code: 190,
+    fbtrace_id: 'AcTwyjJo3lPPOw2jJUtuWAT'
+  }
+}
+[PlannerLog][ERROR] pl8-seed: Phase1 Error post=0807f659-37d6-42a6-8b48-aee3dd8c3f32: Invalid OAuth access token - Cannot parse access token {}
+[PlannerLog][INFO] d7240e45-cf98-4606-8457-75c88e4b343a: [Phase1] Sending to IG: mediaType=REELS, url=http://127.0.0.1:63909/api/file/admin/planner-video.mp4 {}
+[PlannerLog][ERROR] d7240e45-cf98-4606-8457-75c88e4b343a: Media creation failed for post b19e1adf-c6f7-40c2-bfbc-d19656886d18 {
+  error: {
+    message: 'Invalid OAuth access token - Cannot parse access token',
+    type: 'OAuthException',
+    code: 190,
+    fbtrace_id: 'AUrKgNzZC6TyS5cw7m1zgmB'
+  }
+}
+[PlannerLog][ERROR] d7240e45-cf98-4606-8457-75c88e4b343a: Phase1 Error post=b19e1adf-c6f7-40c2-bfbc-d19656886d18: Invalid OAuth access token - Cannot parse access token {}
+[PlannerLog][INFO] pl7: [Phase1] Sending to IG: mediaType=REELS, url=https://example.com/pl7.mp4 {}
+[PlannerLog][ERROR] pl7: Media creation failed for post f957247a-fe67-41de-badf-31962db8dd78 {
+  error: {
+    message: 'Invalid OAuth access token - Cannot parse access token',
+    type: 'OAuthException',
+    code: 190,
+    fbtrace_id: 'A3gWrsaMKIOX8f7EfWxrPfO'
+  }
+}
+[PlannerLog][ERROR] pl7: Phase1 Error post=f957247a-fe67-41de-badf-31962db8dd78: Invalid OAuth access token - Cannot parse access token {}
+ POST /api/cron/publisher 200 in 682ms (compile: 30ms, render: 652ms)
+ POST /api/planners 400 in 10ms (compile: 1943µs, render: 8ms)

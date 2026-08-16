@@ -1,0 +1,46 @@
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://127.0.0.1:63671
+- Network:       http://127.0.0.1:63671
+- Environments: .env.local, .env
+
+✓ Starting...
+✓ Ready in 540ms
+ GET /api/health 200 in 217ms (compile: 156ms, render: 60ms)
+ GET /api/health 200 in 6ms (compile: 3ms, render: 3ms)
+ GET /planners 200 in 755ms (compile: 596ms, render: 159ms)
+ GET /api/auth/session 200 in 530ms (compile: 517ms, render: 13ms)
+ GET /api/summary 200 in 75ms (compile: 30ms, render: 45ms)
+ GET /api/planners 200 in 89ms (compile: 44ms, render: 46ms)
+ GET /api/summary 200 in 7ms (compile: 1209µs, render: 6ms)
+ GET /api/planners 200 in 9ms (compile: 861µs, render: 8ms)
+ GET /api/summary 200 in 7ms (compile: 1169µs, render: 6ms)
+ GET /api/summary 200 in 8ms (compile: 1158µs, render: 7ms)
+ GET /api/channels 200 in 51ms (compile: 42ms, render: 10ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 30ms (compile: 26ms, render: 4ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 12ms (compile: 1732µs, render: 10ms)
+ GET /api/file/admin/planner-video.png 404 in 463ms (compile: 459ms, render: 4ms)
+ GET /api/admin/fix-planners 200 in 31ms (compile: 23ms, render: 8ms)
+ GET /api/admin/fix-planners?fix=true 200 in 20ms (compile: 1761µs, render: 18ms)
+[PlannerLog][INFO] pl8-seed: [Phase0] Created 1 post(s) {}
+[PlannerLog][INFO] pl7: [Phase0] Created 1 post(s) {}
+[PlannerLog][INFO] pl7: [Phase1] Sending to IG: mediaType=REELS, url=https://example.com/pl7.mp4 {}
+[PlannerLog][ERROR] pl7: Media creation failed for post 6420049d-0b73-499d-8335-34d9fb506736 {
+  error: {
+    message: 'Invalid OAuth access token - Cannot parse access token',
+    type: 'OAuthException',
+    code: 190,
+    fbtrace_id: 'AtduWDl3ER5iOB8i9-58heM'
+  }
+}
+[PlannerLog][ERROR] pl7: Phase1 Error post=6420049d-0b73-499d-8335-34d9fb506736: Invalid OAuth access token - Cannot parse access token {}
+[PlannerLog][INFO] pl8-seed: [Phase1] Sending to IG: mediaType=REELS, url=https://example.com/v.mp4 {}
+[PlannerLog][ERROR] pl8-seed: Media creation failed for post fb1c572b-dafa-4e6b-80f0-eef62b5d5bda {
+  error: {
+    message: 'Invalid OAuth access token - Cannot parse access token',
+    type: 'OAuthException',
+    code: 190,
+    fbtrace_id: 'AXtIKzLNqkbUdRK0e39iehS'
+  }
+}
+[PlannerLog][ERROR] pl8-seed: Phase1 Error post=fb1c572b-dafa-4e6b-80f0-eef62b5d5bda: Invalid OAuth access token - Cannot parse access token {}
+ POST /api/cron/publisher 200 in 428ms (compile: 23ms, render: 404ms)

@@ -1,0 +1,12 @@
+▲ Next.js 16.1.6
+- Local:         http://127.0.0.1:63632
+- Network:       http://127.0.0.1:63632
+
+✓ Starting...
+✓ Ready in 59ms
+[PlannerLog][INFO] pl8-seed: [Phase0] Created 1 post(s) {}
+[PlannerLog][INFO] pl7: [Phase0] Created 1 post(s) {}
+[PlannerLog][INFO] pl8-seed: [Phase1] Sending to IG: mediaType=REELS, url=https://example.com/v.mp4 {}
+[PlannerLog][INFO] pl7: [Phase1] Sending to IG: mediaType=REELS, url=https://example.com/pl7.mp4 {}
+[PlannerLog][INFO] pl8-seed: Media b56d62b8-4f27-4ea5-bbe9-2894f8771713 is FINISHED but waiting 3 min safety delay. {}
+[PlannerLog][INFO] pl7: Media de78c008-e9b2-46f0-8887-401b59054603 is FINISHED but waiting 3 min safety delay. {}

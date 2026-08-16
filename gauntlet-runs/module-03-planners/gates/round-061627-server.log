@@ -1,0 +1,24 @@
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://127.0.0.1:63889
+- Network:       http://127.0.0.1:63889
+- Environments: .env.local, .env
+
+✓ Starting...
+✓ Ready in 626ms
+ GET /api/health 200 in 247ms (compile: 169ms, render: 78ms)
+ GET /api/health 200 in 5ms (compile: 1906µs, render: 3ms)
+ GET /api/admin/fix-planners 200 in 88ms (compile: 45ms, render: 42ms)
+ GET /api/admin/fix-planners?fix=true 200 in 20ms (compile: 1807µs, render: 18ms)
+[PlannerLog][INFO] pl7: [Phase0] Created 1 post(s) {}
+[PlannerLog][INFO] pl7: [Phase1] Sending to IG: mediaType=REELS, url=https://example.com/pl7.mp4 {}
+[PlannerLog][ERROR] pl7: Media creation failed for post 9c9bc8f5-76c1-4efc-bd0a-02bfb3c30956 {
+  error: {
+    message: 'Invalid OAuth access token - Cannot parse access token',
+    type: 'OAuthException',
+    code: 190,
+    fbtrace_id: 'AMyVAVPzKEJK_EYFJM4eins'
+  }
+}
+[PlannerLog][ERROR] pl7: Phase1 Error post=9c9bc8f5-76c1-4efc-bd0a-02bfb3c30956: Invalid OAuth access token - Cannot parse access token {}
+ POST /api/cron/publisher 200 in 368ms (compile: 56ms, render: 312ms)
+ POST /api/planners 400 in 89ms (compile: 77ms, render: 13ms)

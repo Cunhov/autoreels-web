@@ -1,0 +1,63 @@
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://127.0.0.1:63930
+- Network:       http://127.0.0.1:63930
+- Environments: .env.local, .env
+
+✓ Starting...
+✓ Ready in 1094ms
+ GET /api/health 200 in 188ms (compile: 131ms, render: 58ms)
+ GET /api/health 200 in 5ms (compile: 1996µs, render: 3ms)
+ GET /planners 200 in 674ms (compile: 514ms, render: 161ms)
+ GET /api/auth/session 200 in 525ms (compile: 510ms, render: 15ms)
+ GET /api/summary 200 in 76ms (compile: 28ms, render: 48ms)
+ GET /api/planners 200 in 90ms (compile: 42ms, render: 48ms)
+ GET /api/summary 200 in 12ms (compile: 1303µs, render: 11ms)
+ GET /api/planners 200 in 16ms (compile: 4ms, render: 13ms)
+ GET /api/summary 200 in 9ms (compile: 1532µs, render: 8ms)
+ GET /api/summary 200 in 7ms (compile: 1421µs, render: 6ms)
+ GET /api/channels 200 in 44ms (compile: 31ms, render: 12ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 29ms (compile: 25ms, render: 4ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 14ms (compile: 1512µs, render: 12ms)
+ GET /api/file/admin/planner-video.png 200 in 480ms (compile: 474ms, render: 5ms)
+ POST /api/planners 200 in 30ms (compile: 3ms, render: 28ms)
+ GET /api/planners 200 in 8ms (compile: 1059µs, render: 6ms)
+ GET /api/channels 200 in 11ms (compile: 2ms, render: 9ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 9ms (compile: 1296µs, render: 8ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 10ms (compile: 1929µs, render: 8ms)
+ PATCH /api/planners/c5b613b0-3e30-407a-94f8-99da1651fc0f 200 in 528ms (compile: 512ms, render: 16ms)
+ GET /api/planners 200 in 8ms (compile: 1717µs, render: 7ms)
+ GET /api/channels 200 in 10ms (compile: 1519µs, render: 9ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 8ms (compile: 1244µs, render: 7ms)
+ GET /api/content-items?parent_id=&limit=100&offset=0&types=video%2Cimage%2Ccarousel_item%2Ccarousel_folder&sort_by=name-asc 200 in 9ms (compile: 1735µs, render: 7ms)
+ GET /planners 200 in 33ms (compile: 1575µs, render: 32ms)
+ GET /api/auth/session 200 in 10ms (compile: 3ms, render: 7ms)
+ GET /api/summary 200 in 11ms (compile: 3ms, render: 8ms)
+ GET /api/planners 200 in 14ms (compile: 4ms, render: 9ms)
+ GET /api/summary 200 in 9ms (compile: 1859µs, render: 7ms)
+ GET /api/planners 200 in 14ms (compile: 913µs, render: 13ms)
+ GET /api/summary 200 in 9ms (compile: 1399µs, render: 7ms)
+ GET /api/summary 200 in 8ms (compile: 1471µs, render: 7ms)
+ GET /planners 200 in 62ms (compile: 1388µs, render: 61ms)
+ GET /api/auth/session 200 in 9ms (compile: 2ms, render: 6ms)
+ GET /api/summary 200 in 8ms (compile: 1807µs, render: 7ms)
+ GET /api/planners 200 in 8ms (compile: 854µs, render: 7ms)
+ GET /api/summary 200 in 8ms (compile: 1763µs, render: 7ms)
+ GET /api/planners 200 in 11ms (compile: 3ms, render: 8ms)
+ GET /api/summary 200 in 8ms (compile: 1435µs, render: 7ms)
+ GET /api/summary 200 in 9ms (compile: 1737µs, render: 8ms)
+ GET /api/admin/fix-planners 200 in 37ms (compile: 30ms, render: 7ms)
+ GET /api/admin/fix-planners?fix=true 200 in 9ms (compile: 1095µs, render: 8ms)
+[PlannerLog][ERROR] c5b613b0-3e30-407a-94f8-99da1651fc0f: [Phase0] No channels connected {}
+[PlannerLog][INFO] pl7: [Phase0] Created 1 post(s) {}
+[PlannerLog][INFO] pl7: [Phase1] Sending to IG: mediaType=REELS, url=https://example.com/pl7.mp4 {}
+[PlannerLog][ERROR] pl7: Media creation failed for post bc53fe31-c126-4ad4-b5a1-6df4736df5db {
+  error: {
+    message: 'Invalid OAuth access token - Cannot parse access token',
+    type: 'OAuthException',
+    code: 190,
+    fbtrace_id: 'AHsJZ7A4c2XFTWMPKBHAZXw'
+  }
+}
+[PlannerLog][ERROR] pl7: Phase1 Error post=bc53fe31-c126-4ad4-b5a1-6df4736df5db: Invalid OAuth access token - Cannot parse access token {}
+ POST /api/cron/publisher 200 in 284ms (compile: 30ms, render: 254ms)
+ POST /api/planners 400 in 7ms (compile: 1309µs, render: 6ms)
