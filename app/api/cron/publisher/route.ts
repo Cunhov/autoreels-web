@@ -7,6 +7,7 @@ import {
     GRAPH_API_VERSION,
     refreshInstagramToken,
     resolveAccessToken,
+    classifyTokenRefreshError,
 } from '@/lib/instagram';
 import { runPlannerOnce } from '@/lib/planner-runtime';
 import { sendNotification } from '@/lib/notify';
@@ -283,7 +284,28 @@ async function refreshDueChannelTokens(now: Date, startTime: number, maxExecMs: 
             });
             refreshed++;
         } catch (err) {
-            console.error(`[ChannelRefresh] ${channel.id}:`, err instanceof Error ? err.message : err);
+            const message = err instanceof Error ? err.message : String(err ?? 'Unknown error');
+            if (classifyTokenRefreshError(err) === 'permanent') {
+                // Permanent: never retry every tick. A rejected token deactivates
+                // the channel (reconnect via OAuth flips status back to 'active');
+                // missing server credentials only pause the refresh, the channel
+                // itself is fine.
+                const missingCredentials = /must be configured to refresh/i.test(message);
+                await prisma.channel.update({
+                    where: { id: channel.id },
+                    data: missingCredentials
+                        ? { token_refreshed_at: now }
+                        : { status: 'inactive', token_refreshed_at: now },
+                }).catch(() => { /* best-effort: the log line below is the source of truth */ });
+                console.error(
+                    `[ChannelRefresh] ${channel.id}: ${message} — ${missingCredentials
+                        ? 'server credentials missing; refresh paused (fix INSTAGRAM_CLIENT_ID/SECRET)'
+                        : 'access token rejected; channel deactivated (reconnect it)'}`
+                );
+            } else {
+                // Transient (network/5xx/timeout): retry next tick.
+                console.error(`[ChannelRefresh] ${channel.id}: ${message}`);
+            }
         }
     }
     return refreshed;
