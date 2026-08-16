@@ -118,6 +118,90 @@ function withIgStatus(message: string, status: number): Error & { igStatus: numb
     return e;
 }
 
+// ─── Carousel child-id store (index-aware, backward compatible) ─────────────
+//
+// instagram_child_ids is a JSON array of child container ids. Legacy rows (the
+// pre-2026 all-or-nothing code) are a plain positional array of id strings: the
+// array index is the child index. New writes use index-aware entries so a
+// PARTIAL set (some children created, some failed) keeps its gaps reconcileable
+// — child 0 and 2 can exist while child 1 is still missing, and the retry only
+// ever creates the missing one. Reads accept both encodings.
+
+/** Parse the stored child-id JSON into an index → id map (throws on bad shape). */
+function parseChildIdEntries(raw: string | null | undefined): Map<number, string> {
+    const entries = new Map<number, string>();
+    if (!raw) return entries;
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        throw new MalformedDataError('Malformed instagram_child_ids');
+    }
+    if (!Array.isArray(parsed)) throw new MalformedDataError('Malformed instagram_child_ids');
+
+    const firstItem = parsed[0];
+    const indexAware = firstItem !== null && typeof firstItem === 'object'
+        && typeof (firstItem as { index?: unknown }).index === 'number'
+        && typeof (firstItem as { id?: unknown }).id === 'string';
+
+    if (indexAware) {
+        // { index, id } entries written by the current code (gaps are allowed).
+        for (const item of parsed) {
+            const entry = item as { index?: unknown; id?: unknown } | null;
+            if (!entry || typeof entry !== 'object' || typeof entry.index !== 'number' || typeof entry.id !== 'string') {
+                throw new MalformedDataError('Malformed instagram_child_ids');
+            }
+            entries.set(entry.index, entry.id);
+        }
+    } else {
+        // Legacy positional string array: array index i → child i's id.
+        for (let i = 0; i < parsed.length; i++) {
+            if (typeof parsed[i] !== 'string') throw new MalformedDataError('Malformed instagram_child_ids');
+            entries.set(i, parsed[i] as string);
+        }
+    }
+    return entries;
+}
+
+/** Serialize the index → id map as index-aware entries (stable, sorted). */
+function serializeChildIdEntries(entries: Map<number, string>): string {
+    return JSON.stringify(
+        [...entries.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(([index, id]) => ({ index, id })),
+    );
+}
+
+/** Child ids in child-index order (the order the carousel API expects). */
+function sortedChildIds(entries: Map<number, string>): string[] {
+    return [...entries.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([, id]) => id);
+}
+
+/** Build the request body for one carousel child container (shared by both phases). */
+function buildCarouselChildParams(opts: {
+    child: { url: string; type: string };
+    idx: number;
+    mediaUrlAbsolute: string;
+    accessToken: string;
+    postUserTags?: string | null;
+}): URLSearchParams {
+    const params = new URLSearchParams();
+    params.set('is_carousel_item', 'true');
+    params.set('access_token', opts.accessToken);
+    params.set(opts.child.type === 'video' ? 'video_url' : 'image_url', opts.mediaUrlAbsolute);
+    if (opts.child.type === 'video') params.append('media_type', 'VIDEO');
+    if (opts.idx === 0 && opts.child.type !== 'video' && opts.postUserTags) {
+        const usernames = opts.postUserTags.split(',').map((u: string) => u.trim()).filter(Boolean);
+        if (usernames.length > 0) {
+            const tagsJson = usernames.map((username: string) => ({ username, x: 0.5, y: 0.5 }));
+            params.append('user_tags', JSON.stringify(tagsJson));
+        }
+    }
+    return params;
+}
+
 /** Fire a failure notification for a post (Telegram/webhook via AppConfig). Never throws. */
 async function notifyPostFailed(
     post: { caption?: string | null; channel?: { name?: string | null } | null },
@@ -513,61 +597,81 @@ interface PublisherResults {
                             throw new Error('Carousel has no media items');
                         }
 
-                        // Parallelize carousel child creation
-                        const childPromises = childrenData.map(async (child, idx) => {
-                            const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, child.url);
-                            const childParams = new URLSearchParams({
-                                is_carousel_item: 'true',
-                                access_token: accessToken,
-                                [child.type === 'video' ? 'video_url' : 'image_url']: mediaUrlAbsolute
-                            });
-                            if (child.type === 'video') childParams.append('media_type', 'VIDEO');
-                            if (idx === 0 && child.type !== 'video' && post.user_tags) {
-                                const usernames = post.user_tags.split(',').map((u: string) => u.trim()).filter(Boolean);
-                                if (usernames.length > 0) {
-                                    const tagsJson = usernames.map((username: string) => ({
-                                        username,
-                                        x: 0.5,
-                                        y: 0.5
-                                    }));
-                                    childParams.append('user_tags', JSON.stringify(tagsJson));
+                        // Resume: a previous attempt may already have created some
+                        // child containers (partial failure). Only create the ones we
+                        // do not have an id for — never duplicate existing children.
+                        const existingChildren = parseChildIdEntries(post.instagram_child_ids ?? null);
+                        const missingChildren = childrenData
+                            .map((child, idx) => ({ child, idx }))
+                            .filter(({ idx }) => !existingChildren.has(idx));
+
+                        // Parallelize creation of the missing carousel child containers
+                        const childResults = await Promise.all(
+                            missingChildren.map(async ({ child, idx }): Promise<{ idx: number; id?: string; error?: string; status?: number }> => {
+                                const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, child.url);
+                                const childParams = buildCarouselChildParams({
+                                    child,
+                                    idx,
+                                    mediaUrlAbsolute,
+                                    accessToken,
+                                    postUserTags: post.user_tags ?? null,
+                                });
+
+                                await logPlanner(plannerId, `[Phase1] Sending Carousel Child[${idx}] to IG: type=${child.type}, url=${mediaUrlAbsolute}`, 'info');
+
+                                const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, {
+                                    method: 'POST',
+                                    headers: igHeaders,
+                                    body: childParams.toString()
+                                }, 300_000); // 5 minutes for large videos
+                                const data = await res.json();
+
+                                if (data.id) {
+                                    return { idx, id: data.id };
+                                } else {
+                                    const err = `Child[${idx}] failed: ${data.error?.message || JSON.stringify(data)}`;
+                                    await logPlanner(plannerId, err, 'error', data);
+                                    return { idx, error: err, status: res.status };
                                 }
-                            }
+                            }),
+                        );
 
-                            await logPlanner(plannerId, `[Phase1] Sending Carousel Child[${idx}] to IG: type=${child.type}, url=${mediaUrlAbsolute}`, 'info');
-
-                            const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`, {
-                                method: 'POST',
-                                headers: igHeaders,
-                                body: childParams.toString()
-                            }, 300_000); // 5 minutes for large videos
-                            const data = await res.json();
-
-                            if (data.id) {
-                                return { id: data.id };
-                            } else {
-                                const err = `Child[${idx}] failed: ${data.error?.message || JSON.stringify(data)}`;
-                                await logPlanner(plannerId, err, 'error', data);
-                                return { error: err, status: res.status };
-                            }
-                        });
-
-                        const childResults = await Promise.all(childPromises);
+                        // Merge the new successes into any previously-stored ids.
+                        // The merged set only ever grows — never re-creates a child.
+                        const mergedChildren = new Map(existingChildren);
+                        for (const result of childResults) {
+                            if (result.id) mergedChildren.set(result.idx, result.id);
+                        }
                         const failedChildren = childResults.filter(r => r.error);
 
                         if (failedChildren.length > 0) {
+                            // Partial failure: keep the children that succeeded so the
+                            // retry only creates the missing ones (no orphans, no dupes).
+                            if (mergedChildren.size > 0) {
+                                const worstStatus = Math.max(0, ...failedChildren.map(f => f.status || 0));
+                                const errMsg = `Carousel failed: ${failedChildren.length} children failed to initialize (${mergedChildren.size} OK). First error: ${failedChildren[0].error}`;
+                                const countAs = worstStatus === 429 ? 'rate_limited' : 'transient';
+                                await prisma.post.update({
+                                    where: { id: post.id },
+                                    data: { instagram_child_ids: serializeChildIdEntries(mergedChildren) },
+                                });
+                                // Revert the claim; the retry (pending) resumes from the
+                                // stored ids and creates only the missing children.
+                                await handleRetryableFailure({ post, errMsg, revertToStatus: 'pending', countAs, plannerId, now, results });
+                                if (countAs === 'rate_limited') break;
+                                continue;
+                            }
+                            // No child at all succeeded — the whole attempt failed.
                             const worstStatus = Math.max(0, ...failedChildren.map(f => f.status || 0));
-                            const err = withIgStatus(`Carousel failed: ${failedChildren.length} children failed to initialize. First error: ${failedChildren[0].error}`, worstStatus);
-                            throw err;
+                            throw withIgStatus(`Carousel failed: ${failedChildren.length} children failed to initialize. First error: ${failedChildren[0].error}`, worstStatus);
                         }
 
-                        const successfulIds = childResults.map(r => r.id!).filter(Boolean);
-                        if (successfulIds.length > 0) {
+                        if (mergedChildren.size > 0 && mergedChildren.size === childrenData.length) {
                             await prisma.post.update({
                                 where: { id: post.id },
                                 data: {
                                     status: 'processing_children',
-                                    instagram_child_ids: JSON.stringify(successfulIds),
+                                    instagram_child_ids: serializeChildIdEntries(mergedChildren),
                                     container_created_at: now,
                                 }
                             });
@@ -687,18 +791,72 @@ interface PublisherResults {
                     const igHeaders = { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/x-www-form-urlencoded' };
 
                     if (post.status === 'processing_children') {
-                        let childIds: string[] = [];
-                        if (post.instagram_child_ids) {
-                            try {
-                                childIds = JSON.parse(post.instagram_child_ids);
-                            } catch {
-                                throw new MalformedDataError('Malformed instagram_child_ids');
-                            }
-                        }
-                        if (childIds.length === 0) {
+                        // Index-aware child-id store (gaps allowed); legacy positional
+                        // string arrays are accepted too. Never re-create a child whose
+                        // container id we already hold.
+                        const childEntries = parseChildIdEntries(post.instagram_child_ids ?? null);
+                        if (childEntries.size === 0) {
                             throw new MalformedDataError('No child container IDs stored');
                         }
 
+                        // Reconcile: create containers for children that have no stored
+                        // id yet (a partially-failed carousel can land in this lane with
+                        // an incomplete set). Only the missing ones are created.
+                        let childrenData: { url: string; type: string }[] = [];
+                        if (post.children_urls) {
+                            try {
+                                childrenData = JSON.parse(post.children_urls);
+                            } catch {
+                                throw new MalformedDataError('Malformed children_urls');
+                            }
+                        }
+                        const missingChildren = childrenData
+                            .map((child, idx) => ({ child, idx }))
+                            .filter(({ idx }) => !childEntries.has(idx));
+                        if (missingChildren.length > 0) {
+                            const created: { idx: number; id: string }[] = [];
+                            for (const { child, idx } of missingChildren) {
+                                const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, child.url);
+                                const childParams = buildCarouselChildParams({
+                                    child,
+                                    idx,
+                                    mediaUrlAbsolute,
+                                    accessToken,
+                                    postUserTags: post.user_tags ?? null,
+                                });
+                                try {
+                                    const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media`, {
+                                        method: 'POST',
+                                        headers: igHeaders,
+                                        body: childParams.toString()
+                                    }, 300_000); // 5 minutes for large videos
+                                    const data = await res.json();
+                                    if (data.id) {
+                                        created.push({ idx, id: data.id });
+                                    } else {
+                                        await logPlanner(post.planner_id || 'unknown', `Child reconcile[${idx}] failed: ${data.error?.message || JSON.stringify(data)}`, 'error', data);
+                                    }
+                                } catch (reconcileErr: unknown) {
+                                    await logPlanner(post.planner_id || 'unknown', `Child reconcile[${idx}] error: ${reconcileErr instanceof Error ? reconcileErr.message : String(reconcileErr)}`, 'error');
+                                }
+                            }
+                            for (const { idx, id } of created) childEntries.set(idx, id);
+                            if (created.length > 0) {
+                                await prisma.post.update({
+                                    where: { id: post.id },
+                                    data: { instagram_child_ids: serializeChildIdEntries(childEntries) },
+                                });
+                            }
+                            // Still incomplete (some reconciled children failed): the
+                            // carousel cannot be assembled yet — retry on a later tick.
+                            const stillMissing = childrenData.some((_, idx) => !childEntries.has(idx));
+                            if (stillMissing) {
+                                await logPlanner(post.planner_id || 'unknown', `Carousel ${post.id}: ${missingChildren.length} child(ren) missing or failed to initialize — retry later`, 'info');
+                                continue;
+                            }
+                        }
+
+                        const childIds = sortedChildIds(childEntries);
                         // Parallelize child status checks
                         const statusPromises = childIds.map(async (cid) => {
                             const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${cid}?fields=status_code&access_token=${accessToken}`);
