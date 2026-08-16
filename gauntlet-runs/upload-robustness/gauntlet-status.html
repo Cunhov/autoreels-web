@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gauntlet Loop — status</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+h1 { font-size: 1.4rem; }
+table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+th { font-size: .8rem; text-transform: uppercase; color: #666; }
+.win { color: #1a7f37; font-weight: 600; }
+.loss { color: #c62828; font-weight: 600; }
+.draw { color: #b26a00; font-weight: 600; }
+.meta { color: #666; font-size: .85rem; }
+</style>
+</head>
+<body>
+<h1>Gauntlet Loop — status</h1>
+<p class="meta">Goal: <span id="goal">—</span> · Bar: <span id="bar">—</span> · Budget: <span id="budget">unlimited — win or user stop</span></p>
+<p class="meta">Started: <span id="started">—</span> · Tokens spent: <span id="tokens">—</span> · Est. cost: <span id="cost">—</span></p>
+<table>
+<thead><tr><th>Piece</th><th>Round</th><th>Verdict</th><th>Last gap named</th><th>Evidence</th><th>Candidate file</th></tr></thead>
+<tbody id="rows">
+<!-- lead agent: append one <tr> per verdict. Verdict is WIN / LOSS / DRAW / INVALID (bad evidence). -->
+</tbody>
+</table>
+<p class="meta">The user is the brake. Update this file after every verdict; never let a round go unrecorded.</p>
+</body>
+</html>
