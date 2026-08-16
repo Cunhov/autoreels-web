@@ -1,31 +1,30 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gauntlet Loop — status</title>
+<title>Gauntlet — Upload Robustness</title>
 <style>
-body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
-h1 { font-size: 1.4rem; }
-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
-th { font-size: .8rem; text-transform: uppercase; color: #666; }
-.win { color: #1a7f37; font-weight: 600; }
-.loss { color: #c62828; font-weight: 600; }
-.draw { color: #b26a00; font-weight: 600; }
-.meta { color: #666; font-size: .85rem; }
+  body { font-family: ui-monospace, monospace; background: #0f1115; color: #e6e6e6; padding: 2rem; max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 1.3rem; } h2 { font-size: 1.05rem; margin-top: 2rem; color: #9aa4b2; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #2a2f3a; padding: 0.4rem 0.6rem; text-align: left; font-size: 0.85rem; }
+  th { background: #1a1e26; }
+  .fail { color: #ff6b6b; } .pass { color: #51cf66; } .run { color: #ffd43b; }
+  .meta { color: #9aa4b2; font-size: 0.8rem; }
 </style>
 </head>
 <body>
-<h1>Gauntlet Loop — status</h1>
-<p class="meta">Goal: <span id="goal">—</span> · Bar: <span id="bar">—</span> · Budget: <span id="budget">unlimited — win or user stop</span></p>
-<p class="meta">Started: <span id="started">—</span> · Tokens spent: <span id="tokens">—</span> · Est. cost: <span id="cost">—</span></p>
+<h1>Gauntlet — Upload Robustness (autoreels-web)</h1>
+<p class="meta">Bar: refs/bar-scenarios.md (A–E) · refs/diagnosis.md · refs/contract.md · Budget: unlimited — win or user stop</p>
+
+<h2>Rounds</h2>
 <table>
-<thead><tr><th>Piece</th><th>Round</th><th>Verdict</th><th>Last gap named</th><th>Evidence</th><th>Candidate file</th></tr></thead>
-<tbody id="rows">
-<!-- lead agent: append one <tr> per verdict. Verdict is WIN / LOSS / DRAW / INVALID (bad evidence). -->
-</tbody>
+  <tr><th>Round</th><th>Piece</th><th>Verdict</th><th>Gates</th><th>Biggest remaining gap</th></tr>
+  <tr><td>00</td><td>Harness A–E + baseline</td><td class="fail">Baseline: A,B,C,D FAIL / E PASS</td><td>harness reproduces prod failures (18 warnings, 8 ENOENT, 2 spam)</td><td>—</td></tr>
+  <tr><td>01</td><td>Server finalize (lock+concat) · Client (unique path+409) · Token refresh</td><td class="run">in flight</td><td>tsc + lint per worktree; full gates on main after merge</td><td>—</td></tr>
 </table>
-<p class="meta">The user is the brake. Update this file after every verdict; never let a round go unrecorded.</p>
+
+<h2>Running cost</h2>
+<p class="meta">Round 00: ~1 workflow run (harness build + baseline). Round 01: 3 parallel builders.</p>
 </body>
 </html>
