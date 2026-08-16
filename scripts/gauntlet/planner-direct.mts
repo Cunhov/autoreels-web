@@ -40,7 +40,9 @@ const resultsTotal: {
 function safeState(raw: string | null | undefined): Record<string, unknown> {
 	try {
 		const parsed = JSON.parse(raw || "{}") as unknown;
-		return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+		return parsed && typeof parsed === "object"
+			? (parsed as Record<string, unknown>)
+			: {};
 	} catch {
 		return {};
 	}
@@ -548,7 +550,16 @@ async function scenarioPL3() {
 		`baseCaption="${basePost?.caption || ""}" (must be "Veja CAPTION FROM LIBRARY", never the literal {post_caption})`,
 	);
 	await cleanupScenario({
-		planners: ["pl3-arr", "pl3-freq0", "pl3-noch", "pl3-res", "pl3-tpl", "pl3-hash", "pl3-off", "pl3-basecap"],
+		planners: [
+			"pl3-arr",
+			"pl3-freq0",
+			"pl3-noch",
+			"pl3-res",
+			"pl3-tpl",
+			"pl3-hash",
+			"pl3-off",
+			"pl3-basecap",
+		],
 		channels: ["pl3-c"],
 	});
 	await prisma.contentItem

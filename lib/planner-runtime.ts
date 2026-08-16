@@ -223,7 +223,9 @@ export async function resolveCaptionTemplateVars(
 	let title = selectedContent?.title_fallback || "";
 	let itemCaption =
 		selectedContent?.caption_fallback || selectedContent?.caption || "";
-	let libTags: string | null | undefined = (selectedContent as { tags?: string | null } | null)?.tags;
+	let libTags: string | null | undefined = (
+		selectedContent as { tags?: string | null } | null
+	)?.tags;
 	const libId = selectedContent?.id || selectedContent?.folder_id;
 	if (libId) {
 		const libItem = await prisma.contentItem.findFirst({
