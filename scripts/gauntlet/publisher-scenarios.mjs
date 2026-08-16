@@ -1111,6 +1111,156 @@ async function scenarioP11() {
 	await cleanupScenario(ids);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// SCENARIO P12 — phase-2 carousel lane, two sub-scenarios:
+//   a) RECONCILE: post already in processing_children with a PARTIAL
+//      index-aware child set → the tick creates ONLY the missing child, then
+//      assembles the group container exactly once and publishes once.
+//   b) REUSE GUARD: complete children AND an existing instagram_container_id
+//      (re-claim after a lost write) → NO second group container (IG children
+//      are single-use), the existing container is polled and published.
+// ═══════════════════════════════════════════════════════════════════════════
+async function scenarioP12() {
+	const ids = { posts: [], channels: [] };
+	const kids = (prefix) => [
+		{ url: `/api/file/${prefix}1.mp4`, type: "video" },
+		{ url: `/api/file/${prefix}2.mp4`, type: "video" },
+		{ url: `/api/file/${prefix}3.mp4`, type: "video" },
+	];
+	// container-create calls for a channel (excludes media_publish, whose URL
+	// contains the same "/media" prefix substring).
+	const mediaCreates = (acct) =>
+		readCalls().filter(
+			(c) =>
+				c.method === "POST" &&
+				c.url.includes(`/v24.0/${acct}/media`) &&
+				!c.url.includes("media_publish"),
+		);
+
+	// ── P12a: reconcile lane ──────────────────────────────────────────────────
+	await seedChannel({ id: "chan-p12a", account_id: "acct-p12a" });
+	ids.channels.push("chan-p12a");
+	ids.posts.push(
+		(
+			await seedPost({
+				id: "p12a",
+				user_id: "admin",
+				channel_id: "chan-p12a",
+				planner_id: null,
+				status: "processing_children",
+				media_type: "CAROUSEL",
+				video_url: null,
+				caption: "p12a",
+				children_urls: JSON_OF(kids("xa")),
+				instagram_child_ids: JSON_OF([
+					{ index: 0, id: "cnt-xa0" },
+					{ index: 2, id: "cnt-xa2" },
+				]),
+				container_created_at: new Date(),
+			})
+		).id,
+	);
+	const p12aRules = [
+		rule(null, "xa1.mp4", [okId("cnt-xa0")]), // stored — must never be re-created
+		rule(null, "xa2.mp4", [okId("cnt-xa1")]), // missing index 1 — the ONLY create allowed
+		rule(null, "xa3.mp4", [okId("cnt-xa2")]), // stored — must never be re-created
+		rule(null, "CAROUSEL", [okId("cnt-xag")]),
+		finishedPoll,
+		publishOk,
+	];
+	writeState(p12aRules);
+	await tick();
+	const p12aTick1 = mediaCreates("acct-p12a");
+	const p12aChild1 = p12aTick1.filter((c) => !c.body.includes("CAROUSEL"));
+	const p12aGroup1 = p12aTick1.filter((c) => c.body.includes("CAROUSEL"));
+	const p12aMid = await prisma.post.findUnique({ where: { id: "p12a" } });
+
+	// Fast-forward the group container's 3-min safety gate, then publish.
+	await prisma.post.update({
+		where: { id: "p12a" },
+		data: { container_created_at: minutesAgo(5) },
+	});
+	writeState(p12aRules);
+	await tick();
+	const p12aCreations2 = mediaCreates("acct-p12a");
+	const p12aPublish = readCalls().filter((c) => c.url.includes("media_publish"));
+	const p12a = await prisma.post.findUnique({ where: { id: "p12a" } });
+	const p12aStored = parseChildIdEntriesForTest(p12a?.instagram_child_ids ?? null);
+	const p12aOk =
+		p12aChild1.length === 1 &&
+		p12aChild1[0]?.body?.includes("xa2.mp4") &&
+		p12aGroup1.length === 1 &&
+		p12aMid?.status === "processing_upload" &&
+		p12aMid?.instagram_container_id === "cnt-xag" &&
+		p12aCreations2.length === 0 && // publish tick re-creates nothing
+		p12aPublish.length === 1 &&
+		p12a?.status === "published" &&
+		p12aStored.size === 3 &&
+		p12aStored.get(1) === "cnt-xa1";
+
+	// ── P12b: reuse guard ─────────────────────────────────────────────────────
+	await seedChannel({ id: "chan-p12b", account_id: "acct-p12b" });
+	ids.channels.push("chan-p12b");
+	ids.posts.push(
+		(
+			await seedPost({
+				id: "p12b",
+				user_id: "admin",
+				channel_id: "chan-p12b",
+				planner_id: null,
+				status: "processing_children",
+				media_type: "CAROUSEL",
+				video_url: null,
+				caption: "p12b",
+				children_urls: JSON_OF(kids("xb")),
+				instagram_child_ids: JSON_OF([
+					{ index: 0, id: "cnt-xb0" },
+					{ index: 1, id: "cnt-xb1" },
+					{ index: 2, id: "cnt-xb2" },
+				]),
+				instagram_container_id: "cnt-xbg",
+				container_created_at: minutesAgo(5),
+			})
+		).id,
+	);
+	const p12bRules = [
+		rule(null, "xb1.mp4", [okId("cnt-xb0")]),
+		rule(null, "xb2.mp4", [okId("cnt-xb1")]),
+		rule(null, "xb3.mp4", [okId("cnt-xb2")]),
+		rule(null, "CAROUSEL", [okId("cnt-xbg2")]), // fresh id — a buggy re-create would return this
+		finishedPoll,
+		publishOk,
+	];
+	writeState(p12bRules);
+	await tick();
+	const p12bMid = await prisma.post.findUnique({ where: { id: "p12b" } });
+	const p12bCreations1 = mediaCreates("acct-p12b");
+	writeState(p12bRules);
+	await tick();
+	const p12bCreations2 = mediaCreates("acct-p12b");
+	const p12bPublish = readCalls().filter((c) => c.url.includes("media_publish"));
+	const p12b = await prisma.post.findUnique({ where: { id: "p12b" } });
+	const p12bOk =
+		p12bCreations1.length === 0 && // guard fired: NO group re-create
+		p12bCreations2.length === 0 &&
+		p12bMid?.status === "processing_upload" &&
+		p12bMid?.instagram_container_id === "cnt-xbg" && // existing id preserved
+		p12bPublish.length === 1 &&
+		p12b?.status === "published" &&
+		p12b?.instagram_container_id === "cnt-xbg";
+
+	record(
+		"P12",
+		Boolean(p12aOk && p12bOk),
+		`a(reconcile): childCreates=${p12aChild1.length} groupCreates=${p12aGroup1.length} mid=${p12aMid?.status}/${p12aMid?.instagram_container_id} final=${p12a?.status} stored=${p12aStored.size} | b(guard): creations=${p12bCreations1.length}/${p12bCreations2.length} mid=${p12bMid?.status}/${p12bMid?.instagram_container_id} final=${p12b?.status} publish=${p12bPublish.length}`,
+		{
+			reconcile: { childCreates: p12aChild1.length, groupCreates: p12aGroup1.length, midStatus: p12aMid?.status, finalStatus: p12a?.status, stored: p12aStored.size },
+			guard: { creations1: p12bCreations1.length, creations2: p12bCreations2.length, midContainer: p12bMid?.instagram_container_id, finalStatus: p12b?.status, publishCalls: p12bPublish.length },
+		},
+	);
+	await cleanupScenario(ids);
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 async function main() {
 	await seedUser();
@@ -1136,6 +1286,7 @@ async function main() {
 		["P9", scenarioP9],
 		["P10", scenarioP10],
 		["P11", scenarioP11],
+		["P12", scenarioP12],
 	];
 	let failed = 0;
 	for (const [label, fn] of scenarios) {
