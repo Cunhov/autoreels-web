@@ -848,10 +848,21 @@ interface PublisherResults {
                                 });
                             }
                             // Still incomplete (some reconciled children failed): the
-                            // carousel cannot be assembled yet — retry on a later tick.
+                            // carousel cannot be assembled yet — retry on a later tick. Bump
+                            // the attempt bookkeeping like every other retryable lane so an
+                            // eternal failure is bounded by MAX_TRANSIENT_ATTEMPTS / the 2h
+                            // dead-letter instead of spinning forever.
                             const stillMissing = childrenData.some((_, idx) => !childEntries.has(idx));
                             if (stillMissing) {
-                                await logPlanner(post.planner_id || 'unknown', `Carousel ${post.id}: ${missingChildren.length} child(ren) missing or failed to initialize — retry later`, 'info');
+                                const reconcileMsg = `Carousel ${post.id}: ${missingChildren.length} child(ren) missing or failed to initialize — reconcile incomplete`;
+                                await logPlanner(post.planner_id || 'unknown', reconcileMsg, 'info');
+                                await handleRetryableFailure({
+                                    post,
+                                    errMsg: reconcileMsg,
+                                    plannerId: post.planner_id || 'unknown',
+                                    now,
+                                    results,
+                                });
                                 continue;
                             }
                         }
@@ -877,6 +888,16 @@ interface PublisherResults {
 
                         const allFinished = statusResults.every(r => r.body?.status_code === 'FINISHED');
                         if (allFinished) {
+                            // Reuse guard (parity with the single-media guard in the phase-1
+                            // lane): if this post already holds a carousel container id, do
+                            // NOT assemble a second group container. IG child containers are
+                            // single-use — a second CAROUSEL create would burn the children
+                            // and orphan the first container. Hand the existing container to
+                            // the poll lane instead.
+                            if (post.instagram_container_id) {
+                                await prisma.post.update({ where: { id: post.id }, data: { status: 'processing_upload' } });
+                                continue;
+                            }
                             const body = new URLSearchParams({
                                 media_type: 'CAROUSEL',
                                 children: childIds.join(','),

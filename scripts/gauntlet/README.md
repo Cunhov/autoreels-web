@@ -6,7 +6,7 @@ Graph API **mocked in-process** — no real IG call can leave the machine.
 ## Run
 
 ```bash
-bash scripts/gauntlet/boot.sh            # full: db push + build + server + P1–P11
+bash scripts/gauntlet/boot.sh            # full: db push + build + server + P1–P12
 MODE=dev bash scripts/gauntlet/boot.sh   # dev fallback (used automatically if build fails)
 RUN_DIR=/tmp/my-gates bash scripts/gauntlet/boot.sh  # override evidence dir
 ```
@@ -27,7 +27,7 @@ Exit 0 only when all scenarios pass. Evidence: `gauntlet-runs/module-01-publishe
   - unmatched mock-host calls → `404 {"error":{"message":"UNMATCHED_MOCK …"}}` (recorded);
   - `delayMs` honors the caller's AbortSignal (abort → `AbortError`).
 - `publisher-scenarios.mjs` — seeds DB rows (User/Channel/Post/AppConfig), writes mock rules per
-  scenario, triggers `POST /api/cron/publisher` with `x-cron-auth`, asserts P1–P11
+  scenario, triggers `POST /api/cron/publisher` with `x-cron-auth`, asserts P1–P12
   (`gauntlet-runs/module-01-publisher/refs/bar-scenarios.md`), prints PASS/FAIL + evidence.
 
 ## Mock rule contract (used by the scenarios)
