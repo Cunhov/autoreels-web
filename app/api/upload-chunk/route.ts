@@ -5,6 +5,7 @@ import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { mkdir, unlink, readdir } from "fs/promises";
 import { join, dirname, basename } from "path";
 import { normalizeUploadPath } from "@/lib/upload-path";
+import { isLocked } from "@/lib/upload-lock";
 import type { ReadableStream as NodeReadableStream } from "stream/web";
 import { Readable, PassThrough } from "stream";
 import { createWriteStream } from "fs";
@@ -84,6 +85,14 @@ export async function POST(req: Request) {
         }
 
         const uploadDir = getUploadsDir();
+        const partBase = join(uploadDir, path);
+
+        // A finalize is consuming these parts right now — do NOT write into it.
+        // The client treats this 409 as "skip to complete" (idempotent replay).
+        if (await isLocked(partBase)) {
+            return NextResponse.json({ error: "Finalize in progress", finalizing: true }, { status: 409 });
+        }
+
         // Idempotent per-chunk file: {path}.part.{i}. Re-sending the same chunk
         // overwrites it (flag 'w'), making retries safe. Concatenation happens in
         // /api/upload-chunk/complete — the last chunk does NOT rename anymore.
@@ -151,6 +160,13 @@ export async function DELETE(req: Request) {
 
         const uploadDir = getUploadsDir();
         const partBase = join(uploadDir, path);
+
+        // A finalize owns the parts now — cancelling would delete files the
+        // finalize is concatenating. The finalize cleans up after itself.
+        if (await isLocked(partBase)) {
+            return NextResponse.json({ error: "Finalize in progress", finalizing: true }, { status: 409 });
+        }
+
         const indices = await listPartIndices(partBase);
         let removed = 0;
         for (const index of indices) {
