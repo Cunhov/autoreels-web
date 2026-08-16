@@ -140,6 +140,16 @@ export function validatePlannerConfig(config: unknown): { ok: boolean; errors: s
         } else {
             if (s.start !== undefined && s.start !== null && !isHHMM(s.start)) errors.push('sleep_schedule.start deve estar no formato HH:MM');
             if (s.end !== undefined && s.end !== null && !isHHMM(s.end)) errors.push('sleep_schedule.end deve estar no formato HH:MM');
+            // start == end → janela que nunca dorme (isSleepingNow: hhmm >= s && hhmm < s é
+            // sempre false). O wizard já bloqueia com este mesmo texto; o servidor agora
+            // aplica a mesma regra para payloads via API.
+            if (
+                typeof s.start === 'string' && typeof s.end === 'string' &&
+                isHHMM(s.start) && isHHMM(s.end) &&
+                s.start === s.end
+            ) {
+                errors.push('Sleep start and end must be different times.');
+            }
         }
     }
 
