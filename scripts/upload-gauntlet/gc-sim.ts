@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile, utimes, readdir } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { sweepStaleStaging } from "../../lib/upload-gc";
+import { sweepStaleStaging } from "../../lib/upload-gc.ts";
 
 async function main() {
 	const root = await mkdtemp(join(tmpdir(), "gc-sim-"));

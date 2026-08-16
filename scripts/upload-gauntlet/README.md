@@ -93,3 +93,9 @@ RUN_DIR=/tmp/my-gates ./scripts/upload-gauntlet/run-tests.sh  # override gates o
   so hashes are meaningful across runs.
 - `next build` regenerates `.next/standalone`; the harness creates/removes the
   uploads symlink inside it per run.
+
+## GC simulation
+
+`npx tsx scripts/upload-gauntlet/gc-sim.ts` — 6 assertions on `sweepStaleStaging`
+(stale orphan part swept, fresh part kept, stale .finalizing dir swept, fresh kept,
+locked finalize kept, lock file kept). Needs tsx because the app uses the `@/` alias.
