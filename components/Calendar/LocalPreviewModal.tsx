@@ -1,5 +1,5 @@
 'use client';
-import { X, Clock } from 'lucide-react';
+import { X, Clock, CalendarClock } from 'lucide-react';
 import { Post } from '@/app/types';
 
 /**
@@ -42,6 +42,13 @@ export default function LocalPreviewModal({ post, onClose }: { post: Post; onClo
 
                 {/* Info */}
                 <div className="bg-white/10 rounded-xl p-4 w-full text-white space-y-2">
+                    {/* Planner attribution: which planner created this post (hidden when none). */}
+                    {post.planner?.name && (
+                        <div className="flex items-center gap-2 text-xs text-white/60">
+                            <CalendarClock size={12} />
+                            <span className="font-medium text-white/90">{post.planner.name}</span>
+                        </div>
+                    )}
                     {post.scheduled_at && (
                         <div className="flex items-center gap-2 text-xs text-white/60">
                             <Clock size={12} />

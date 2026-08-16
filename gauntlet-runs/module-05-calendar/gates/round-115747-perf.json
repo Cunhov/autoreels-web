@@ -1,0 +1,10 @@
+{
+  "seeded": 340,
+  "renderMs": 150,
+  "fcpMs": 112,
+  "maxFrameGapMs": 99,
+  "framesOver200ms": 0,
+  "totalFrames": 6,
+  "consoleErrors": [],
+  "measuredAt": "2026-08-16T14:57:47.933Z"
+}
