@@ -1,0 +1,13 @@
+{
+  "screenshots": [
+    "empty",
+    "grid",
+    "select",
+    "mobile"
+  ],
+  "consoleErrors": [],
+  "pageErrors": [],
+  "mobileHorizontalOverflowPx": 0,
+  "bulkDeleteConfirm": "Delete 8 items and 9 nested contents? This cannot be undone.",
+  "bulkDeleteNestedWarning": true
+}

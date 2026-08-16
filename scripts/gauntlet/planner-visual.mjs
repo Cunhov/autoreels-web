@@ -196,6 +196,21 @@ async function main() {
 		.first();
 	await videoCard.evaluate((el) => el.click());
 	await sleep(400);
+	// Templates + auto-rotation (user-reported bug: templates with rotation
+	// "off" were silently ignored). Typing a template must flip the rotation
+	// selector to "sequential" automatically. The templates textarea lives on
+	// the CONTENT step (step 2), before the sleep/frequency step.
+	const tplTextarea = page
+		.locator('textarea[placeholder*="One template per line"]')
+		.first();
+	await tplTextarea.fill("Wizard template {date}");
+	const rotationValue = await page
+		.locator("select")
+		.filter({ hasText: "Rotation:" })
+		.first()
+		.inputValue()
+		.catch(() => "");
+	const autoRotation = rotationValue === "sequential";
 	await page.getByRole("button", { name: "Next", exact: true }).click();
 	await page.locator('input[type="number"]').first().fill("2");
 	await page.getByRole("button", { name: "Next", exact: true }).click();
@@ -205,6 +220,24 @@ async function main() {
 	await waitModalClosed(page);
 	await page.getByText("Wizard Created").first().waitFor({ timeout: 20_000 });
 	await sleep(400);
+	// DB-level proof: the saved planner must carry the template + sequential.
+	const savedWizardPlanner = await prisma.planner.findFirst({
+		where: { name: "Wizard Created" },
+	});
+	let savedConfig = null;
+	try {
+		savedConfig = savedWizardPlanner?.config
+			? JSON.parse(savedWizardPlanner.config)
+			: null;
+	} catch {
+		savedConfig = null;
+	}
+	const savedTplOk =
+		savedConfig?.caption_rotation === "sequential" &&
+		Array.isArray(savedConfig?.caption_templates) &&
+		savedConfig.caption_templates.length === 1 &&
+		savedConfig.caption_templates[0] === "Wizard template {date}";
+	flows.autoRotation = autoRotation;
 	const createdFreqVisible = await page
 		.getByText("Every 2 hours", { exact: false })
 		.first()
@@ -328,6 +361,8 @@ async function main() {
 		consoleErrors.length === 0 &&
 		pageErrors.length === 0 &&
 		createdOk &&
+		autoRotation &&
+		savedTplOk &&
 		inlineErrorVisible &&
 		nextDisabled &&
 		badPlannerAbsent &&
@@ -349,7 +384,7 @@ async function main() {
 		JSON.stringify(report, null, 2),
 	);
 	console.log(
-		`SCENARIO PL8: ${pass ? "PASS" : "FAIL"} — consoleErrors=${consoleErrors.length} pageErrors=${pageErrors.length} created=${createdFreqVisible} edited=7h validation=${inlineErrorVisible}/${nextDisabled} badAbsent=${badPlannerAbsent} mobileHScroll=${hScroll}px`,
+		`SCENARIO PL8: ${pass ? "PASS" : "FAIL"} — consoleErrors=${consoleErrors.length} pageErrors=${pageErrors.length} created=${createdFreqVisible} autoRotation=${autoRotation}/${savedTplOk} edited=7h validation=${inlineErrorVisible}/${nextDisabled} badAbsent=${badPlannerAbsent} mobileHScroll=${hScroll}px`,
 	);
 	if (consoleErrors.length > 0) {
 		console.log("  console errors:");

@@ -67,7 +67,6 @@ const SESSION_COOKIE = `next-auth.session-token=${await encode({
 
 // Namespace for all harness seed files (drift scans are scoped to it).
 const NS = "admin/gauntlet-mod2";
-const NS_DIR = join(UPLOADS_DIR, NS);
 
 // ── Small helpers ───────────────────────────────────────────────────────────
 
@@ -97,10 +96,6 @@ function writeSeedFile(relPath, bytes) {
 	const abs = join(UPLOADS_DIR, relPath);
 	mkdirSync(dirname(abs), { recursive: true });
 	writeFileSync(abs, bytes);
-}
-
-function readSeedFile(relPath) {
-	return readFileSync(join(UPLOADS_DIR, relPath));
 }
 
 function rmFile(relPath) {
@@ -166,9 +161,6 @@ async function integrityScan() {
 	});
 	const byId = new Map(rows.map((r) => [r.id, r]));
 	const problems = [];
-	const rootIds = new Set(
-		rows.filter((r) => r.parent_id === null).map((r) => r.id),
-	);
 	for (const row of rows) {
 		if (row.parent_id === null) continue;
 		const parent = byId.get(row.parent_id);
@@ -196,8 +188,6 @@ async function integrityScan() {
 	return problems;
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const MINUTES_AGO = (m) => new Date(Date.now() - m * 60_000);
 const PNG = Buffer.from(
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
 	"base64",
@@ -683,11 +673,11 @@ async function scenarioL5() {
 		[200, 201].includes(p1.status) &&
 		[200, 201].includes(p2.status) &&
 		dupRows.length === 2 && // real contract: raw create at this layer (no dedupe)
-		dupRows.every((r) => existsSync(join(UPLOADS_DIR, NS, "l5a-a.png")));
+		dupRows.every(() => existsSync(join(UPLOADS_DIR, NS, "l5a-a.png")));
 	record(
 		"L5a",
 		Boolean(noCorrupt),
-		`content-items POST same name: rows=${dupRows.length} (real contract: raw create → 2 rows; dedupe-by-name lives in upload-finalize, proven by L5b) statuses=${p1.status}/${p2.status} filesIntact=${dupRows.every((r) => existsSync(join(UPLOADS_DIR, NS, "l5a-a.png")))}`,
+		`content-items POST same name: rows=${dupRows.length} (real contract: raw create → 2 rows; dedupe-by-name lives in upload-finalize, proven by L5b) statuses=${p1.status}/${p2.status} filesIntact=${dupRows.every(() => existsSync(join(UPLOADS_DIR, NS, "l5a-a.png")))}`,
 		{ statuses: [p1.status, p2.status], rows: dupRows.length },
 	);
 	await prisma.contentItem
@@ -716,6 +706,12 @@ async function scenarioL5() {
 		method: "POST",
 		body: mkForm(),
 	});
+	// A real second upload re-sends its chunks (same staging path, new bytes).
+	// Without re-seeding, the second complete would hit the idempotent-replay
+	// branch (parts consumed) and return the FIRST item — that is the retry
+	// path, not a fresh same-name upload.
+	writeSeedFile(`${partBase}.part.0`, Buffer.alloc(300, 7));
+	writeSeedFile(`${partBase}.part.1`, Buffer.alloc(300, 8));
 	const c2 = await req("/api/upload-chunk/complete", {
 		method: "POST",
 		body: mkForm(),
