@@ -132,7 +132,10 @@ run_part() {
 RC_ALL=0
 run_part visual calendar-visual.mjs || RC_ALL=1
 run_part scenarios calendar-scenarios.mjs || RC_ALL=1
-run_part perf calendar-perf.mjs || RC_ALL=1
+# C9 perf: --baseline points at the canonical gates/calendar-perf-baseline.json —
+# the perf script records it on the first run at a given workload and FAILS later
+# runs that regress renderMs/maxFrameGapMs >10% against it.
+run_part perf calendar-perf.mjs "--baseline $RUN_DIR/gates/calendar-perf-baseline.json" || RC_ALL=1
 
 mkdir -p "$RUN_DIR/gates"
 TS="$(date +%H%M%S)"

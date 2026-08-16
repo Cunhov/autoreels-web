@@ -2,22 +2,33 @@
 /**
  * Calendar performance gauntlet — C9.
  *
- * Seeds 300 posts (3 months + one 40-post day) and measures, in a real
- * Chromium against the running standalone server at "/":
+ * Seeds a HEAVY CURRENT-MONTH workload (the bar's "heaviest month": days 1-27
+ * with 10 posts each + one 40-post burst day — ~310 posts, all inside the
+ * default month view) and measures, in a real Chromium against the running
+ * standalone server at "/":
  *   - renderMs: Node-side time from goto to the first day cell visible
  *   - FCP (performance paint entry)
  *   - month navigation stability: rAF-gap probe while clicking Prev/Next
  *     repeatedly (the heaviest render path), maxGapMs + frames over 200ms
+ *   - heavy-day render proof: the 40-post burst day cell shows the "+N more" chip
  *   - console error count during the flows
  *
- * Writes JSON to --out/perf-baseline.json. Later rounds must not regress these
- * numbers by more than 10%.
+ * BASELINE COMPARISON (--baseline <path>): the first run at a given code state
+ * records the canonical baseline (gates/calendar-perf-baseline.json). Later
+ * runs FAIL if renderMs or maxFrameGapMs regress >10% vs the stored baseline,
+ * or if any frame gap exceeds 200ms, or console errors appear. If the stored
+ * baseline's WORKLOAD differs from the current seed (seeded count or burst
+ * day), the baseline is recomputed instead of compared — the numbers only
+ * compare like-for-like workloads.
+ *
+ * Writes the full report to --out/perf-baseline.json (copied by the runner
+ * into gates/round-<ts>-perf.json).
  *
  * Usage:
  *   node calendar-perf.mjs --base http://127.0.0.1:PORT --db <test.db>
- *        --secret <NEXTAUTH_SECRET> --out <dir>
+ *        --secret <NEXTAUTH_SECRET> --out <dir> --baseline <path>
  */
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { chromium } from "playwright-core";
 import { PrismaClient } from "@prisma/client";
@@ -33,6 +44,7 @@ const BASE = getArg("--base");
 const DB_PATH = getArg("--db");
 const SECRET = getArg("--secret");
 const OUT_DIR = getArg("--out");
+const BASELINE_PATH = getArg("--baseline");
 for (const [name, value] of [
 	["--base", BASE],
 	["--db", DB_PATH],
@@ -55,8 +67,30 @@ const SESSION_TOKEN = await encode({
 });
 
 const consoleErrors = [];
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const NS_PREFIX = "cal-perf-";
+
+/** Load the canonical baseline, or null when absent/corrupt. */
+function loadBaseline() {
+	if (!BASELINE_PATH) return null;
+	try {
+		const b = JSON.parse(readFileSync(BASELINE_PATH, "utf8"));
+		if (b && typeof b.renderMs === "number" && typeof b.maxFrameGapMs === "number") {
+			return b;
+		}
+	} catch {
+		/* no baseline yet */
+	}
+	return null;
+}
+
+function saveBaseline(report) {
+	if (!BASELINE_PATH) return;
+	try {
+		writeFileSync(BASELINE_PATH, JSON.stringify(report, null, 2));
+	} catch (err) {
+		console.error(`  C9-BASELINE: could not write baseline (${err.message})`);
+	}
+}
 
 async function main() {
 	await prisma.user.upsert({
@@ -65,19 +99,31 @@ async function main() {
 		create: { id: "admin", email: "admin@test.local", name: "admin" },
 	});
 
-	// Seed 300 posts: 100 per month (2026-04/05/06) + 40 on 2026-05-10.
+	// ── Seed relative to the CURRENT month (the default view) ────────────────
+	// The previous version seeded FIXED dates (2026-04/05/06) while the view
+	// showed the current month → the harness measured an EMPTY month. The bar's
+	// "heaviest month" workload: days 1-27 with 10 posts each (270) + one
+	// 40-post burst day (day 10) → 310 posts, all inside the visible window.
+	const now = new Date();
+	const year = now.getFullYear();
+	const month = now.getMonth();
+	const BURST_DAY = 10;
 	const rows = [];
-	for (let m = 4; m <= 6; m++) {
-		for (let i = 0; i < 100; i++) {
-			const day = 1 + (i % 27);
+	for (let day = 1; day <= 27; day++) {
+		for (let i = 0; i < 10; i++) {
 			rows.push({
-				id: `${NS_PREFIX}m${m}-${i}`,
+				id: `${NS_PREFIX}d${day}-${i}`,
 				user_id: "admin",
 				status: i % 3 === 0 ? "published" : "pending",
 				media_type: "REELS",
-				caption: `perf m${m} i${i}`,
+				caption: `perf d${day} i${i}`,
 				scheduled_at: new Date(
-					`2026-${String(m).padStart(2, "0")}-${String(day).padStart(2, "0")}T12:00:00Z`,
+					year,
+					month,
+					day,
+					9 + (i % 10),
+					i % 60,
+					0,
 				),
 			});
 		}
@@ -90,14 +136,20 @@ async function main() {
 			media_type: "REELS",
 			caption: `perf burst ${i}`,
 			scheduled_at: new Date(
-				`2026-05-10T${String(9 + (i % 12)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00Z`,
+				year,
+				month,
+				BURST_DAY,
+				9 + (i % 10),
+				i % 60,
+				0,
 			),
 		});
 	}
+	// createMany in chunks (SQLite bind limit).
 	for (let start = 0; start < rows.length; start += 200) {
 		await prisma.post.createMany({ data: rows.slice(start, start + 200) });
 	}
-	console.log(`seeded ${rows.length} posts`);
+	console.log(`seeded ${rows.length} posts (current month, burst day ${BURST_DAY})`);
 
 	const browser = await chromium.launch();
 	const ctx = await browser.newContext({
@@ -156,6 +208,22 @@ async function main() {
 	}
 	const renderMs = Date.now() - t0;
 
+	// Heavy-day render proof: the 40-post burst day cell must show the
+	// "+N more" chip — ties the measured workload to what actually rendered.
+	const burstCell = page
+		.locator("div.min-h-\\[140px\\]")
+		.filter({
+			has: page.locator("span.text-\\[13px\\]", {
+				hasText: String(BURST_DAY),
+			}),
+		})
+		.first();
+	const burstChip = await burstCell
+		.getByText(/^\+.*more$/)
+		.first()
+		.isVisible()
+		.catch(() => false);
+
 	const paint = await page.evaluate(() => {
 		const entries = performance.getEntriesByType("paint");
 		const fcp = entries.find((e) => e.name === "first-contentful-paint");
@@ -203,22 +271,60 @@ async function main() {
 
 	await browser.close();
 
+	const workload = { seeded: rows.length, burstDay: BURST_DAY };
 	const report = {
-		seeded: rows.length,
+		workload,
 		renderMs,
 		fcpMs: paint.fcpMs,
 		maxFrameGapMs: Math.round(navProbe.maxGap),
 		framesOver200ms: navProbe.framesOver200,
 		totalFrames: navProbe.totalFrames,
 		consoleErrors,
+		burstChipRendered: burstChip,
 		measuredAt: new Date().toISOString(),
 	};
 	writeFileSync(
 		join(OUT_DIR, "perf-baseline.json"),
 		JSON.stringify(report, null, 2),
 	);
+
+	// ── Baseline comparison ───────────────────────────────────────────────────
+	const baseline = loadBaseline();
+	let pass = true;
+	let baselineNote = "";
+	if (baseline && baseline.workload &&
+		(baseline.workload.seeded !== workload.seeded ||
+			baseline.workload.burstDay !== workload.burstDay)) {
+		saveBaseline(report);
+		baselineNote = "workload changed — baseline recomputed";
+		console.log(
+			`  C9-BASELINE: recomputed (workload ${workload.seeded} posts, burst day ${workload.burstDay})`,
+		);
+	} else if (!baseline) {
+		saveBaseline(report);
+		baselineNote = "first run — baseline recorded";
+		console.log(
+			`  C9-BASELINE: recorded (${workload.seeded} posts, burst day ${workload.burstDay})`,
+		);
+	} else {
+		const renderLimit = baseline.renderMs * 1.1;
+		const gapLimit = baseline.maxFrameGapMs * 1.1;
+		const renderOk = report.renderMs <= renderLimit;
+		const gapOk = report.maxFrameGapMs <= gapLimit;
+		const framesOk = report.framesOver200ms === 0;
+		const errorsOk = report.consoleErrors.length === 0;
+		pass = renderOk && gapOk && framesOk && errorsOk;
+		console.log(
+			`  C9-BASELINE: render ${report.renderMs} vs ${baseline.renderMs} (<=${renderLimit.toFixed(0)}) ${renderOk ? "OK" : "FAIL"} | ` +
+				`gap ${report.maxFrameGapMs} vs ${baseline.maxFrameGapMs} (<=${gapLimit.toFixed(0)}) ${gapOk ? "OK" : "FAIL"} | ` +
+				`framesOver200 ${report.framesOver200ms} ${framesOk ? "OK" : "FAIL"} | ` +
+				`consoleErrors ${report.consoleErrors.length} ${errorsOk ? "OK" : "FAIL"}`,
+		);
+	}
+	pass = pass && burstChip;
+
 	console.log(
-		`SCENARIO C9: renderMs=${renderMs} fcpMs=${paint.fcpMs} maxFrameGapMs=${Math.round(navProbe.maxGap)} framesOver200=${navProbe.framesOver200}/${navProbe.totalFrames} consoleErrors=${consoleErrors.length}`,
+		`SCENARIO C9: renderMs=${renderMs} fcpMs=${paint.fcpMs} maxFrameGapMs=${Math.round(navProbe.maxGap)} framesOver200=${navProbe.framesOver200}/${navProbe.totalFrames} burstChip=${burstChip} consoleErrors=${consoleErrors.length} [${baselineNote}]`,
 	);
 	console.log(JSON.stringify(report));
 
@@ -226,7 +332,7 @@ async function main() {
 		.deleteMany({ where: { id: { startsWith: NS_PREFIX } } })
 		.catch(() => {});
 	await prisma.$disconnect();
-	process.exit(0);
+	process.exit(pass ? 0 : 1);
 }
 
 main().catch(async (err) => {
