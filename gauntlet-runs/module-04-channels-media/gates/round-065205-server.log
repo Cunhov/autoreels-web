@@ -1,0 +1,26 @@
+▲ Next.js 16.1.6
+- Local:         http://127.0.0.1:64171
+- Network:       http://127.0.0.1:64171
+
+✓ Starting...
+✓ Ready in 55ms
+[video/trim] error: Error: ffprobe failed: Command failed: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa29038000] moov atom not found
+/Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4: Invalid data found when processing input
+
+    at a (.next/server/chunks/[root-of-the-server]__63bd7390._.js:1:3219)
+    at async j (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:6180)
+    at async u (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:9805)
+    at async l (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:10846)
+    at async Module.O (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:11924)
+[api-error] Error: ffprobe failed: Command failed: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0xa29038000] moov atom not found
+/Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4: Invalid data found when processing input
+
+    at a (.next/server/chunks/[root-of-the-server]__63bd7390._.js:1:3219)
+    at async j (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:6180)
+    at async u (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:9805)
+    at async l (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:10846)
+    at async Module.O (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:11924)
+[auth] Invalid auth configuration: ADMIN_EMAIL and ADMIN_PASSWORD must be set in environment variables.
+[auth] Invalid auth configuration: ADMIN_EMAIL and ADMIN_PASSWORD must be set in environment variables.

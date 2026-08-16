@@ -1,0 +1,2 @@
+{"ts":1786874526408,"method":"GET","url":"https://graph.instagram.com/v24.0/cnt-xbg?fields=status_code&access_token=IGGauntletToken","body":"","status":200,"kind":"mock"}
+{"ts":1786874526409,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-p12b/media_publish","body":"creation_id=cnt-xbg&access_token=IGGauntletToken","status":200,"kind":"mock"}

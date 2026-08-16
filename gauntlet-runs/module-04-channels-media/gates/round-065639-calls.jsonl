@@ -1,0 +1,4 @@
+{"ts":1786874190328,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-media-1?fields=timestamp,caption,media_type,permalink&access_token=IGInsightsToken","body":"","status":404,"kind":"unmatched"}
+{"ts":1786874190329,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-media-1/insights?metric=impressions,reach,saved,plays&access_token=IGInsightsToken","body":"","status":404,"kind":"unmatched"}
+{"ts":1786874190329,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-media-1/insights?metric=impressions,reach,plays&access_token=IGInsightsToken","body":"","status":404,"kind":"unmatched"}
+{"ts":1786874190329,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-media-1/insights?metric=impressions,plays&access_token=IGInsightsToken","body":"","status":404,"kind":"unmatched"}

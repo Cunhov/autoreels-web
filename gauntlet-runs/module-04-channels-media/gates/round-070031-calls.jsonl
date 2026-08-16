@@ -1,0 +1,4 @@
+{"ts":1786874422033,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-media-1?fields=timestamp,caption,media_type,permalink&access_token=IGInsightsToken","body":"","status":200,"kind":"mock"}
+{"ts":1786874422034,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-media-1/insights?metric=impressions,reach,saved,plays&access_token=IGInsightsToken","body":"","status":200,"kind":"mock"}
+{"ts":1786874422034,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-media-1/insights?metric=impressions,reach,plays&access_token=IGInsightsToken","body":"","status":200,"kind":"mock"}
+{"ts":1786874422034,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-media-1/insights?metric=impressions,plays&access_token=IGInsightsToken","body":"","status":200,"kind":"mock"}

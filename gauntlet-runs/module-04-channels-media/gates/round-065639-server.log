@@ -1,0 +1,74 @@
+▲ Next.js 16.1.6
+- Local:         http://127.0.0.1:64251
+- Network:       http://127.0.0.1:64251
+
+✓ Starting...
+✓ Ready in 52ms
+[api-error] Error: UNMATCHED_MOCK host=graph.instagram.com url=https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=IGRevokableToken
+    at m (.next/server/chunks/[root-of-the-server]__a3c8f75e._.js:1:5799)
+    at async I (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:8154)
+    at async c (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:11643)
+    at async l (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:12684)
+    at async Module.b (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:13762)
+[api-error] Error: UNMATCHED_MOCK host=graph.instagram.com url=https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=IGRevokedToken
+    at m (.next/server/chunks/[root-of-the-server]__a3c8f75e._.js:1:5799)
+    at async I (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:8154)
+    at async c (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:11643)
+    at async l (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:12684)
+    at async Module.b (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:13762)
+[api-error] Error: UNMATCHED_MOCK host=graph.instagram.com url=https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=IGConcurrentStart
+    at m (.next/server/chunks/[root-of-the-server]__a3c8f75e._.js:1:5799)
+    at async I (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:8154)
+    at async c (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:11643)
+    at async l (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:12684)
+    at async Module.b (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:13762)
+[api-error] Error: UNMATCHED_MOCK host=graph.instagram.com url=https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=IGConcurrentStart
+    at m (.next/server/chunks/[root-of-the-server]__a3c8f75e._.js:1:5799)
+    at async I (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:8154)
+    at async c (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:11643)
+    at async l (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:12684)
+    at async Module.b (.next/server/chunks/[root-of-the-server]__5e09c792._.js:1:13762)
+[restore] integrity check failed: SqliteError: file is not a database
+    at o (.next/server/chunks/[root-of-the-server]__71f12116._.js:1:3890)
+    at async b (.next/server/chunks/[root-of-the-server]__d1e4c055._.js:1:5222)
+    at async u (.next/server/chunks/[root-of-the-server]__d1e4c055._.js:1:8540)
+    at async l (.next/server/chunks/[root-of-the-server]__d1e4c055._.js:1:9581)
+    at async Module.T (.next/server/chunks/[root-of-the-server]__d1e4c055._.js:1:10659) {
+  code: 'SQLITE_NOTADB'
+}
+[video/trim] error: Error: ffprobe failed: Command failed: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9d7058000] moov atom not found
+/Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4: Invalid data found when processing input
+
+    at a (.next/server/chunks/[root-of-the-server]__63bd7390._.js:1:3219)
+    at async j (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:6180)
+    at async u (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:9805)
+    at async l (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:10846)
+    at async Module.O (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:11924)
+[api-error] Error: ffprobe failed: Command failed: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0x9d7058000] moov atom not found
+/Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4: Invalid data found when processing input
+
+    at a (.next/server/chunks/[root-of-the-server]__63bd7390._.js:1:3219)
+    at async j (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:6180)
+    at async u (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:9805)
+    at async l (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:10846)
+    at async Module.O (.next/server/chunks/[root-of-the-server]__878aa1f2._.js:1:11924)
+[video/thumbnail] error: Error: ffprobe failed: Command failed: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb40c60000] moov atom not found
+/Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4: Invalid data found when processing input
+
+    at a (.next/server/chunks/[root-of-the-server]__63bd7390._.js:1:3219)
+    at async j (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:6185)
+    at async u (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:9666)
+    at async l (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:10707)
+    at async Module.O (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:11785)
+[api-error] Error: ffprobe failed: Command failed: ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4
+[mov,mp4,m4a,3gp,3g2,mj2 @ 0xb40c60000] moov atom not found
+/Users/bestoptionnotebook/Documents/autoreels-web/.next/standalone/data/uploads/admin/gauntlet-mod4/corrupt.mp4: Invalid data found when processing input
+
+    at a (.next/server/chunks/[root-of-the-server]__63bd7390._.js:1:3219)
+    at async j (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:6185)
+    at async u (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:9666)
+    at async l (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:10707)
+    at async Module.O (.next/server/chunks/[root-of-the-server]__eb3e9d4d._.js:1:11785)

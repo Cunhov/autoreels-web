@@ -1,0 +1,60 @@
+# Publisher baseline — 2026-08-16T10:02:06Z
+
+Mode: prod | Commit: 221d5ac
+Evidence dir: /var/folders/28/xppyht0s0w9cmfv134s0zxcm0000gn/T//publisher-gauntlet.jqakiu
+
+## Summary
+
+```
+SCENARIO P1: PASS — a=pending b=failed/Processing Timeout c=failed/Processing Timeout cron=200 timeout=undefined
+  P2a: status=published media_id=media-ok published=1 → ok
+  P2b: status=published publish_calls=1 published=1 → ok
+  P2c: status=published publish_calls=1 published=1 → ok
+SCENARIO P2: PASS — a=true b=true c=true
+SCENARIO P3: PASS — child_create_calls_total=4 (t1=3+t2=1; bar: 4 = 2 ok + 1 failed attempt + 1 retry of the missing child) uniqueStored=3 after1=pending/attempts=1 final=published
+SCENARIO P4: PASS — t1: p1=ready_to_publish/att=1 p2=ready_to_publish/att=0 429calls=1 | t2: p1=published p2=published okCalls=2
+SCENARIO P5: PASS — status=failed/Publishing Failed publish_calls=1 notify=1
+SCENARIO P6: PASS — status=failed attempts=5 500_calls=5 (budget finite)
+SCENARIO P7: PASS — chan: t1=published/ready_to_publish->published okCalls=2 | global: t1=published/ready_to_publish->published
+SCENARIO P8: PASS — post=failed channel=inactive/expires=true refresh_calls=1 ChannelRefresh_lines=1
+  P9a: t1_elapsed=10031ms published_t1=5 oldest5=true → ok
+  P9a(2): published_all=10 ok_publish_calls(all)=10 → ok
+  P9b: elapsed=46012ms timeout=true slow=processing_upload queued=processing → ok
+  P9b(2 recovery): queued=pending → ok
+SCENARIO P9: PASS — a(ordem+bounded)=true a2(exactly-once)=true b(budget)=true b2(recovery)=true
+SCENARIO P10: PASS — skipped=1/2 winner_published=2 db_published=2
+SCENARIO P11: PASS — status=failed/Missing Media notify=1
+SCENARIO P12: PASS — a(reconcile): childCreates=1 groupCreates=1 mid=processing_upload/cnt-xag final=published stored=3 | b(guard): creations=0/0 mid=processing_upload/cnt-xbg final=published publish=1
+
+=== SUMMARY ===
+P1: PASS — a=pending b=failed/Processing Timeout c=failed/Processing Timeout cron=200 timeout=undefined
+P2: PASS — a=true b=true c=true
+P3: PASS — child_create_calls_total=4 (t1=3+t2=1; bar: 4 = 2 ok + 1 failed attempt + 1 retry of the missing child) uniqueStored=3 after1=pending/attempts=1 final=published
+P4: PASS — t1: p1=ready_to_publish/att=1 p2=ready_to_publish/att=0 429calls=1 | t2: p1=published p2=published okCalls=2
+P5: PASS — status=failed/Publishing Failed publish_calls=1 notify=1
+P6: PASS — status=failed attempts=5 500_calls=5 (budget finite)
+P7: PASS — chan: t1=published/ready_to_publish->published okCalls=2 | global: t1=published/ready_to_publish->published
+P8: PASS — post=failed channel=inactive/expires=true refresh_calls=1 ChannelRefresh_lines=1
+P9: PASS — a(ordem+bounded)=true a2(exactly-once)=true b(budget)=true b2(recovery)=true
+P10: PASS — skipped=1/2 winner_published=2 db_published=2
+P11: PASS — status=failed/Missing Media notify=1
+P12: PASS — a(reconcile): childCreates=1 groupCreates=1 mid=processing_upload/cnt-xag final=published stored=3 | b(guard): creations=0/0 mid=processing_upload/cnt-xbg final=published publish=1
+
+TOTAL: 12/12 pass
+server log crash-signal lines: 0
+
+server-log crash-signal lines: 0
+```
+
+## server.log greps
+
+- ENOENT: 0
+- Unhandled/TypeError: 0
+- '[ChannelRefresh]' lines: 1
+- 'UNMATCHED_MOCK' (accidental real-IG calls): 0
+
+## server.log (matching error lines, first 60)
+
+```
+[ChannelRefresh] chan-p8: Error validating access token: Session key is malformed because of invalid user id. — access token rejected; channel deactivated (reconnect it)
+```

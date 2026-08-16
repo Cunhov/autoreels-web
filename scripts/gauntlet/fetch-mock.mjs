@@ -40,6 +40,7 @@ const CALLS_FILE = process.env.IG_MOCK_CALLS;
 const MOCK_HOSTS = new Set([
 	"graph.instagram.com",
 	"graph.facebook.com",
+	"api.instagram.com",
 	"mock-webhook.invalid",
 ]);
 
