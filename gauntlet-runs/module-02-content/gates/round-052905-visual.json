@@ -1,0 +1,15 @@
+{
+  "screenshots": [
+    "empty",
+    "grid",
+    "select",
+    "mobile"
+  ],
+  "consoleErrors": [],
+  "pageErrors": [
+    "TypeError: Cannot read properties of null (reading 'appendChild')",
+    "TypeError: Cannot read properties of null (reading 'appendChild')",
+    "TypeError: Cannot read properties of null (reading 'appendChild')"
+  ],
+  "mobileHorizontalOverflowPx": 226
+}

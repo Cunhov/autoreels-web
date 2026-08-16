@@ -1,0 +1,85 @@
+▲ Next.js 16.1.6
+- Local:         http://127.0.0.1:63269
+- Network:       http://127.0.0.1:63269
+
+✓ Starting...
+✓ Ready in 57ms
+prisma:error 
+Invalid `prisma.contentItem.create()` invocation:
+
+
+Foreign key constraint violated on the foreign key
+Create content item error: Error [PrismaClientKnownRequestError]: 
+Invalid `prisma.contentItem.create()` invocation:
+
+
+Foreign key constraint violated on the foreign key
+    at async c (.next/server/chunks/[root-of-the-server]__fe82538b._.js:1:7967)
+    at async u (.next/server/chunks/[root-of-the-server]__4948fa88._.js:1:10387) {
+  code: 'P2003',
+  meta: [Object],
+  clientVersion: '7.4.2'
+}
+[api-error] Error [PrismaClientKnownRequestError]: 
+Invalid `prisma.contentItem.create()` invocation:
+
+
+Foreign key constraint violated on the foreign key
+    at async c (.next/server/chunks/[root-of-the-server]__fe82538b._.js:1:7967)
+    at async u (.next/server/chunks/[root-of-the-server]__4948fa88._.js:1:10387) {
+  code: 'P2003',
+  meta: [Object],
+  clientVersion: '7.4.2'
+}
+prisma:error 
+Invalid `prisma.contentItem.create()` invocation:
+
+
+Foreign key constraint violated on the foreign key
+Create content item error: Error [PrismaClientKnownRequestError]: 
+Invalid `prisma.contentItem.create()` invocation:
+
+
+Foreign key constraint violated on the foreign key
+    at async c (.next/server/chunks/[root-of-the-server]__fe82538b._.js:1:7967)
+    at async u (.next/server/chunks/[root-of-the-server]__4948fa88._.js:1:10387) {
+  code: 'P2003',
+  meta: [Object],
+  clientVersion: '7.4.2'
+}
+[api-error] Error [PrismaClientKnownRequestError]: 
+Invalid `prisma.contentItem.create()` invocation:
+
+
+Foreign key constraint violated on the foreign key
+    at async c (.next/server/chunks/[root-of-the-server]__fe82538b._.js:1:7967)
+    at async u (.next/server/chunks/[root-of-the-server]__4948fa88._.js:1:10387) {
+  code: 'P2003',
+  meta: [Object],
+  clientVersion: '7.4.2'
+}
+prisma:error 
+Invalid `prisma.contentItem.create()` invocation:
+
+
+Foreign key constraint violated on the foreign key
+Finalizing upload error: Error [PrismaClientKnownRequestError]: 
+Invalid `prisma.contentItem.create()` invocation:
+
+
+Foreign key constraint violated on the foreign key
+    at ignore-listed frames {
+  code: 'P2003',
+  meta: [Object],
+  clientVersion: '7.4.2'
+}
+[api-error] Error [PrismaClientKnownRequestError]: 
+Invalid `prisma.contentItem.create()` invocation:
+
+
+Foreign key constraint violated on the foreign key
+    at ignore-listed frames {
+  code: 'P2003',
+  meta: [Object],
+  clientVersion: '7.4.2'
+}
