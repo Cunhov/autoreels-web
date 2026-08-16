@@ -695,7 +695,10 @@ async function scenarioL5() {
 		.catch(() => {});
 	rmFile(f1);
 
-	// (b) upload-finalize dedupe — the REAL "second updates first" contract.
+	// (b) upload-finalize SAME-NAME contract (user decision 2026-08): a second
+	// upload with the same name must be RENAMED ("l5-dup (1).mp4") and saved —
+	// both files kept. The old dedupe-by-name ("second updates first") silently
+	// dropped the first file's DB record.
 	const partBase = `${NS}/l5-dup.mp4`;
 	writeSeedFile(`${partBase}.part.0`, Buffer.alloc(300, 5));
 	writeSeedFile(`${partBase}.part.1`, Buffer.alloc(300, 6));
@@ -718,30 +721,38 @@ async function scenarioL5() {
 		body: mkForm(),
 	});
 	const finalRows = await prisma.contentItem.findMany({
-		where: { user_id: "admin", name: "l5-dup.mp4", parent_id: null },
+		where: {
+			user_id: "admin",
+			name: { startsWith: "l5-dup" },
+			parent_id: null,
+		},
 	});
 	const id1 = c1.json?.item?.id;
 	const id2 = c2.json?.item?.id;
-	let finalFileOk = false;
-	if (finalRows.length === 1 && finalRows[0].url) {
-		const rel = finalRows[0].url.replace("/api/file/", "");
-		finalFileOk =
+	const names = finalRows.map((r) => r.name).sort();
+	const bothFilesOk = finalRows.every((r) => {
+		if (!r.url) return false;
+		const rel = r.url.replace("/api/file/", "");
+		return (
 			existsSync(join(UPLOADS_DIR, rel)) &&
-			statSync(join(UPLOADS_DIR, rel)).size === declaredSize;
-	}
+			statSync(join(UPLOADS_DIR, rel)).size === declaredSize
+		);
+	});
 	const pass =
 		c1.status === 200 &&
 		c2.status === 200 &&
-		id1 === id2 &&
-		finalRows.length === 1 &&
-		finalFileOk;
+		id1 !== id2 &&
+		finalRows.length === 2 &&
+		names[0] === "l5-dup (1).mp4" &&
+		names[1] === "l5-dup.mp4" &&
+		bothFilesOk;
 	record(
 		"L5b",
 		Boolean(pass),
-		`upload-finalize dedupe: c1=${c1.status} c2=${c2.status} sameId=${id1 === id2} rows=${finalRows.length} finalFileOk=${finalFileOk} (declaredSize=${declaredSize})`,
-		{ id1, id2, rows: finalRows.length, finalFileOk },
+		`upload-finalize rename-on-conflict: c1=${c1.status} c2=${c2.status} distinctIds=${id1 !== id2} rows=${finalRows.length} names=${names.join(",")} bothFilesOk=${bothFilesOk} (declaredSize=${declaredSize})`,
+		{ id1, id2, rows: finalRows.length, names, bothFilesOk },
 	);
-	if (finalRows[0]?.path) rmFile(finalRows[0].path);
+	for (const r of finalRows) if (r.path) rmFile(r.path);
 	await prisma.contentItem
 		.deleteMany({ where: { id: { in: finalRows.map((r) => r.id) } } })
 		.catch(() => {});

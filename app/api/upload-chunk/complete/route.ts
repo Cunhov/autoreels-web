@@ -262,7 +262,12 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Quota exceeded (upload limit reached)" }, { status: 413 });
         }
 
-        // ── Dedupe / create the ContentItem ─────────────────────────────────────
+        // ── Create the ContentItem: same-name files are RENAMED, never replaced ──
+        // Product contract (user decision): uploading "video.mp4" when a
+        // "video.mp4" already exists in the same folder must keep BOTH files —
+        // the new upload is stored as "video (1).mp4" (then (2), (3), ...).
+        // The previous dedupe-by-name behavior updated the existing row, which
+        // silently dropped the earlier file's DB record.
         const finalUrl = `/api/file/${finalRelativePath}`;
         const data = {
             size: actualSize,
@@ -276,29 +281,34 @@ export async function POST(req: Request) {
             ...(caption ? { caption } : {}),
         };
 
-        const existingItem = await prisma.contentItem.findFirst({
-            where: {
+        const dotIndex = safeFilename.lastIndexOf(".");
+        const nameBase = dotIndex > 0 ? safeFilename.slice(0, dotIndex) : safeFilename;
+        const nameExt = dotIndex > 0 ? safeFilename.slice(dotIndex) : "";
+
+        let finalName = safeFilename;
+        for (let attempt = 1; attempt <= 999; attempt++) {
+            const clash = await prisma.contentItem.findFirst({
+                where: {
+                    user_id: userId,
+                    name: finalName,
+                    ...(parentId ? { parent_id: parentId } : { parent_id: null }),
+                },
+                select: { id: true },
+            });
+            if (!clash) break;
+            finalName = `${nameBase} (${attempt})${nameExt}`;
+            if (attempt === 999) {
+                return NextResponse.json({ error: "Too many files with the same name" }, { status: 409 });
+            }
+        }
+
+        const savedItem = await prisma.contentItem.create({
+            data: {
                 user_id: userId,
-                name: safeFilename,
-                ...(parentId ? { parent_id: parentId } : { parent_id: null }),
+                name: finalName,
+                ...data,
             },
         });
-
-        let savedItem;
-        if (existingItem) {
-            savedItem = await prisma.contentItem.update({
-                where: { id: existingItem.id },
-                data,
-            });
-        } else {
-            savedItem = await prisma.contentItem.create({
-                data: {
-                    user_id: userId,
-                    name: safeFilename,
-                    ...data,
-                },
-            });
-        }
 
         // The finalize dir and any straggler parts are removed in `finally`
         // (the lock guarantees no new parts can appear while we still hold it).

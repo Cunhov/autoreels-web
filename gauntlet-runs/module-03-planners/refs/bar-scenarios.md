@@ -18,6 +18,12 @@ Pass: each gate returns the exact skip code; zero posts created when skipped; `l
 
 ## PL3 — config edge cases fail cleanly
 
+PL3-hashtags (user-reported bug fixed 2026-08-16): `{hashtags}` resolves to
+`#tag1 #tag2` from the selected content's tags (ContentItem.tags JSON array) —
+was hardcoded empty; rotation `off` + templates still uses the base caption;
+wizard auto-switches rotation to `sequential` when the user types a template
+(was silently ignored with rotation off).
+
 Seed planners with: invalid frequency value (0/negative/garbage), missing channels, invalid JSON config, unknown template placeholders.
 Pass: each returns skipped with a specific code (`invalid_config` / `no_channels` / `resolution_failed`); no exception escapes (no 500 in the cron run); zero posts; `last_run` untouched.
 

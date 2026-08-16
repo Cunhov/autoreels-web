@@ -44,20 +44,22 @@ nested count; the delete response returns the same count; the cascade removes
 all nested rows and their disk files (orphan scan == 0); the client confirm
 renders `Delete N items and M nested contents?` only when `descendants > 0`.
 
-## L5 — duplicate-name semantics (REAL contract, calibrated after round-01 baseline)
+## L5 — duplicate-name semantics (REAL contract, recalibrated 2026-08-16 by user decision)
 
-The dedupe-by-name contract (second upload updates the first item) lives in
-`/api/upload-chunk/complete` (upload-finalize), NOT in the raw
-`content-items` POST. The POST layer is a raw create and may produce two rows;
-that is by design (the library UI reaches it only through finalize, which
-dedupes). Two sub-scenarios prove the real contract:
+**Same-name uploads are RENAMED, never replaced** (user decision): a second
+`/api/upload-chunk/complete` with the same name+parent creates a NEW row named
+`"file (1).mp4"` (then `(2)`, `(3)`...) — both files are kept. The old
+dedupe-by-name behavior (second upload updates the first row) was removed: it
+silently dropped the earlier file's DB record. The raw `content-items` POST
+stays a raw create (may produce two rows — by design). Two sub-scenarios prove
+the real contract:
 
 - L5a (raw create): two POSTs to `content-items` with the same name+parent →
   both 2xx, exactly 2 rows, both files intact on disk (no corruption). This is
 the documented deviation from the original bar letter.
-- L5b (dedupe proof): two `/api/upload-chunk/complete` calls for the same
-  name+parent → same item id returned twice, exactly 1 row, final file on disk
-  matches the declared size (second updates first, no corruption).
+- L5b (rename proof): two `/api/upload-chunk/complete` calls for the same
+  name+parent → two DISTINCT item ids, rows named `file.mp4` and `file (1).mp4`,
+  both files on disk intact (size matches declared), zero corruption.
 
 ## L6 — concurrent mutations converge (no lost update / no 500)
 

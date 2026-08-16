@@ -810,7 +810,17 @@ export default function PlannerWizard({ isOpen, onClose, onSuccess, initialData 
                                     </div>
                                     <textarea
                                         value={captionTemplates}
-                                        onChange={(e) => setCaptionTemplates(e.target.value)}
+                                        onChange={(e) => {
+                                            setCaptionTemplates(e.target.value);
+                                            // Templates with rotation "off" are silently ignored by
+                                            // the runtime (bug report: "templates don't work"). When
+                                            // the user types a template, default the rotation to
+                                            // sequential so it actually applies — they can still pick
+                                            // random or off from the selector.
+                                            if (e.target.value.trim() && captionRotation === "off") {
+                                                setCaptionRotation("sequential");
+                                            }
+                                        }}
                                         className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-20 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
                                         placeholder={'One template per line\nTemplate 1\nTemplate 2'}
                                     />

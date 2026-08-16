@@ -36,6 +36,16 @@ const resultsTotal: {
 	line: string;
 }[] = [];
 
+/** Safe state parse for harness assertions — never throws. */
+function safeState(raw: string | null | undefined): Record<string, unknown> {
+	try {
+		const parsed = JSON.parse(raw || "{}") as unknown;
+		return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+	} catch {
+		return {};
+	}
+}
+
 function record(label: string, pass: boolean, line: string) {
 	resultsTotal.push({ scenario: label, pass, line });
 	console.log(`SCENARIO ${label}: ${pass ? "PASS" : "FAIL"} — ${line}`);
@@ -419,10 +429,83 @@ async function scenarioPL3() {
 		Boolean(pass),
 		`arr=${rArr.skipped} freq0=${rFreq0.skipped} noCh=${rNoCh.skipped} res=${rRes.skipped} tpl=ok/caption="${tplCaption.slice(0, 40)}" (unknown vars → "", no literal leak)`,
 	);
+
+	// {hashtags} must resolve from the selected content's tags (user-reported
+	// bug: was hardcoded "" — tags never appeared in captions).
+	const tagsItem = await prisma.contentItem.create({
+		data: {
+			id: "pl3-tags-item",
+			user_id: "admin",
+			name: "pl3-tags.mp4",
+			type: "video",
+			url: "/api/file/admin/pl3-tags.mp4",
+			tags: JSON.stringify(["fitness", "dicas", "#marketing"]),
+		},
+	});
+	await seedPlanner({
+		id: "pl3-hash",
+		config: makeConfig({
+			content: [
+				{
+					type: "library",
+					id: tagsItem.id,
+					url: "https://example.com/pl3-tags.mp4",
+					media_type: "REELS",
+				},
+			],
+			caption_templates: ["{hashtags} | {date}"],
+			caption_rotation: "sequential",
+		}),
+		channelIds: ["pl3-c"],
+	});
+	const rHash = await runPlannerOnce(
+		prisma,
+		await getPlanner("pl3-hash"),
+		new Date(),
+	);
+	const hashPost = rHash.ok
+		? await prisma.post.findFirst({ where: { planner_id: "pl3-hash" } })
+		: null;
+	const hashCaption = hashPost?.caption || "";
+	const hashOk =
+		rHash.ok &&
+		hashCaption.includes("#fitness") &&
+		hashCaption.includes("#dicas") &&
+		hashCaption.includes("#marketing") &&
+		!hashCaption.includes("{hashtags}") &&
+		!hashCaption.includes("{") &&
+		/\d{2}\/\d{2}\/\d{4}/.test(hashCaption);
+
+	// rotation "off" + templates → base caption (runtime semantics preserved).
+	await seedPlanner({
+		id: "pl3-off",
+		config: makeConfig({
+			caption_templates: ["OFF-template {hashtags}"],
+			caption_rotation: "off",
+		}),
+		channelIds: ["pl3-c"],
+	});
+	const rOff = await runPlannerOnce(
+		prisma,
+		await getPlanner("pl3-off"),
+		new Date(),
+	);
+	const offPost = rOff.ok
+		? await prisma.post.findFirst({ where: { planner_id: "pl3-off" } })
+		: null;
+	const offOk = rOff.ok && offPost?.caption === "base caption";
+	record(
+		"PL3-hashtags",
+		Boolean(hashOk && offOk),
+		`hashtags="${hashCaption.slice(0, 50)}" offRotationCaption="${offPost?.caption || ""}" (tags → #tags; rotation off keeps base caption)`,
+	);
 	await cleanupScenario({
-		planners: ["pl3-arr", "pl3-freq0", "pl3-noch", "pl3-res", "pl3-tpl"],
+		planners: ["pl3-arr", "pl3-freq0", "pl3-noch", "pl3-res", "pl3-tpl", "pl3-hash", "pl3-off"],
 		channels: ["pl3-c"],
 	});
+	await prisma.contentItem
+		.deleteMany({ where: { id: "pl3-tags-item" } })
+		.catch(() => {});
 }
 
 // ── PL4: template rotation + exhaustion ─────────────────────────────────────
@@ -448,7 +531,7 @@ async function scenarioPL4() {
 		new Date(),
 	);
 	const postA = await prisma.post.findFirst({ where: { planner_id: "pl4-a" } });
-	const stateA = JSON.parse((await getPlanner("pl4-a")).state || "{}");
+	const stateA = safeState((await getPlanner("pl4-a")).state);
 
 	// (b) index 3 (exhausted) → WRAPS to template A (finding), state → 4
 	await seedPlanner({
@@ -463,7 +546,7 @@ async function scenarioPL4() {
 		new Date(),
 	);
 	const postB = await prisma.post.findFirst({ where: { planner_id: "pl4-b" } });
-	const stateB = JSON.parse((await getPlanner("pl4-b")).state || "{}");
+	const stateB = safeState((await getPlanner("pl4-b")).state);
 
 	// (c) 2 channels, index 1 → posts use templates[1] and [2], state → 3
 	await seedPlanner({
@@ -481,7 +564,7 @@ async function scenarioPL4() {
 		where: { planner_id: "pl4-c" },
 		orderBy: { created_at: "asc" },
 	});
-	const stateC = JSON.parse((await getPlanner("pl4-c")).state || "{}");
+	const stateC = safeState((await getPlanner("pl4-c")).state);
 
 	const pass =
 		ra.ok &&
@@ -531,7 +614,7 @@ async function scenarioPL5() {
 	});
 	const r = await runPlannerOnce(prisma, await getPlanner("pl5"), new Date());
 	const posts = await prisma.post.findMany({ where: { planner_id: "pl5" } });
-	const state = JSON.parse((await getPlanner("pl5")).state || "{}");
+	const state = safeState((await getPlanner("pl5")).state);
 	const postedChannelIds = posts.map((p) => p.channel_id);
 
 	// all-blocked case

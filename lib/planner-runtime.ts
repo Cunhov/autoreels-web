@@ -223,15 +223,17 @@ export async function resolveCaptionTemplateVars(
 	let title = selectedContent?.title_fallback || "";
 	let itemCaption =
 		selectedContent?.caption_fallback || selectedContent?.caption || "";
+	let libTags: string | null | undefined = (selectedContent as { tags?: string | null } | null)?.tags;
 	const libId = selectedContent?.id || selectedContent?.folder_id;
 	if (libId) {
 		const libItem = await prisma.contentItem.findFirst({
 			where: { id: libId, user_id: planner.user_id },
-			select: { title: true, caption: true },
+			select: { title: true, caption: true, tags: true },
 		});
 		if (libItem) {
 			title = libItem.title || title;
 			itemCaption = libItem.caption || itemCaption;
+			libTags = libItem.tags;
 		}
 	}
 	const tz = getPlannerTimezone(config);
@@ -241,12 +243,33 @@ export async function resolveCaptionTemplateVars(
 		month: "2-digit",
 		year: "numeric",
 	}).format(now);
+	// {hashtags}: resolved from the selected content's tags (ContentItem.tags,
+	// a JSON array of tag strings) formatted as "#tag1 #tag2". Was hardcoded to
+	// "" — tags never appeared in captions despite the wizard advertising the
+	// variable (user-reported bug). Non-JSON/garbage tag strings resolve to "".
+	let hashtags = "";
+	const rawTags = (libTags || "") as string;
+	if (rawTags) {
+		let tagsList: string[] = [];
+		try {
+			const parsed = JSON.parse(rawTags) as unknown;
+			if (Array.isArray(parsed)) {
+				tagsList = parsed.filter((t): t is string => typeof t === "string");
+			}
+		} catch {
+			/* malformed tags JSON — resolve empty */
+		}
+		hashtags = tagsList
+			.map((t) => `#${t.trim().replace(/^#/, "")}`)
+			.filter((t) => t.length > 1)
+			.join(" ");
+	}
 	return {
 		"{post_title}": title || "",
 		"{post_caption}": itemCaption || "",
 		"{date}": dateStr,
 		"{channel_name}": channelName || "",
-		"{hashtags}": "",
+		"{hashtags}": hashtags,
 	};
 }
 
