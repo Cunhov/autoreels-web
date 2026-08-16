@@ -23,10 +23,18 @@ export async function GET(
     if (!channel) {
         return NextResponse.json({ error: "Channel not found" }, { status: 404 });
     }
+    // A channel without a usable token is a user-side problem (connect it), not
+    // a server fault — 4xx with an actionable message (mirrors the refresh route).
+    if (!channel.access_token) {
+        return NextResponse.json({ error: "Channel has no token." }, { status: 400 });
+    }
 
     try {
         const accessToken = await resolveAccessToken(channel.access_token);
-        if (!accessToken) throw new Error("Could not resolve access token");
+        if (!accessToken) {
+            // Unresolvable token (e.g. Redis-backed or empty after clean) — user-side.
+            return NextResponse.json({ error: "Could not resolve access token — reconnect the channel." }, { status: 400 });
+        }
 
         // Test against /me or /account_id to verify token validity
         // For Instagram Professional, we test /me or /{account_id}

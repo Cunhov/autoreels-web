@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
     Bell, Clock, Database, HardDrive, RefreshCw, Save, XCircle, CheckCircle2,
     Trash2, RotateCcw
@@ -86,9 +86,13 @@ export default function SettingsPage() {
     const [creatingBackup, setCreatingBackup] = useState(false);
     const [restoringName, setRestoringName] = useState<string | null>(null);
 
+    const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const showToast = useCallback((msg: string, type: 'ok' | 'err' = 'ok') => {
+        // A stale timer from a previous toast would dismiss the NEW one early —
+        // clear it first (found by the module-06 gauntlet, S6).
+        if (toastTimer.current) clearTimeout(toastTimer.current);
         setToast({ msg, type });
-        setTimeout(() => setToast(null), 3000);
+        toastTimer.current = setTimeout(() => setToast(null), 3000);
     }, []);
 
     const loadSettings = useCallback(async () => {
