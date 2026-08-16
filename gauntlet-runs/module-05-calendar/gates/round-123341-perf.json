@@ -1,0 +1,14 @@
+{
+  "workload": {
+    "seeded": 310,
+    "burstDay": 10
+  },
+  "renderMs": 254,
+  "fcpMs": 188,
+  "maxFrameGapMs": 117,
+  "framesOver200ms": 0,
+  "totalFrames": 6,
+  "consoleErrors": [],
+  "burstChipRendered": true,
+  "measuredAt": "2026-08-16T15:33:41.622Z"
+}

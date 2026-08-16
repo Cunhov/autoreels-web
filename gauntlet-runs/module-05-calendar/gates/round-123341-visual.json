@@ -1,0 +1,36 @@
+{
+  "monthName": "August 2026",
+  "c4BadgeOk": true,
+  "modalVisible": true,
+  "modalCaption": true,
+  "plannerNameInModal": true,
+  "weekRenders": true,
+  "navOk": true,
+  "title0": "August 2026",
+  "titleAfterNext": "September 2026",
+  "titleAfterPrev": "August 2026",
+  "tzPlacement": {
+    "localDay": "20",
+    "utcDay": "21",
+    "localCellFound": true,
+    "localCards": 1,
+    "localBadge": "1",
+    "utcCellFound": true,
+    "utcCards": 0,
+    "sampleTimes": [
+      "No Media09:00 AM",
+      "No Media10:00 AM",
+      "No Media11:00 AM",
+      "No Media02:30 PM",
+      "No Media10:00 PM",
+      "No Media09:00 AM",
+      "No Media09:10 AM",
+      "No Media09:20 AM"
+    ]
+  },
+  "tzOk": true,
+  "moreChip": true,
+  "hScroll": 0,
+  "consoleErrors": [],
+  "pageErrors": []
+}
