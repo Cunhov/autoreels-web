@@ -519,6 +519,75 @@ async function scenarioL4() {
 	// bar letter expects whole-batch rejection; reality is permissive — score FAIL
 	// against the bar but record the true behavior in the line.
 
+	// (c2) CASCADE BLAST-RADIUS VISIBILITY (critic gap): bulk-deleting a folder
+	//      must report the nested descendants count — in the read-only preflight
+	//      (feeds the confirm dialog) AND in the delete response (feeds the
+	//      toast) — so nested contents are never wiped silently.
+	const cFolder = await seedItem({
+		name: "l4c-folder",
+		type: "carousel_folder",
+	});
+	const cChild1 = await seedItem({
+		name: "l4c-child-1.png",
+		type: "image",
+		url: `/api/file/${NS}/l4c-child-1.png`,
+		size: 10,
+		parent_id: cFolder.id,
+	});
+	const cChild2 = await seedItem({
+		name: "l4c-child-2.png",
+		type: "image",
+		url: `/api/file/${NS}/l4c-child-2.png`,
+		size: 10,
+		parent_id: cFolder.id,
+	});
+	// Any-depth: a grandchild under child 1 must be counted too.
+	const cGrandchild = await seedItem({
+		name: "l4c-grand.png",
+		type: "image",
+		url: `/api/file/${NS}/l4c-grand.png`,
+		size: 10,
+		parent_id: cChild1.id,
+	});
+	writeSeedFile(`${NS}/l4c-child-1.png`, PNG);
+	writeSeedFile(`${NS}/l4c-child-2.png`, PNG);
+	writeSeedFile(`${NS}/l4c-grand.png`, PNG);
+
+	const cPre = await req("/api/content-items/bulk", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			action: "count_descendants",
+			ids: [cFolder.id],
+		}),
+	});
+	const cDel = await req("/api/content-items/bulk", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ action: "delete", ids: [cFolder.id] }),
+	});
+	const cRemaining = await prisma.contentItem.count({
+		where: {
+			id: { in: [cFolder.id, cChild1.id, cChild2.id, cGrandchild.id] },
+		},
+	});
+	const orphansCascade = await driftOrphans();
+	const delCascadeOk =
+		cPre.status === 200 &&
+		cPre.json?.descendants === 3 &&
+		cDel.status === 200 &&
+		cDel.json?.affected === 1 &&
+		cDel.json?.descendants === 3 &&
+		cRemaining === 0 &&
+		orphansCascade.length === 0;
+	for (const f of [
+		`${NS}/l4c-child-1.png`,
+		`${NS}/l4c-child-2.png`,
+		`${NS}/l4c-grand.png`,
+	]) {
+		rmFile(f);
+	}
+
 	// (d) rename 50 with a duplicated id in the list — no 500, deterministic names
 	const ids50 = [];
 	for (let i = 0; i < 50; i++) {
@@ -549,15 +618,25 @@ async function scenarioL4() {
 		names.size === 50 &&
 		[...names].every((n) => /^l4-renamed_\d{3}$/.test(n));
 
-	const pass = mvOk && badOk && delOk && renOk;
+	const pass = mvOk && badOk && delOk && renOk && delCascadeOk;
 	record(
 		"L4",
 		Boolean(pass),
-		`move=${mv.status}/${movedCount} moveToVideo=${mvBad.status}(bar:400)/unchanged=${movedCountAfterBad} delete+missingId: status=${del.status} affected=${del.json?.affected} remaining=${remaining} orphans=${orphansAfter.length} files=${JSON.stringify(orphansAfter)} (bar: whole-batch reject; code: permissive subset) renameDup=${renamed.status} uniqueNames=${names.size}/50`,
+		`move=${mv.status}/${movedCount} moveToVideo=${mvBad.status}(bar:400)/unchanged=${movedCountAfterBad} delete+missingId: status=${del.status} affected=${del.json?.affected} remaining=${remaining} orphans=${orphansAfter.length} files=${JSON.stringify(orphansAfter)} (bar: whole-batch reject; code: permissive subset) cascade: pre=${cPre.status}/desc=${cPre.json?.descendants} del=${cDel.status}/affected=${cDel.json?.affected}/desc=${cDel.json?.descendants} remaining=${cRemaining} orphans=${orphansCascade.length} renameDup=${renamed.status} uniqueNames=${names.size}/50`,
 		{
 			mv: mv.status,
 			mvBad: mvBad.status,
 			del: { status: del.status, affected: del.json?.affected, remaining },
+			cascade: {
+				pre: { status: cPre.status, descendants: cPre.json?.descendants },
+				del: {
+					status: cDel.status,
+					affected: cDel.json?.affected,
+					descendants: cDel.json?.descendants,
+				},
+				remaining: cRemaining,
+				orphans: orphansCascade.length,
+			},
 			rename: renamed.status,
 			uniqueNames: names.size,
 		},

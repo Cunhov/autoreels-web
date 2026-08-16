@@ -239,6 +239,43 @@ async function main() {
 	screens.select = await page.screenshot();
 	writeFileSync(join(OUT_DIR, "visual-select-baseline.png"), screens.select);
 
+	// (c2) BULK-DELETE CASCADE WARNING (critic gap): with folders in the
+	// selection, the confirm dialog must NAME the nested-contents count before
+	// the user commits. Select all via Ctrl+A (folders are not click-selectable
+	// in manage mode), press Delete, capture window.confirm via the dialog
+	// event, then dismiss (nothing is deleted).
+	let confirmMessage = "";
+	const dialogPromise = new Promise((resolve) => {
+		page.once("dialog", async (dialog) => {
+			confirmMessage = dialog.message();
+			await dialog.dismiss().catch(() => {});
+			resolve(true);
+		});
+	});
+	await page.goto(`${BASE}/content`, { waitUntil: "domcontentloaded" });
+	await page
+		.getByText("Visual Video", { exact: false })
+		.first()
+		.waitFor({ timeout: 20_000 });
+	await sleep(500);
+	await page.keyboard.press("Control+a");
+	await sleep(500);
+	await page.keyboard.press("Delete");
+	await Promise.race([
+		dialogPromise,
+		new Promise((_, reject) =>
+			setTimeout(
+				() => reject(new Error("confirm dialog never appeared")),
+				15_000,
+			),
+		),
+	]);
+	const confirmHasNested =
+		/Delete \d+ items and \d+ nested contents\?/.test(confirmMessage);
+	console.log(
+		`  bulk-delete confirm: "${confirmMessage}" → nestedWarning=${confirmHasNested}`,
+	);
+
 	// (d) MOBILE 390x844
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(`${BASE}/content`, { waitUntil: "domcontentloaded" });
@@ -267,15 +304,20 @@ async function main() {
 		consoleErrors,
 		pageErrors,
 		mobileHorizontalOverflowPx: hScroll,
+		bulkDeleteConfirm: confirmMessage,
+		bulkDeleteNestedWarning: confirmHasNested,
 	};
 	writeFileSync(
 		join(OUT_DIR, "visual-report.json"),
 		JSON.stringify(report, null, 2),
 	);
 	const pass =
-		consoleErrors.length === 0 && pageErrors.length === 0 && hScroll <= 2;
+		consoleErrors.length === 0 &&
+		pageErrors.length === 0 &&
+		hScroll <= 2 &&
+		confirmHasNested;
 	console.log(
-		`SCENARIO L7: ${pass ? "PASS" : "FAIL"} — consoleErrors=${consoleErrors.length} pageErrors=${pageErrors.length} mobileHScroll=${hScroll}px screens=${Object.keys(screens).join(",")}`,
+		`SCENARIO L7: ${pass ? "PASS" : "FAIL"} — consoleErrors=${consoleErrors.length} pageErrors=${pageErrors.length} mobileHScroll=${hScroll}px bulkDeleteNestedWarning=${confirmHasNested} screens=${Object.keys(screens).join(",")}`,
 	);
 	if (consoleErrors.length > 0) {
 		console.log("  console errors:");

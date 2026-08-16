@@ -1424,7 +1424,42 @@ export default function ContentLibrary({
 	// Bulk delete handler — uses server-side bulk endpoint
 	const handleBulkDelete = useCallback(async () => {
 		const count = selectAllServer ? totalCount : selectedIds.length;
-		if (!confirm(`Delete ${count} items? This cannot be undone.`)) return;
+		if (count < 1) return;
+
+		// Read-only preflight: ask the server how many NESTED rows the cascade
+		// would remove beyond the direct selection, so the confirm warns about
+		// the folder blast radius BEFORE the user commits (folders hide their
+		// descendants in the UI — a silent wipe is a data-loss surprise).
+		let descendants = 0;
+		try {
+			const preflightBody: {
+				action: string;
+				all?: boolean;
+				filters?: Record<string, string>;
+				ids?: string[];
+			} = { action: "count_descendants" };
+			if (selectAllServer) {
+				preflightBody.all = true;
+				preflightBody.filters = buildFilterParams();
+			} else {
+				preflightBody.ids = selectedIds;
+			}
+			const pre = await fetch("/api/content-items/bulk", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(preflightBody),
+			});
+			if (pre.ok) descendants = (await pre.json())?.descendants || 0;
+		} catch {
+			// Read-only preflight failed — fall back to the plain confirm.
+			descendants = 0;
+		}
+
+		const message =
+			descendants > 0
+				? `Delete ${count} items and ${descendants} nested contents? This cannot be undone.`
+				: `Delete ${count} items? This cannot be undone.`;
+		if (!confirm(message)) return;
 		try {
 			setBulkLoading(true);
 			const body: {
@@ -1447,7 +1482,10 @@ export default function ContentLibrary({
 			if (!res.ok) throw new Error("Bulk delete failed");
 			const result = await res.json();
 			setToast({
-				msg: `Deleted ${result.affected} items`,
+				msg:
+					result.descendants > 0
+						? `Deleted ${result.affected} items and ${result.descendants} nested contents`
+						: `Deleted ${result.affected} items`,
 				type: "success",
 				show: true,
 			});
