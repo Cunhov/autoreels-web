@@ -4,7 +4,7 @@
 #
 #   MODE=prod (default)  next build + standalone server (matches Docker prod).
 #   MODE=dev             next dev fallback (used automatically if build fails).
-#   RUN_DIR=...          where gates/round-00-baseline.md is written (default:
+#   RUN_DIR=...          where gates/round-<timestamp>-baseline.md is written (default:
 #                        <repo>/gauntlet-runs/upload-robustness).
 #
 # Exit 0 only if ALL scenarios pass. Never leaves the repo's uploads dir or
@@ -143,7 +143,7 @@ mkdir -p "$RUN_DIR/gates"
 		"$TMP/server.log" | head -80 || true
 	echo '```'
 } >"$RUN_DIR/gates/round-00-baseline.md"
-cp "$TMP/server.log" "$RUN_DIR/gates/round-00-server.log" 2>/dev/null || true
+cp "$TMP/server.log" "$RUN_DIR/gates/round-$(date +%H%M%S)-server.log" 2>/dev/null || true
 
 echo
 if [ "$RC" -eq 0 ]; then
