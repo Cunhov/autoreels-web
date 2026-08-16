@@ -30,7 +30,7 @@ RUN_DIR=/tmp/my-gates ./scripts/upload-gauntlet/run-tests.sh  # override gates o
 - Requires: repo deps installed, `ffmpeg`/`ffprobe` optional (only adds duration
   probing), a free local port (auto-picked).
 - Runtime ≈ 2–4 minutes (includes `next build` and ~400 MB of local uploads).
-- On completion it writes `gates/round-00-baseline.md` (summary + server-log
+- On completion it writes `gates/round-<HHMMSS>-baseline.md` (summary + server-log
   greps) and `gates/round-00-server.log` (full server stderr/stdout), and prints
   the temp evidence dir path (per-scenario JSON in `out/`).
 - `run-tests.sh` restores the repo state on exit (uploads-dir symlink removed,

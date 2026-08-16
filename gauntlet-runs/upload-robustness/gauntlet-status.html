@@ -15,16 +15,19 @@
 </head>
 <body>
 <h1>Gauntlet — Upload Robustness (autoreels-web)</h1>
-<p class="meta">Bar: refs/bar-scenarios.md (A–E) · refs/diagnosis.md · refs/contract.md · Budget: unlimited — win or user stop</p>
+<p class="meta">Bar: refs/bar-scenarios.md (A–E) + refs/diagnosis.md + refs/contract.md · Budget: unlimited — win or user stop · Status: <span class="pass">WON (FINAL-WIN, critic-certified)</span></p>
 
 <h2>Rounds</h2>
 <table>
-  <tr><th>Round</th><th>Piece</th><th>Verdict</th><th>Gates</th><th>Biggest remaining gap</th></tr>
-  <tr><td>00</td><td>Harness A–E + baseline</td><td class="fail">Baseline: A,B,C,D FAIL / E PASS</td><td>harness reproduces prod failures (18 warnings, 8 ENOENT, 2 spam)</td><td>—</td></tr>
-  <tr><td>01</td><td>Server finalize (lock+concat) · Client (unique path+409) · Token refresh</td><td class="run">in flight</td><td>tsc + lint per worktree; full gates on main after merge</td><td>—</td></tr>
+  <tr><th>Round</th><th>Piece</th><th>Verdict</th><th>Gates</th></tr>
+  <tr><td>00</td><td>Harness A–E + failing baseline</td><td class="fail">A,B,C,D FAIL / E PASS (18 warnings, 8 ENOENT, hash corruption, token spam)</td><td>harness reproduces prod failures (gates/round-00-baseline-FAILING.md)</td></tr>
+  <tr><td>01</td><td>3 builders paralelos: server finalize (lock+consume+pipeline único) · client (paths únicos+409) · token (classificação permanente/transitório)</td><td class="fail">A,B,D,E PASS; C FAIL — 409 loser deletava parts do vencedor no finally</td><td>tsc + lint + merge limpo (4032c1d, 1e3e39c, 4d4ff71)</td></tr>
+  <tr><td>02</td><td>Fix finally-guard (b37df3b) + C reframe C1/C2 (contrato-anchored)</td><td class="pass">ALL PASS (A, B, C1, C2, D, E)</td><td>harness full green; critics: upload WIN / token NOT-WIN (buraco D re-seleção)</td></tr>
+  <tr><td>03</td><td>Fechar gaps: token_expires_at=null em falha permanente + GC de staging (sweepStaleStaging)</td><td class="pass">ALL PASS com seed D endurecido (expiry now+7d)</td><td>tsc + lint + gc-sim 6/6</td></tr>
+  <tr><td>04</td><td>Fix regressão TS5097 (import .ts no gc-sim) + evidência final</td><td class="pass">FINAL-WIN (critic re-verify)</td><td>tsc 0 erros · lint 0 erros · build ok · harness A–E ALL PASS (gates/round-04-FINAL-*), server log: 0 warnings, 0 ENOENT, 1 linha ChannelRefresh terminal</td></tr>
 </table>
 
 <h2>Running cost</h2>
-<p class="meta">Round 00: ~1 workflow run (harness build + baseline). Round 01: 3 parallel builders.</p>
+<p class="meta">5 builder runs + 4 critic/review runs + 1 reconcile + harness runs (4× full prod-mode) — all local, no spend.</p>
 </body>
 </html>

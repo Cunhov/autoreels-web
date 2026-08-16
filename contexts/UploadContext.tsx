@@ -232,6 +232,9 @@ function isImageFile(file: File): boolean {
 }
 
 function validateFile(file: File): { ok: boolean; error?: string } {
+	if (file.size < 1) {
+		return { ok: false, error: "File is empty" };
+	}
 	if (file.size > MAX_FILE_SIZE) {
 		return { ok: false, error: "File too large (max 1GB)" };
 	}

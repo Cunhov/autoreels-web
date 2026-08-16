@@ -1,12 +1,12 @@
-# Round 04 FINAL — all scenarios pass
+# Round 00 baseline — 2026-08-16T06:32:58Z
 
 Mode: prod | Commit: f6299d2
-Evidence dir: /var/folders/28/xppyht0s0w9cmfv134s0zxcm0000gn/T//upload-gauntlet.CvsMCX
+Evidence dir: /var/folders/28/xppyht0s0w9cmfv134s0zxcm0000gn/T//upload-gauntlet.n3zANs
 
 ## Summary
 
 ```
-base=http://127.0.0.1:63006 db=/var/folders/28/xppyht0s0w9cmfv134s0zxcm0000gn/T//upload-gauntlet.CvsMCX/test.db uploads=/var/folders/28/xppyht0s0w9cmfv134s0zxcm0000gn/T//upload-gauntlet.CvsMCX/uploads
+base=http://127.0.0.1:63049 db=/var/folders/28/xppyht0s0w9cmfv134s0zxcm0000gn/T//upload-gauntlet.n3zANs/test.db uploads=/var/folders/28/xppyht0s0w9cmfv134s0zxcm0000gn/T//upload-gauntlet.n3zANs/uploads
 session cookie: next-auth.session-token=…
 SCENARIO A: PASS — 3 files (4/4/20 chunks) finalized, hashes match, 1 item each, no warnings
 SCENARIO B: PASS — completes ok=1/2 items=1 hashOk=true orphanParts=0 enoent=false

@@ -1,4 +1,4 @@
-# Round 04 — FINAL evidence (commit 383dc09)
+# Round 04 — FINAL evidence (commit f6299d2)
 
 - Full harness (prod mode, harder D seed token_expires_at=now+7d): A, B, C1, C2, D, E — ALL PASS.
 - Gates: npx tsc --noEmit = zero errors (regression TS5097 from gc-sim import fixed by revert 383dc09).

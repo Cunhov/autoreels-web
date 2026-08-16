@@ -14,7 +14,7 @@ export function getGraphBaseUrl(token: string) {
 // Messages the Graph API returns for a token that is NOT a valid IG/FB token
 // (the API literally calls it a malformed "session key"), plus revoked/expired
 // tokens. These are permanent: retrying every tick only spams the log.
-const PERMANENT_TOKEN_ERROR_RE = /error validating access token|session key is malformed|invalid oauth 2\.0 access token|session has expired|revoked/i;
+const PERMANENT_TOKEN_ERROR_RE = /error validating access token|session key is malformed|invalid oauth 2\.0 access token|session has expired|session has been invalidated|reauthorization is required|revoked/i;
 // Missing client credentials is a server misconfiguration — every refresh
 // attempt fails identically, so it is also permanent for retry purposes.
 const MISSING_CREDENTIALS_RE = /must be configured to refresh facebook-based tokens/i;
@@ -128,7 +128,12 @@ export function verifyOAuthState(state: string) {
         throw new Error("Invalid OAuth state signature.");
     }
 
-    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { userId: string; ts: number };
+    let parsed: { userId: string; ts: number };
+    try {
+        parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { userId: string; ts: number };
+    } catch {
+        throw new Error("Invalid OAuth state payload.");
+    }
     if (!parsed.userId || Date.now() - parsed.ts > 10 * 60 * 1000) {
         throw new Error("OAuth state expired.");
     }

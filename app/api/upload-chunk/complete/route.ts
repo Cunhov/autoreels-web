@@ -78,7 +78,7 @@ export async function POST(req: Request) {
             : (isVideoExtension(ext) ? "video" : "image");
 
         const sizeDeclared = parseInt(sizeDeclaredRaw || "0");
-        if (Number.isNaN(sizeDeclared) || sizeDeclared < 0) {
+        if (Number.isNaN(sizeDeclared) || sizeDeclared <= 0) {
             return NextResponse.json({ error: "Invalid size" }, { status: 400 });
         }
 
