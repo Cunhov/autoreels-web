@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
     Sliders, Plus, Play, Pause, Trash2, Calendar, Terminal, Eye,
     X, RefreshCw, Zap, CheckCircle2, XCircle, Clock, Instagram, Copy
@@ -162,10 +162,14 @@ export default function PlannersPage() {
     const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
+    const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const showToast = (msg: string, type: 'ok' | 'err' = 'ok') => {
+        // A stale timer from a previous toast would dismiss the NEW one early —
+        // clear it first (same fix as settings/analytics, gauntlet module 06).
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
         setToast({ msg, type });
-        setTimeout(() => setToast(null), 3000);
+        toastTimerRef.current = setTimeout(() => setToast(null), 3000);
     };
 
     useEffect(() => { fetchData(); }, []);
