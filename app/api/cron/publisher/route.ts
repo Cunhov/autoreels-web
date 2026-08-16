@@ -218,7 +218,7 @@ async function isChannelThrottled(channel: { id?: string } | null | undefined, n
 }
 
 /** Insert a planner log entry. */
-async function logPlanner(plannerId: string, message: string, level: 'info' | 'error' = 'info', details: any = {}) {
+async function logPlanner(plannerId: string, message: string, level: 'info' | 'error' = 'info', details: unknown = {}) {
     if (!plannerId || plannerId === 'unknown') return;
     console.log(`[PlannerLog][${level.toUpperCase()}] ${plannerId}: ${message}`, details);
     try {
@@ -240,7 +240,7 @@ async function logPlanner(plannerId: string, message: string, level: 'info' | 'e
 const lastThrottledLogAt = new Map<string, number>();
 const LOG_THROTTLE_MS = 30 * 60 * 1000; // 30 min
 
-async function throttledLog(plannerId: string, message: string, level: 'info' | 'error' = 'info', details: any = {}) {
+async function throttledLog(plannerId: string, message: string, level: 'info' | 'error' = 'info', details: unknown = {}) {
     const key = `${plannerId}:${message}`;
     const last = lastThrottledLogAt.get(key) || 0;
     if (Date.now() - last < LOG_THROTTLE_MS) return;
@@ -293,9 +293,15 @@ async function refreshDueChannelTokens(now: Date, startTime: number, maxExecMs: 
                 const missingCredentials = /must be configured to refresh/i.test(message);
                 await prisma.channel.update({
                     where: { id: channel.id },
+                    // token_expires_at: null on ANY permanent failure — the selection
+                    // query ORs `token_expires_at <= now+14d`, so a channel whose token
+                    // is within 14 days of expiry would otherwise be re-selected EVERY
+                    // tick and spam [ChannelRefresh]. NULL never matches `<=`, and it
+                    // means 'no known expiry — needs manual reconnect'; both reconnect
+                    // paths (OAuth callback, manual refresh) restore it on success.
                     data: missingCredentials
-                        ? { token_refreshed_at: now }
-                        : { status: 'inactive', token_refreshed_at: now },
+                        ? { token_refreshed_at: now, token_expires_at: null }
+                        : { status: 'inactive', token_refreshed_at: now, token_expires_at: null },
                 }).catch(() => { /* best-effort: the log line below is the source of truth */ });
                 console.error(
                     `[ChannelRefresh] ${channel.id}: ${message} — ${missingCredentials
@@ -347,7 +353,15 @@ async function handler(request: Request) {
             const startTime = Date.now();
             const MAX_EXEC_MS = 45_000; // Leave 10-15s buffer for the 60s worker heartbeat
 
-            const results: any = {
+interface PublisherResults {
+    pending: number; processing: number; published: number; errors: number;
+    cleaned: number; tokens_refreshed: number;
+    planners_processed: number; claimed: number; skipped: number; transient: number;
+    rate_limited: number; throttled: number;
+    timeout?: boolean;
+}
+
+            const results: PublisherResults = {
                 pending: 0, processing: 0, published: 0, errors: 0,
                 cleaned: 0, tokens_refreshed: 0,
                 planners_processed: 0, claimed: 0, skipped: 0, transient: 0, rate_limited: 0, throttled: 0,
@@ -406,8 +420,10 @@ async function handler(request: Request) {
                     } else {
                         await logPlanner(planner.id, `[Phase0] ${outcome.error || 'Planner skipped'}`, 'error');
                     }
-                } catch (err: any) {
-                    await logPlanner(planner.id, `[Phase0] Uncaught error: ${err.message}`, 'error', { stack: err.stack });
+                } catch (err: unknown) {
+                    const errMsg = err instanceof Error ? err.message : String(err ?? 'Unknown error');
+                    const errStack = err instanceof Error ? err.stack : undefined;
+                    await logPlanner(planner.id, `[Phase0] Uncaught error: ${errMsg}`, 'error', { stack: errStack });
                 }
             }
 
@@ -626,10 +642,10 @@ async function handler(request: Request) {
                         const err = withIgStatus(data.error?.message || 'Media creation failed', apiRes.status);
                         throw err;
                     }
-                } catch (e: any) {
+                } catch (e: unknown) {
                     const kind = classifyError(e, lastStatus);
-                    const isAbort = e.name === 'AbortError';
-                    const errMsg = isAbort ? 'Instagram API timed out (5m)' : e.message;
+                    const isAbort = e instanceof Error && e.name === 'AbortError';
+                    const errMsg = isAbort ? 'Instagram API timed out (5m)' : (e instanceof Error ? e.message : String(e ?? 'Unknown error'));
 
                     if (kind === 'rate-limited') {
                         // Revert claim so the post is retried on a later tick, and stop the batch
@@ -753,10 +769,10 @@ async function handler(request: Request) {
                         // else: still processing — will retry next tick
                     }
                     results.processing++;
-                } catch (e: any) {
+                } catch (e: unknown) {
                     const kind = classifyError(e, lastStatus);
-                    const isAbort = e.name === 'AbortError';
-                    const errMsg = isAbort ? 'Instagram API timed out (15s)' : e.message;
+                    const isAbort = e instanceof Error && e.name === 'AbortError';
+                    const errMsg = isAbort ? 'Instagram API timed out (15s)' : (e instanceof Error ? e.message : String(e ?? 'Unknown error'));
 
                     if (kind === 'rate-limited') {
                         // Keep processing_* status — retried on the next tick; stop the batch
@@ -853,10 +869,10 @@ async function handler(request: Request) {
                             throw err;
                         }
                     }
-                } catch (e: any) {
+                } catch (e: unknown) {
                     const kind = classifyError(e, lastStatus);
-                    const isAbort = e.name === 'AbortError';
-                    const errMsg = isAbort ? 'Instagram API timed out (15s)' : e.message;
+                    const isAbort = e instanceof Error && e.name === 'AbortError';
+                    const errMsg = isAbort ? 'Instagram API timed out (15s)' : (e instanceof Error ? e.message : String(e ?? 'Unknown error'));
 
                     if (kind === 'rate-limited') {
                         // Keep ready_to_publish — retried on the next tick; stop the batch
@@ -889,7 +905,8 @@ async function handler(request: Request) {
         } finally {
             publisherRunning = false;
         }
-    } catch (err: any) {
-        return NextResponse.json({ error: err.message }, { status: 500 });
+    } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err ?? 'Unknown error');
+        return NextResponse.json({ error: errMsg }, { status: 500 });
     }
 }

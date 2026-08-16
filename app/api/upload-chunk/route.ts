@@ -5,6 +5,7 @@ import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { mkdir, unlink, readdir } from "fs/promises";
 import { join, dirname, basename } from "path";
 import { normalizeUploadPath } from "@/lib/upload-path";
+import { sweepStaleStaging } from "@/lib/upload-gc";
 import { isLocked } from "@/lib/upload-lock";
 import type { ReadableStream as NodeReadableStream } from "stream/web";
 import { Readable, PassThrough } from "stream";
@@ -131,6 +132,12 @@ export async function POST(req: Request) {
 
         // Success: the part is staged under {path}.part.{chunkIndex}.
         // 'completed' is only meaningful after /api/upload-chunk/complete runs.
+        if (chunkIndex === 0) {
+            // Opportunistic staging GC (debounced 60s, best-effort): a fresh
+            // upload is the natural moment to reclaim orphaned parts left by a
+            // cancelled/failed predecessor on the same path.
+            void sweepStaleStaging(getUploadsDir()).catch(() => { });
+        }
         return NextResponse.json({ success: true, path, chunkIndex, completed: false });
     } catch (error: unknown) {
         console.error("Local chunk upload error:", error);
