@@ -1,0 +1,7 @@
+{"ts":1786894960000,"kind":"scenario","name":"S2"}
+{"ts":1786894960207,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-1?fields=timestamp,caption,media_type,permalink&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786894960210,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-2?fields=timestamp,caption,media_type,permalink&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786894960212,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-3?fields=timestamp,caption,media_type,permalink&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786894960216,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-1/insights?metric=impressions,reach,saved,plays&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786894960217,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-2/insights?metric=impressions,reach,saved,plays&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786894960219,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-3/insights?metric=impressions,reach,saved,plays&access_token=IGToken","body":"","status":200,"kind":"mock"}

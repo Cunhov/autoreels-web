@@ -1,0 +1,17 @@
+{"ts":1786896162772,"kind":"scenario","name":"S2"}
+{"ts":1786896162787,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-1?fields=timestamp,caption,media_type,permalink&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786896162789,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-2?fields=timestamp,caption,media_type,permalink&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786896162790,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-3?fields=timestamp,caption,media_type,permalink&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786896162792,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-1/insights?metric=impressions,reach,saved,plays&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786896162793,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-2/insights?metric=impressions,reach,saved,plays&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786896162794,"method":"GET","url":"https://graph.instagram.com/v24.0/ig-s2-3/insights?metric=impressions,reach,saved,plays&access_token=IGToken","body":"","status":200,"kind":"mock"}
+{"ts":1786896162950,"kind":"scenario","name":"S4"}
+{"ts":1786896162965,"method":"GET","url":"https://graph.instagram.com/v24.0/acct-s4a?fields=username,id&access_token=IGTokenOK","body":"","status":200,"kind":"mock"}
+{"ts":1786896162970,"method":"GET","url":"https://graph.instagram.com/v24.0/acct-s4b?fields=username,id&access_token=IGTokenBad","body":"","status":400,"kind":"mock"}
+{"ts":1786896162989,"method":"GET","url":"https://graph.instagram.com/v24.0/acct-s4d?fields=username,id&access_token=IGTokenInactive","body":"","status":200,"kind":"mock"}
+{"ts":1786896214538,"method":"GET","url":"https://graph.instagram.com/v24.0/acct-s7a?fields=username,id&access_token=IGS7OK","body":"","status":200,"kind":"mock"}
+{"ts":1786896216068,"method":"GET","url":"https://graph.instagram.com/v24.0/acct-s7b?fields=username,id&access_token=IGS7Bad","body":"","status":400,"kind":"mock"}
+{"ts":1786896217603,"method":"GET","url":"https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=IGS7OK","body":"","status":200,"kind":"mock"}
+{"ts":1786896221288,"method":"POST","url":"https://api.instagram.com/oauth/access_token","body":"client_id=gauntlet-client&client_secret=gauntlet-secret&grant_type=authorization_code&redirect_uri=http%3A%2F%2F127.0.0.1%3A65462%2Fapi%2Fchannels%2Foauth%2Fcallback&code=S7CODE","status":200,"kind":"mock"}
+{"ts":1786896221289,"method":"GET","url":"https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=gauntlet-secret&access_token=IGShortS7","body":"","status":200,"kind":"mock"}
+{"ts":1786896221289,"method":"GET","url":"https://graph.instagram.com/v24.0/me?fields=id,user_id,username,profile_picture_url&access_token=IGLongS7","body":"","status":200,"kind":"mock"}
