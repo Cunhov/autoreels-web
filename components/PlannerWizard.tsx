@@ -1,18 +1,13 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useSession } from "next-auth/react";
 import {
 	X,
 	ChevronRight,
 	ChevronLeft,
-	Calendar,
 	Clock,
 	Instagram,
-	Layers,
-	ArrowUpDown,
 	Check,
-	Image as ImageIcon,
-	Film,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
 import MediaUploader from "./MediaUploader";
@@ -158,7 +153,35 @@ export default function PlannerWizard({
 		selectedChannelNames.length,
 	]);
 
+	// The page re-creates the planner object on every render (it maps and
+	// spreads), so [initialData] identity changes mid-edit — the load/reset
+	// block below would re-run and RESET the selection the user just loaded
+	// (user-reported: edited planners lose their selected posts). Guard by
+	// open-key: run the load/reset exactly once per open session.
+	const loadedForRef = useRef<string | null>(null);
+
 	useEffect(() => {
+		if (!isOpen) {
+			loadedForRef.current = null;
+			return;
+		}
+		// Run the load/reset block ONCE per open session. The page re-creates the
+		// planner object each render, so [initialData] identity oscillates
+		// (null -> planner -> null) mid-edit — without this guard the final
+		// null re-run would RESET the selection just loaded (user-reported:
+		// edited planners lose their selected posts). The null->planner
+		// transition inside an open session is allowed (the mount may see null
+		// first); returning to null afterwards is skipped.
+		const openKey = initialData?.id ?? "__new__";
+		if (loadedForRef.current === openKey) return;
+		if (
+			loadedForRef.current !== null &&
+			!(loadedForRef.current === "__new__" && openKey !== "__new__")
+		) {
+			return;
+		}
+		loadedForRef.current = openKey;
+
 		if (isOpen) {
 			fetchChannels();
 			setStep(0);

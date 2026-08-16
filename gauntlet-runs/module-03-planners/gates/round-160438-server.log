@@ -1,0 +1,10 @@
+▲ Next.js 16.1.6
+- Local:         http://127.0.0.1:50036
+- Network:       http://127.0.0.1:50036
+
+✓ Starting...
+✓ Ready in 115ms
+[PlannerLog][ERROR] 14e5e996-910e-4040-9b65-dcee2c10556d: [Phase0] No channels connected {}
+[PlannerLog][INFO] pl7: [Phase0] Created 1 post(s) {}
+[PlannerLog][INFO] pl7: [Phase1] Sending to IG: mediaType=REELS, url=https://example.com/pl7.mp4 {}
+[PlannerLog][INFO] pl7: Media 94da8f11-7930-4f16-90ca-c47accf85c36 is FINISHED but waiting 3 min safety delay. {}

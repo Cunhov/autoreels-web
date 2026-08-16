@@ -932,8 +932,16 @@ export default function ContentLibrary({
 		buildQueryParams,
 	]);
 
+	// Track the last fetched folder: a refresh of the SAME folder (mount,
+	// search/filter change) must PRESERVE the current selection — including the
+	// wizard's initialSelection (user-reported: editing a planner lost the
+	// selected posts because the first fetch cleared them). Only an explicit
+	// folder navigation clears the selection.
+	const lastFolderRef = useRef<string | null>(currentFolderId);
 	useEffect(() => {
-		fetchContent(currentFolderId);
+		const folderChanged = lastFolderRef.current !== currentFolderId;
+		lastFolderRef.current = currentFolderId;
+		fetchContent(currentFolderId, { keepSelection: !folderChanged });
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
 		currentFolderId,

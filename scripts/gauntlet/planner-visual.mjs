@@ -260,14 +260,15 @@ async function main() {
 		.waitFor({ timeout: 15_000 });
 	await page.getByRole("button", { name: "Next", exact: true }).click(); // step 1 (channel preselected)
 	await page.getByRole("button", { name: "Next", exact: true }).click(); // step 2 (content)
-	// In edit mode library items are NOT pre-selected (selectedContentIds empty,
-	// preservedCount counts only legacy config entries) — re-select the item.
-	await page.getByRole("button", { name: "From Library", exact: true }).click();
-	await page
-		.locator("div.aspect-square.rounded-2xl", { hasText: "Planner Video" })
-		.first()
-		.evaluate((el) => el.click());
-	await sleep(400);
+	// FIX PROOF (user-reported bug): the previously selected library item MUST
+	// appear pre-selected when editing — the wizard used to show "0 library
+	// items selected" because a re-render reset the selection after load.
+	await sleep(600);
+	const editSelText = await page.locator("body").innerText();
+	const preSelected = /1 library items? selected/.test(editSelText);
+	console.log(
+		`  (c) EDIT pre-selection: preSelected=${preSelected} (bar: the selected item must survive the edit open)`,
+	);
 	await page.getByRole("button", { name: "Next", exact: true }).click(); // step 3 (settings)
 	await page.locator('input[type="number"]').first().fill("7");
 	await page.getByRole("button", { name: "Next", exact: true }).click();
@@ -363,6 +364,7 @@ async function main() {
 		createdOk &&
 		autoRotation &&
 		savedTplOk &&
+		preSelected &&
 		inlineErrorVisible &&
 		nextDisabled &&
 		badPlannerAbsent &&
@@ -384,7 +386,7 @@ async function main() {
 		JSON.stringify(report, null, 2),
 	);
 	console.log(
-		`SCENARIO PL8: ${pass ? "PASS" : "FAIL"} — consoleErrors=${consoleErrors.length} pageErrors=${pageErrors.length} created=${createdFreqVisible} autoRotation=${autoRotation}/${savedTplOk} edited=7h validation=${inlineErrorVisible}/${nextDisabled} badAbsent=${badPlannerAbsent} mobileHScroll=${hScroll}px`,
+		`SCENARIO PL8: ${pass ? "PASS" : "FAIL"} — consoleErrors=${consoleErrors.length} pageErrors=${pageErrors.length} created=${createdFreqVisible} autoRotation=${autoRotation}/${savedTplOk} preSelected=${preSelected} edited=7h validation=${inlineErrorVisible}/${nextDisabled} badAbsent=${badPlannerAbsent} mobileHScroll=${hScroll}px`,
 	);
 	if (consoleErrors.length > 0) {
 		console.log("  console errors:");
