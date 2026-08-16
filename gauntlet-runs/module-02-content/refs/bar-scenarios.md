@@ -24,6 +24,26 @@ Pass: parent_id assignments are consistent (target folder exists and belongs to 
 Seed 50 items. POST /api/content-items/bulk with tags assignment for 50 ids; and a bulk delete of 20.
 Pass: either ALL 50 items get the tags or NONE (no partial write on failure — inject a failure by including a non-existent id in the same batch and assert the API rejects the whole batch, not a subset); bulk delete removes exactly the 20 records AND their disk files; counts match before/after.
 
+**Documented deviation (recorded from the round-01 baseline):** the bulk delete is
+PERMISSIVE, not whole-batch-atomic — a non-existent/foreign id in the batch is
+silently skipped and the owned subset is deleted (`affected` counts only owned
+rows). Ownership is still enforced (foreign rows are never deleted); the UI
+refreshes from the server's `affected` count. Accepted contract; not re-litigated
+here.
+
+**Cascade blast-radius visibility (L4c — added after the round-02 critic):** a
+bulk delete of a folder silently removed every nested descendant via the DB
+cascade while the UI confirmed only the DIRECT row count — a data-loss surprise.
+The route now returns `{ affected, descendants }` from the delete action
+(`descendants` = distinct rows the cascade removes beyond the direct ones,
+any depth, dedupe-safe when a root is also nested under another selected root)
+and exposes a read-only `count_descendants` action (same ownership-permissive
+semantics, same collection) that feeds the bulk-delete confirm dialog. Pass:
+`count_descendants` for a folder-with-contents selection returns the exact
+nested count; the delete response returns the same count; the cascade removes
+all nested rows and their disk files (orphan scan == 0); the client confirm
+renders `Delete N items and M nested contents?` only when `descendants > 0`.
+
 ## L5 — duplicate-name semantics (REAL contract, calibrated after round-01 baseline)
 
 The dedupe-by-name contract (second upload updates the first item) lives in

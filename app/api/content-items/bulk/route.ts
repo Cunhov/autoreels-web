@@ -38,9 +38,9 @@ interface FileInfo {
  * Recursively collect all descendants of the given items (any depth) plus the
  * items themselves, with the fields needed for disk cleanup.
  */
-async function collectWithDescendants(roots: FileInfo[]): Promise<Array<{ url: string | null; thumbnail_url: string | null; name: string | null; path: string | null }>> {
-    const collected: Array<{ url: string | null; thumbnail_url: string | null; name: string | null; path: string | null }> =
-        roots.map((r) => ({ url: r.url, thumbnail_url: r.thumbnail_url, name: r.name, path: r.path }));
+async function collectWithDescendants(roots: FileInfo[]): Promise<Array<{ id: string; url: string | null; thumbnail_url: string | null; name: string | null; path: string | null }>> {
+    const collected: Array<{ id: string; url: string | null; thumbnail_url: string | null; name: string | null; path: string | null }> =
+        roots.map((r) => ({ id: r.id, url: r.url, thumbnail_url: r.thumbnail_url, name: r.name, path: r.path }));
 
     let currentLevel = roots.map((r) => r.id);
     let guard = 0;
@@ -59,6 +59,7 @@ async function collectWithDescendants(roots: FileInfo[]): Promise<Array<{ url: s
         if (level.length === 0) break;
 
         collected.push(...level.map((c) => ({
+            id: c.id,
             url: c.url ?? null,
             thumbnail_url: c.thumbnail_url ?? null,
             name: c.name ?? null,
@@ -77,6 +78,24 @@ async function collectWithDescendants(roots: FileInfo[]): Promise<Array<{ url: s
     return collected;
 }
 
+/**
+ * Number of rows the DB cascade will remove BEYOND the direct roots: distinct
+ * collected ids minus the root ids (dedupe-safe when a root is also a
+ * descendant of another selected root). Best-effort under MAX_COLLECT_ITEMS
+ * truncation — this feeds the bulk-delete UI warning, never correctness.
+ */
+function countNestedDescendants(collected: Array<{ id: string }>, roots: Array<{ id: string }>): number {
+    const rootIds = new Set(roots.map((r) => r.id));
+    const seen = new Set<string>();
+    let count = 0;
+    for (const item of collected) {
+        if (rootIds.has(item.id) || seen.has(item.id)) continue;
+        seen.add(item.id);
+        count++;
+    }
+    return count;
+}
+
 export async function POST(req: Request) {
     const session = await getServerSession(authOptions);
     const userId = getSessionUserId(session);
@@ -87,7 +106,7 @@ export async function POST(req: Request) {
     try {
         const body = await req.json();
         const { action, ids, all, filters, data } = body;
-        // action: "delete" | "move" | "rename"
+        // action: "delete" | "count_descendants" | "move" | "rename"
         // ids: string[]           — explicit item IDs (order matters for rename)
         // all: boolean            — select all matching items
         // filters: object         — query-param-like filters when all=true
@@ -137,6 +156,7 @@ export async function POST(req: Request) {
 
                 // Recursively collect every descendant's files (any depth)
                 const allItems = await collectWithDescendants(itemsToDelete);
+                const descendants = countNestedDescendants(allItems, itemsToDelete);
 
                 const diskPaths = allItems.flatMap((item) => collectItemFiles(userId, item));
 
@@ -156,7 +176,34 @@ export async function POST(req: Request) {
                     );
                 }
 
-                return NextResponse.json({ affected: deleted });
+                // `descendants` = rows the DB cascade removed beyond the direct
+                // ones — lets the UI warn about the folder blast radius.
+                return NextResponse.json({ affected: deleted, descendants });
+            }
+
+            case "count_descendants": {
+                // Read-only preflight for the bulk-delete confirm dialog: how
+                // many nested rows would the cascade remove beyond the direct
+                // selection? Same collection as delete (permissive-subset on
+                // ownership) so the preflight matches the deletion exactly.
+                const roots = await prisma.contentItem.findMany({
+                    where: ownershipWhere,
+                    select: {
+                        id: true,
+                        url: true,
+                        thumbnail_url: true,
+                        name: true,
+                        path: true,
+                        type: true,
+                    },
+                });
+                if (roots.length === 0) {
+                    return NextResponse.json({ descendants: 0 });
+                }
+                const collected = await collectWithDescendants(roots);
+                return NextResponse.json({
+                    descendants: countNestedDescendants(collected, roots),
+                });
             }
 
             case "move": {
