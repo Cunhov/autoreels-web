@@ -62,6 +62,13 @@ const NS = "admin/gauntlet-mod4";
 const NS_DIR = join(UPLOADS_DIR, NS);
 const CLIP = join(NS_DIR, "clip.mp4");
 const CORRUPT = join(NS_DIR, "corrupt.mp4");
+const IMAGE_PNG = join(NS_DIR, "image.png");
+// Minimal 1x1 transparent PNG — a real image fed to the VIDEO trim/thumbnail
+// routes must be rejected as 4xx, never crash into a 500.
+const PNG_BYTES = Buffer.from(
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+	"base64",
+);
 
 function runFfmpeg(args) {
 	return execFileSync("ffmpeg", args, {
@@ -193,7 +200,7 @@ async function scenarioM5() {
 	});
 	const missingOk = missing.status === 404;
 
-	// corrupt file -> clean error (>=400), bounded time, no hang
+	// corrupt file -> 4xx (Unsupported or corrupt media), bounded time, no hang
 	writeFileSync(
 		CORRUPT,
 		"this is definitely not a video file, just garbage bytes 0123456789",
@@ -203,15 +210,47 @@ async function scenarioM5() {
 		body: JSON.stringify({ path: `${NS}/corrupt.mp4`, start: 0, end: 1 }),
 		timeoutMs: 90_000,
 	});
-	const corruptOk = corrupt.status >= 400;
+	const corruptOk = corrupt.status === 400;
+
+	// MIN-duration bypass: values pass the pre-clamp check (end-start = 2s) but
+	// clamp below the 1s minimum on the 3s clip (min(4.5, 3) - 2.5 = 0.5s).
+	// The CLAMPED duration must be validated — a 0.1s cut is never acceptable.
+	const minBypass = await req("/api/video/trim", {
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ path: `${NS}/clip.mp4`, start: 2.5, end: 4.5 }),
+	});
+	const minBypassOk = minBypass.status === 400;
+
+	// Wide-end variant (critic's example): also 400 after the clamp validation.
+	const wideEnd = await req("/api/video/trim", {
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ path: `${NS}/clip.mp4`, start: 2.9, end: 999 }),
+	});
+	const wideEndOk = wideEnd.status === 400;
+
+	// Non-video (image) path fed to the trim route -> 4xx, not 500.
+	writeFileSync(IMAGE_PNG, PNG_BYTES);
+	const notVideo = await req("/api/video/trim", {
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ path: `${NS}/image.png`, start: 0, end: 1 }),
+	});
+	const notVideoOk = notVideo.status === 400;
 
 	const pass =
-		happyOk && invRangeOk && tooShortOk && beyondOk && missingOk && corruptOk;
+		happyOk &&
+		invRangeOk &&
+		tooShortOk &&
+		beyondOk &&
+		missingOk &&
+		corruptOk &&
+		minBypassOk &&
+		wideEndOk &&
+		notVideoOk;
 	record(
 		"M5",
 		Boolean(pass),
-		`happy=${happyOk}/status=${trim.status}/dur=${trim.json?.duration}/probe=${outDur} invRange=${invRangeOk}/${invRange.status} tooShort=${tooShortOk}/${tooShort.status} beyond=${beyondOk}/${beyond.status} missing=${missingOk}/${missing.status} corrupt=${corruptOk}/${corrupt.status}`,
-		{ trim: trim.json, outDur, invRange: invRange.json, corrupt: corrupt.json },
+		`happy=${happyOk}/status=${trim.status}/dur=${trim.json?.duration}/probe=${outDur} invRange=${invRangeOk}/${invRange.status} tooShort=${tooShortOk}/${tooShort.status} beyond=${beyondOk}/${beyond.status} missing=${missingOk}/${missing.status} corrupt=${corruptOk}/${corrupt.status} minBypass=${minBypassOk}/${minBypass.status} wideEnd=${wideEndOk}/${wideEnd.status} notVideo=${notVideoOk}/${notVideo.status}`,
+		{ trim: trim.json, outDur, invRange: invRange.json, corrupt: corrupt.json, minBypass: minBypass.json, notVideo: notVideo.json },
 	);
 
 	await prisma.contentItem.deleteMany({
@@ -281,7 +320,29 @@ async function scenarioM6() {
 		timeoutMs: 90_000,
 	});
 	const thumbsAfter = listThumbs().length;
-	const corruptOk = corrupt.status >= 400 && thumbsAfter === thumbsBefore + 1; // only the happy thumb
+	const corruptOk = corrupt.status === 400 && thumbsAfter === thumbsBefore + 1; // only the happy thumb
+
+	// Image fed to the VIDEO thumbnail route -> 4xx (not 500), no partial file.
+	writeFileSync(IMAGE_PNG, PNG_BYTES);
+	const imgItem = await prisma.contentItem.create({
+		data: {
+			user_id: "admin",
+			name: "image.png",
+			type: "image",
+			size: PNG_BYTES.length,
+			url: `/api/file/${NS}/image.png`,
+		},
+	});
+	ids.items.push(imgItem.id);
+	const imgThumb = await req("/api/video/thumbnail", {
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			item_id: imgItem.id,
+			path: `${NS}/image.png`,
+			time: 0.5,
+		}),
+	});
+	const imgThumbOk = imgThumb.status === 400;
 
 	// Missing item -> 404
 	const noItem = await req("/api/video/thumbnail", {
@@ -290,12 +351,12 @@ async function scenarioM6() {
 	});
 	const noItemOk = noItem.status === 404;
 
-	const pass = happyOk && corruptOk && noItemOk;
+	const pass = happyOk && corruptOk && imgThumbOk && noItemOk;
 	record(
 		"M6",
 		Boolean(pass),
-		`happy=${happyOk}/status=${thumb.status}/magic=${magicOk} corrupt=${corruptOk}/${corrupt.status}/partials=${thumbsAfter - thumbsBefore - 1} noItem=${noItemOk}/${noItem.status}`,
-		{ thumb: thumb.json, corrupt: corrupt.json },
+		`happy=${happyOk}/status=${thumb.status}/magic=${magicOk} corrupt=${corruptOk}/${corrupt.status}/partials=${thumbsAfter - thumbsBefore - 1} imgThumb=${imgThumbOk}/${imgThumb.status} noItem=${noItemOk}/${noItem.status}`,
+		{ thumb: thumb.json, corrupt: corrupt.json, imgThumb: imgThumb.json },
 	);
 
 	await prisma.contentItem.deleteMany({

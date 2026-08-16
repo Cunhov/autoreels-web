@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { normalizeUploadPath } from "@/lib/upload-path";
-import { mkdir, stat } from "fs/promises";
+import { mkdir, stat, unlink } from "fs/promises";
 import { join, dirname } from "path";
 import { randomUUID } from "crypto";
 import { isFfmpegAvailable, trimVideo, getVideoDurationSec } from "@/lib/ffmpeg";
@@ -76,13 +76,29 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Video file not found" }, { status: 404 });
         }
 
-        const realDuration = await getVideoDurationSec(inputPath);
+        let realDuration: number;
+        try {
+            realDuration = await getVideoDurationSec(inputPath);
+        } catch (probeError: unknown) {
+            // ffprobe rejected the source — non-video file, HEIC/image, or corrupt
+            // bytes. That is a 4xx-class problem (bad media), not a server fault.
+            console.error("[video/trim] ffprobe rejected source:", probeError);
+            return NextResponse.json({ error: "Unsupported or corrupt media" }, { status: 400 });
+        }
         if (start >= realDuration) {
             return NextResponse.json({ error: "start is beyond the video duration" }, { status: 400 });
         }
         // Clamp end to the real duration (never cut past the end of the file)
         const clampedEnd = Math.min(end, realDuration);
         const cutDuration = clampedEnd - start;
+        // The CLAMPED duration is the authoritative one: end=999 on a 3s clip
+        // must NOT smuggle a 0.1s cut past the pre-clamp minimum check.
+        if (cutDuration < MIN_CUT_SECONDS || cutDuration > MAX_CUT_SECONDS) {
+            return NextResponse.json(
+                { error: `Cut must be between ${MIN_CUT_SECONDS}s and ${MAX_CUT_SECONDS}s` },
+                { status: 400 }
+            );
+        }
 
         const uuid = randomUUID();
         const outName = `trim-${uuid}.mp4`;
@@ -90,7 +106,14 @@ export async function POST(req: Request) {
         const outPath = join(uploadsRoot, outRelPath);
         await mkdir(dirname(outPath), { recursive: true });
 
-        await trimVideo(inputPath, outPath, start, cutDuration);
+        try {
+            await trimVideo(inputPath, outPath, start, cutDuration);
+        } catch (trimError: unknown) {
+            // ffprobe accepted it but ffmpeg could not process it — same 4xx class.
+            console.error("[video/trim] ffmpeg rejected source:", trimError);
+            await unlink(outPath).catch(() => { });
+            return NextResponse.json({ error: "Unsupported or corrupt media" }, { status: 400 });
+        }
 
         const outStat = await stat(outPath);
         const item = await prisma.contentItem.create({

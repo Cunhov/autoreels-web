@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { normalizeUploadPath } from "@/lib/upload-path";
-import { mkdir, stat } from "fs/promises";
+import { mkdir, stat, unlink } from "fs/promises";
 import { join, dirname } from "path";
 import { randomUUID } from "crypto";
 import { isFfmpegAvailable, extractFrame, getVideoDurationSec } from "@/lib/ffmpeg";
@@ -77,7 +77,15 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Video file not found" }, { status: 404 });
         }
 
-        const realDuration = await getVideoDurationSec(inputPath);
+        let realDuration: number;
+        try {
+            realDuration = await getVideoDurationSec(inputPath);
+        } catch (probeError: unknown) {
+            // ffprobe rejected the source — image/HEIC fed to the video thumbnail
+            // route, or corrupt bytes. 4xx-class (bad media), not a server fault.
+            console.error("[video/thumbnail] ffprobe rejected source:", probeError);
+            return NextResponse.json({ error: "Unsupported or corrupt media" }, { status: 400 });
+        }
         // Clamp time so we never seek past the end (leave a tiny margin)
         const safeTime = Math.min(time, Math.max(realDuration - 0.1, 0));
 
@@ -87,7 +95,13 @@ export async function POST(req: Request) {
         const outPath = join(uploadsRoot, outRelPath);
         await mkdir(dirname(outPath), { recursive: true });
 
-        await extractFrame(inputPath, outPath, safeTime);
+        try {
+            await extractFrame(inputPath, outPath, safeTime);
+        } catch (frameError: unknown) {
+            console.error("[video/thumbnail] ffmpeg rejected source:", frameError);
+            await unlink(outPath).catch(() => { });
+            return NextResponse.json({ error: "Unsupported or corrupt media" }, { status: 400 });
+        }
 
         const thumbUrl = `/api/file/${outRelPath}`;
         const updatedItem = await prisma.contentItem.update({

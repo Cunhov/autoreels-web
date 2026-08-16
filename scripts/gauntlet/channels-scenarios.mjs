@@ -23,12 +23,13 @@ import {
 	writeFileSync,
 	readFileSync,
 	existsSync,
-	truncateSync,
 	unlinkSync,
 	readdirSync,
 	statSync,
 	copyFileSync,
 	mkdirSync,
+	renameSync,
+	rmSync,
 } from "node:fs";
 import { join } from "node:path";
 import { createHmac, createHash } from "node:crypto";
@@ -82,11 +83,13 @@ const SESSION_COOKIE = `next-auth.session-token=${await encode({
 function writeState(rules) {
 	const consumed = {};
 	rules.forEach((_, i) => (consumed[i] = 0));
-	writeFileSync(MOCK_STATE, JSON.stringify({ rules, consumed }));
-	truncateSync(MOCK_CALLS, 0);
+	// Atomic write (temp + rename) so the server never reads a torn state file.
+	const tmp = `${MOCK_STATE}.tmp`;
+	writeFileSync(tmp, JSON.stringify({ rules, consumed }));
+	renameSync(tmp, MOCK_STATE);
 }
 
-function readCalls() {
+function readCallsRaw() {
 	if (!existsSync(MOCK_CALLS)) return [];
 	return readFileSync(MOCK_CALLS, "utf8")
 		.split("\n")
@@ -99,6 +102,28 @@ function readCalls() {
 			}
 		})
 		.filter(Boolean);
+}
+
+// The calls file is NO LONGER truncated between scenarios: each scenario is
+// tagged with a marker line ({kind:"scenario",name}) and reads are scoped to
+// calls recorded after the marker. The persisted evidence (round-*-calls.jsonl)
+// therefore covers the WHOLE run — M1's short/long exchange, M2's concurrent
+// refresh, M3's per-set insights calls, M4's restore abuse included.
+let callsMark = { lineIndex: -1, name: null };
+
+function markScenario(name) {
+	const all = readCallsRaw();
+	appendFileSync(
+		MOCK_CALLS,
+		JSON.stringify({ ts: Date.now(), kind: "scenario", name }) + "\n",
+	);
+	callsMark = { lineIndex: all.length, name };
+}
+
+function readCalls() {
+	const all = readCallsRaw();
+	if (callsMark.lineIndex < 0) return all;
+	return all.slice(callsMark.lineIndex + 1);
 }
 
 function countCalls({ kind, method, urlIncludes, urlRegex, status } = {}) {
@@ -577,7 +602,9 @@ async function scenarioM3() {
 		Object.values(bTotals).every((v) => v === 0) &&
 		b.json?.posts?.length === 0;
 
-	// (c) 400 on every IG call -> current behavior: silent zeros (200), not 4xx.
+	// (c) 400 on EVERY IG call -> TOTAL failure: the route must answer 4xx with
+	// the IG message — never silent zeros (a broken media post must not render
+	// as genuine zero engagement in analytics).
 	await seedM3Posts(1);
 	writeState([
 		rule(
@@ -594,9 +621,13 @@ async function scenarioM3() {
 		),
 	]);
 	const c = await req(`/api/channels/${M3_CHANNEL}/insights?${params}`);
-	const cOk = c.ok && c.json?.posts?.length === 1;
+	const cOk =
+		c.status >= 400 &&
+		c.status < 500 &&
+		Boolean(c.json?.error) &&
+		c.json?.posts === undefined;
 
-	// (d) malformed JSON bodies -> classified, no 500, no crash.
+	// (d) malformed JSON bodies -> classified as an error result (4xx), not 500.
 	writeState([
 		rule(
 			null,
@@ -612,14 +643,14 @@ async function scenarioM3() {
 		),
 	]);
 	const d = await req(`/api/channels/${M3_CHANNEL}/insights?${params}`);
-	const dOk = d.ok && d.json?.posts?.length === 1;
+	const dOk = d.status >= 400 && d.status < 500 && Boolean(d.json?.error);
 
 	const pass = aOk && bOk && cOk && dOk;
 	record(
 		"M3",
 		Boolean(pass),
 		`a(totals)=${aOk}/likes=${a.json?.totals?.likes} b(empty)=${bOk}/zeros=${Object.values(bTotals).every((v) => v === 0)} c(400)=${cOk}/status=${c.status} d(malformed)=${dOk}/status=${d.status}`,
-		{ a: a.json, b: b.json, cStatus: c.status, dStatus: d.status },
+		{ a: a.json, b: b.json, c: c.json, d: d.json },
 	);
 
 	await cleanupScenario(ids);
@@ -724,12 +755,31 @@ async function scenarioM4() {
 		Array.isArray(list.json?.backups) &&
 		list.json.backups.length === 7;
 
-	const pass = fileOk && idemOk && pruneOk && abuseOk && listOk;
+	// (d) backups dir blocked by a regular file squatting on the path -> the
+	// mkdir inside runBackup throws -> the route must answer a clean JSON 5xx
+	// (never an unhandled HTML error page). Restores the dir afterwards.
+	cleanBackups();
+	try {
+		rmSync(BACKUPS_DIR, { recursive: true, force: true });
+	} catch {
+		/* non-fatal */
+	}
+	writeFileSync(BACKUPS_DIR, "squatter");
+	const ro = await req("/api/admin/backups", { method: "POST" });
+	const roOk =
+		ro.status >= 500 &&
+		ro.status < 600 &&
+		Boolean(ro.json?.error) &&
+		!/<html|<!doctype/i.test(JSON.stringify(ro.json || {}));
+	unlinkSync(BACKUPS_DIR);
+	mkdirSync(BACKUPS_DIR);
+
+	const pass = fileOk && idemOk && pruneOk && abuseOk && listOk && roOk;
 	record(
 		"M4",
 		Boolean(pass),
-		`create=${fileOk}/name=${fileName} idem=${idemOk} prune=${pruneOk}/count=${afterPrune.length} traversal=${traversal1.status}/${traversal2.status} missing=${missing.status} corrupt=${corrupt.status} dbUntouched=${dbHashBefore === dbHashAfter} list=${listOk}/count=${list.json?.backups?.length}`,
-		{ create: create.json, pruneCreate: pruneCreate.json, afterPrune },
+		`create=${fileOk}/name=${fileName} idem=${idemOk} prune=${pruneOk}/count=${afterPrune.length} traversal=${traversal1.status}/${traversal2.status} missing=${missing.status} corrupt=${corrupt.status} dbUntouched=${dbHashBefore === dbHashAfter} list=${listOk}/count=${list.json?.backups?.length} roDir=${roOk}/${ro.status}/json=${Boolean(ro.json?.error)}`,
+		{ create: create.json, pruneCreate: pruneCreate.json, afterPrune, ro: ro.json },
 	);
 }
 
@@ -746,6 +796,7 @@ async function main() {
 	];
 	let failed = 0;
 	for (const [label, fn] of scenarios) {
+		markScenario(label);
 		try {
 			await fn();
 		} catch (err) {

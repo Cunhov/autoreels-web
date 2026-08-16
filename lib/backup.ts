@@ -78,7 +78,15 @@ export async function runBackup(): Promise<BackupResult> {
     }
 
     const backupsDir = getBackupsDir();
-    await mkdir(backupsDir, { recursive: true });
+    try {
+        await mkdir(backupsDir, { recursive: true });
+    } catch (error: unknown) {
+        // A blocked backups dir (unwritable parent, or a regular file squatting on
+        // the path) must yield a clean result — never an unhandled throw that
+        // surfaces as an HTML 500 from the route.
+        console.error("[backup] cannot create backups dir:", error);
+        return { ok: false, error: "Backup directory is not writable" };
+    }
 
     const now = new Date();
     const dateStr = [

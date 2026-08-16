@@ -32,6 +32,7 @@ import {
 	readFileSync,
 	writeFileSync,
 	appendFileSync,
+	renameSync,
 	existsSync,
 } from "node:fs";
 
@@ -59,7 +60,12 @@ function readState() {
 function writeState(state) {
 	if (!STATE_FILE) return;
 	try {
-		writeFileSync(STATE_FILE, JSON.stringify(state));
+		// Atomic write (temp file + rename): a torn write of the state file could
+		// otherwise be read mid-flight by the server and mis-route a request
+		// (the M3(a) flake seen in rounds 065951 vs 070031).
+		const tmp = `${STATE_FILE}.tmp`;
+		writeFileSync(tmp, JSON.stringify(state));
+		renameSync(tmp, STATE_FILE);
 	} catch {
 		/* mock must never crash the server */
 	}

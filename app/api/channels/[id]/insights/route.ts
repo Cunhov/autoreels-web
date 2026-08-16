@@ -143,6 +143,7 @@ export async function GET(
         for (const r of results) {
             if (r.entry) entries.push(r.entry);
             if (r.error) errors.push(r.error);
+            if (r.extraErrors) errors.push(...r.extraErrors);
             if (r.fatal) {
                 if (r.fatal === "auth") {
                     return NextResponse.json(
@@ -158,6 +159,16 @@ export async function GET(
                 }
             }
         }
+    }
+
+    // Total failure: NO post produced usable metrics. A 200-with-zeros would
+    // render a broken channel/media as genuine zero engagement in analytics —
+    // surface the IG error as a 4xx so the analytics page shows the failure.
+    if (entries.length === 0 && errors.length > 0) {
+        return NextResponse.json(
+            { error: errors[0].message, errors },
+            { status: 400 }
+        );
     }
 
     const totals = totalsFromMetrics(entries);
@@ -284,7 +295,7 @@ async function fetchPostEntry(
     post: DbPost,
     token: string,
     igCalls: { count: number }
-): Promise<{ entry?: PostEntry; error?: { post_id: string; message: string }; fatal?: "auth" | "rate_limit" }> {
+): Promise<{ entry?: PostEntry; error?: { post_id: string; message: string }; extraErrors?: { post_id: string; message: string }[]; fatal?: "auth" | "rate_limit" }> {
     if (!post.instagram_media_id) {
         return { error: { post_id: post.id, message: "Sem instagram_media_id — não é possível buscar métricas" } };
     }
@@ -299,10 +310,15 @@ async function fetchPostEntry(
     if (res.kind === "error") {
         return { error: { post_id: post.id, message: res.message } };
     }
+    // Partial result: usable metrics exist, but some metric-set attempts failed —
+    // surface those alongside the data so partial failures are never silent.
+    const extraErrors = res.errors?.length
+        ? res.errors.map(message => ({ post_id: post.id, message }))
+        : undefined;
     await upsertPostMetric(post.id, null, res.metrics).catch(() => { /* non-fatal */ });
     const entry = entryFromDbPost(post, res.metrics);
     entry.permalink = res.meta?.permalink || null;
     if (!entry.media_type && res.meta?.media_type) entry.media_type = res.meta.media_type;
     if (!entry.caption && res.meta?.caption) entry.caption = res.meta.caption;
-    return { entry };
+    return extraErrors ? { entry, extraErrors } : { entry };
 }

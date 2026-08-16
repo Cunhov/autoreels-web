@@ -33,9 +33,16 @@ export async function POST() {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const result = await runBackup();
-    if (!result.ok) {
-        return NextResponse.json({ error: result.error }, { status: 500 });
+    try {
+        const result = await runBackup();
+        if (!result.ok) {
+            return NextResponse.json({ error: result.error }, { status: 500 });
+        }
+        return NextResponse.json(result);
+    } catch (error: unknown) {
+        // runBackup already returns errors instead of throwing for known failures;
+        // this catch keeps ANY unexpected escape as a clean JSON error (no HTML 500).
+        console.error("[admin/backups] create failed:", error);
+        return NextResponse.json({ error: "Failed to create backup" }, { status: 500 });
     }
-    return NextResponse.json(result);
 }
