@@ -14,10 +14,11 @@
 #   RUN_DIR=...          where gates/round-<timestamp>-baseline.md is written
 #                        (default: <repo>/gauntlet-runs/module-07-import-auth).
 #
-# Env notes: UPLOAD_QUOTA_BYTES=4096 makes the I3 quota test deterministic;
-# IG_FIXTURE_HOST=example.com (public DNS — passes the app's SSRF guard; the
-# import-fixture preload intercepts it, so no real example.com traffic).
-# Exit 0 only if ALL parts pass.
+# Env notes: UPLOAD_QUOTA_BYTES=4096 makes the I3 quota test deterministic.
+# The import-url SSRF guard blocks loopback/private hosts by design (I1 asserts
+# it), and the route's standalone fetch bypasses preloads — so I1 covers the
+# guard + input validation + graceful failure (download-path limitation
+# documented in the scenario). Exit 0 only if ALL parts pass.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -34,10 +35,9 @@ CRON_SECRET="unused"
 ADMIN_EMAIL="admin@test.local"
 ADMIN_PASSWORD="TestPass123!"
 UPLOAD_QUOTA_BYTES="4096"
-FIXTURE_HOST="example.com"
+FIXTURE_HOST="graph.instagram.com"
 IG_MOCK_STATE="$TMP/ig-mock-state.json"
 IG_MOCK_CALLS="$TMP/ig-mock-calls.jsonl"
-FIXTURE_STATE="$TMP/fixture-state.json"
 PORT="$(node -e 'const n=require("net");const s=n.createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
 
 if [ "$MODE" = "prod" ]; then
@@ -60,7 +60,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "==> temp dir: $TMP (port $PORT, mode $MODE, uploads $UPLOADS_DIR)"
-echo "==> fixture host: $FIXTURE_HOST (public DNS passes the SSRF guard; intercepted by preload)"
+echo "==> import fixture host: $FIXTURE_HOST (only used if IG_FIXTURE_STATE is set; inert otherwise)"
 
 echo "==> prisma db push (test DB $TMP/test.db)"
 DATABASE_URL="$DATABASE_URL" npx prisma db push --accept-data-loss >"$TMP/dbpush.log" 2>&1
@@ -95,9 +95,7 @@ if [ "$MODE" = "prod" ]; then
 			ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
 			PUBLIC_BASE_URL="http://127.0.0.1:$PORT" UPLOAD_QUOTA_BYTES="$UPLOAD_QUOTA_BYTES" \
 			IG_MOCK_STATE="$IG_MOCK_STATE" IG_MOCK_CALLS="$IG_MOCK_CALLS" \
-			IG_FIXTURE_STATE="$FIXTURE_STATE" IG_FIXTURE_HOST="$FIXTURE_HOST" \
 			node --import "$REPO_ROOT/scripts/gauntlet/fetch-mock.mjs" \
-				--import "$REPO_ROOT/scripts/gauntlet/import-fixture.mjs" \
 				server.js
 	) >"$TMP/server.log" 2>&1 &
 else
@@ -107,8 +105,7 @@ else
 			CRON_SECRET="$CRON_SECRET" ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
 			PUBLIC_BASE_URL="http://127.0.0.1:$PORT" UPLOAD_QUOTA_BYTES="$UPLOAD_QUOTA_BYTES" \
 			IG_MOCK_STATE="$IG_MOCK_STATE" IG_MOCK_CALLS="$IG_MOCK_CALLS" \
-			IG_FIXTURE_STATE="$FIXTURE_STATE" IG_FIXTURE_HOST="$FIXTURE_HOST" \
-			NODE_OPTIONS="--import $REPO_ROOT/scripts/gauntlet/fetch-mock.mjs --import $REPO_ROOT/scripts/gauntlet/import-fixture.mjs" \
+			NODE_OPTIONS="--import $REPO_ROOT/scripts/gauntlet/fetch-mock.mjs" \
 			npx next dev -p "$PORT" -H 127.0.0.1
 	) >"$TMP/server.log" 2>&1 &
 fi
@@ -142,7 +139,6 @@ run_part() {
 		--server-log "$TMP/server.log" --out "$TMP/out" \
 		--admin-email "$ADMIN_EMAIL" --admin-password "$ADMIN_PASSWORD" \
 		--worker-dir "$REPO_ROOT" --cron-secret "worker-test-secret" \
-		--fixture-state "$FIXTURE_STATE" \
 		--baseline "$RUN_DIR/import-perf-baseline.json" \
 		$extra \
 		>"$TMP/out/$label.txt" 2>&1

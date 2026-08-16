@@ -308,10 +308,11 @@ async function applyCaptionTemplate(opts: {
 	const rotation = opts.config.caption_rotation || "off";
 	const baseCaption = opts.selectedContent?.caption || "";
 
-	if (templates.length === 0 || rotation === "off") {
-		return baseCaption;
-	}
-
+	// Template vars are resolved for BOTH lanes: the rotation templates AND the
+	// base caption. The base caption previously bypassed substitution entirely —
+	// a caption containing {post_caption} / {date} / {hashtags} went out LITERAL
+	// (user-reported bug). Unknown vars strip to "" in both lanes, never leaking
+	// raw braces into a published caption.
 	const vars = await resolveCaptionTemplateVars(
 		opts.prisma,
 		opts.selectedContent,
@@ -320,6 +321,10 @@ async function applyCaptionTemplate(opts: {
 		opts.channelName,
 		opts.now,
 	);
+
+	if (templates.length === 0 || rotation === "off") {
+		return substituteCaptionTemplate(baseCaption, vars);
+	}
 
 	const chosen =
 		rotation === "random"

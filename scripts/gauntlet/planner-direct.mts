@@ -499,12 +499,60 @@ async function scenarioPL3() {
 		Boolean(hashOk && offOk),
 		`hashtags="${hashCaption.slice(0, 50)}" offRotationCaption="${offPost?.caption || ""}" (tags → #tags; rotation off keeps base caption)`,
 	);
+
+	// User-reported bug: a BASE caption containing {post_caption} went out
+	// LITERAL (the base caption bypassed substitution entirely — only rotation
+	// templates were processed). With a library item selected, {post_caption}
+	// must resolve to the item's caption.
+	const capItem = await prisma.contentItem.create({
+		data: {
+			id: "pl3-cap-item",
+			user_id: "admin",
+			name: "pl3-cap.mp4",
+			type: "video",
+			url: "/api/file/admin/pl3-cap.mp4",
+			caption: "CAPTION FROM LIBRARY",
+		},
+	});
+	await seedPlanner({
+		id: "pl3-basecap",
+		config: makeConfig({
+			content: [
+				{
+					type: "library",
+					id: capItem.id,
+					url: "https://example.com/pl3-cap.mp4",
+					media_type: "REELS",
+					caption: "Veja {post_caption}",
+				},
+			],
+			// no caption_templates, rotation off → the BASE caption path
+		}),
+		channelIds: ["pl3-c"],
+	});
+	const rBase = await runPlannerOnce(
+		prisma,
+		await getPlanner("pl3-basecap"),
+		new Date(),
+	);
+	const basePost = rBase.ok
+		? await prisma.post.findFirst({ where: { planner_id: "pl3-basecap" } })
+		: null;
+	const baseCapOk =
+		rBase.ok &&
+		basePost?.caption === "Veja CAPTION FROM LIBRARY" &&
+		!basePost?.caption.includes("{post_caption}");
+	record(
+		"PL3-basecaption",
+		Boolean(baseCapOk),
+		`baseCaption="${basePost?.caption || ""}" (must be "Veja CAPTION FROM LIBRARY", never the literal {post_caption})`,
+	);
 	await cleanupScenario({
-		planners: ["pl3-arr", "pl3-freq0", "pl3-noch", "pl3-res", "pl3-tpl", "pl3-hash", "pl3-off"],
+		planners: ["pl3-arr", "pl3-freq0", "pl3-noch", "pl3-res", "pl3-tpl", "pl3-hash", "pl3-off", "pl3-basecap"],
 		channels: ["pl3-c"],
 	});
 	await prisma.contentItem
-		.deleteMany({ where: { id: "pl3-tags-item" } })
+		.deleteMany({ where: { id: { in: ["pl3-tags-item", "pl3-cap-item"] } } })
 		.catch(() => {});
 }
 

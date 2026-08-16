@@ -38,6 +38,8 @@ import {
 
 const STATE_FILE = process.env.IG_MOCK_STATE;
 const CALLS_FILE = process.env.IG_MOCK_CALLS;
+const FIXTURE_STATE_FILE = process.env.IG_FIXTURE_STATE;
+const FIXTURE_HOST = process.env.IG_FIXTURE_HOST || "example.com";
 const MOCK_HOSTS = new Set([
 	"graph.instagram.com",
 	"graph.facebook.com",
@@ -177,6 +179,94 @@ async function mockedFetch(url, options, host) {
 	});
 }
 
+// ── Import-url FIXTURE host (module-07): deterministic download responses for
+//    a PUBLIC hostname (example.com passes the app's SSRF DNS guard). Active
+//    ONLY when IG_FIXTURE_STATE is set — every other harness leaves it unset
+//    and this section is inert. The route fetches the fixture host for real
+//    (redirects followed in-process) so res.url stays meaningful.
+function readFixtureState() {
+	if (!FIXTURE_STATE_FILE || !existsSync(FIXTURE_STATE_FILE)) return { routes: {} };
+	try {
+		return JSON.parse(readFileSync(FIXTURE_STATE_FILE, "utf8"));
+	} catch {
+		return { routes: {} };
+	}
+}
+
+function fixtureChunkStream(total, chunkSize = 64 * 1024) {
+	let sent = 0;
+	return new ReadableStream({
+		pull(controller) {
+			if (sent >= total) {
+				controller.close();
+				return;
+			}
+			const n = Math.min(chunkSize, total - sent);
+			controller.enqueue(new Uint8Array(n).fill(65));
+			sent += n;
+		},
+		cancel() {
+			/* consumer aborted — stop producing */
+		},
+	});
+}
+
+function fixtureDelay(signal, ms) {
+	return new Promise((resolve, reject) => {
+		const t = setTimeout(resolve, ms);
+		if (signal) {
+			if (signal.aborted) {
+				clearTimeout(t);
+				reject(new DOMException("Aborted", "AbortError"));
+				return;
+			}
+			signal.addEventListener("abort", () => {
+				clearTimeout(t);
+				reject(new DOMException("Aborted", "AbortError"));
+			}, { once: true });
+		}
+	});
+}
+
+function fixtureWithUrl(res, url) {
+	try {
+		Object.defineProperty(res, "url", { value: url, configurable: true });
+	} catch {
+		/* ignore */
+	}
+	return res;
+}
+
+async function fixtureHandle(pathname, finalUrl, signal) {
+	const state = readFixtureState();
+	const route = state.routes?.[pathname];
+	if (!route) {
+		recordCall({ ts: Date.now(), method: "GET", url: finalUrl.slice(0, 300), status: 404, kind: "fixture-unmatched" });
+		return fixtureWithUrl(
+			new Response(JSON.stringify({ error: "UNMATCHED_FIXTURE", path: pathname }), {
+				status: 404,
+				headers: { "content-type": "application/json" },
+			}),
+			finalUrl,
+		);
+	}
+	const { status = 200, contentType = "application/octet-stream", size = 0, bodyText = null, delayMs = 0, redirectTo = null } = route;
+	if (delayMs > 0) await fixtureDelay(signal, delayMs);
+	if (redirectTo) {
+		const target = new URL(redirectTo, `https://${FIXTURE_HOST}`).toString();
+		return fixtureHandle(new URL(target).pathname, target, signal);
+	}
+	recordCall({ ts: Date.now(), method: "GET", url: finalUrl.slice(0, 300), status, kind: "fixture-hit" });
+	const headers = { "content-type": contentType };
+	let body;
+	if (bodyText !== null) body = bodyText;
+	else if (size > 0) body = fixtureChunkStream(size);
+	else body = "";
+	return fixtureWithUrl(new Response(body, { status, headers }), finalUrl);
+}
+
+// ── Patched fetch ─────────────────────────────────────────────────────────────
+
 globalThis.fetch = async function patchedFetch(input, options = {}) {
 	let url;
 	let method;
@@ -197,6 +287,15 @@ globalThis.fetch = async function patchedFetch(input, options = {}) {
 		host = new URL(url).hostname;
 	} catch {
 		return originalFetch(input, options);
+	}
+
+	if (FIXTURE_STATE_FILE && host === FIXTURE_HOST) {
+		// Module-07 import-url fixture (active only when IG_FIXTURE_STATE is set;
+		// FIXTURE_HOST is a MOCK host so the route's fetch is reliably intercepted
+		// — checked BEFORE the rules engine). res.url is set so the route's
+		// redirect re-validation sees the final URL.
+		const pathname = new URL(url).pathname;
+		return fixtureHandle(pathname, url, options?.signal);
 	}
 
 	if (!MOCK_HOSTS.has(host)) {
