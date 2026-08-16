@@ -87,6 +87,11 @@ export const IMAGE_EXTS = ["jpg", "jpeg", "png", "webp", "gif"];
 const CHUNK_FETCH_TIMEOUT_MS = 60_000; // real per-chunk network timeout (5MB in 60s ≈ 83KB/s floor)
 const STATUS_FETCH_TIMEOUT_MS = 30_000; // resume query — never stall the queue on a dead status endpoint
 const COMPLETE_FETCH_TIMEOUT_MS = 120_000; // finalize (concat + ffprobe + thumbnail) can legitimately take a while
+// 409 "finalize in progress" protocol: while another finalize holds the staging
+// lock the server answers 409 { finalizing: true } — wait and re-POST instead of
+// erroring out or firing a second concurrent finalize.
+const FINALIZE_409_MAX_ATTEMPTS = 5;
+const FINALIZE_409_BACKOFF_MS = 1_500;
 
 /** Signal combinado: aborta no cancelamento do usuário OU no timeout. */
 function withTimeoutSignal(
@@ -97,6 +102,62 @@ function withTimeoutSignal(
 		return AbortSignal.any([external, AbortSignal.timeout(timeoutMs)]);
 	}
 	return external;
+}
+
+/** Sleep que rejeita cedo quando o signal de abort dispara. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise<void>((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(new DOMException("Aborted", "AbortError"));
+			return;
+		}
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(new DOMException("Aborted", "AbortError"));
+		};
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
+/**
+ * POST /api/upload-chunk/complete seguindo o protocolo 409 do contrato:
+ * enquanto outro finalize detém o lock de staging, o servidor responde
+ * 409 { finalizing: true } — espera e re-POSTa (máx. FINALIZE_409_MAX_ATTEMPTS
+ * re-POSTs) em vez de duplicar o finalize ou abortar. Respostas não-409
+ * (incluindo a exaustão do backoff) voltam intactas para o caller tratar.
+ * O item já-finalizado é reentregue pelo servidor (replay idempotente), então
+ * o 200 final resolve tanto finalize fresco quanto replay.
+ */
+async function finalizeWithRetry(
+	formData: FormData,
+	signal: AbortSignal,
+): Promise<Response> {
+	let last: Response | null = null;
+	for (let attempt = 0; attempt <= FINALIZE_409_MAX_ATTEMPTS; attempt++) {
+		if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+		if (attempt > 0) await sleep(FINALIZE_409_BACKOFF_MS, signal);
+		last = await fetch("/api/upload-chunk/complete", {
+			method: "POST",
+			body: formData,
+			signal: withTimeoutSignal(signal, COMPLETE_FETCH_TIMEOUT_MS),
+		});
+		if (last.status !== 409) return last;
+		let finalizing = false;
+		try {
+			const body = (await last.clone().json()) as { finalizing?: unknown };
+			finalizing = body?.finalizing === true;
+		} catch {
+			/* 409 não-JSON — não é o contrato de finalize-em-progresso: expõe */
+		}
+		if (!finalizing) return last;
+	}
+	// Exauriu o backoff: o lock nunca liberou — expõe o último conflito.
+	if (last === null) throw new Error("Finalize request failed");
+	return last;
 }
 const FREEZE_TIMEOUT_MS = 30_000; // safety net; the heartbeat keeps slow-but-alive tasks fresh
 const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -281,9 +342,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 			validated: boolean,
 		): UploadTask => {
 			const safeName = sanitizeFileName(file.name);
-			const targetPath = `${folderPath ? folderPath + "/" : ""}${safeName}`;
+			const id = crypto.randomUUID();
+			// Staging path ÚNICO por task: o mesmo nome de arquivo na mesma pasta
+			// nunca pode compartilhar `.part` — dois uploads concorrentes
+			// sobrescreveriam os chunks um do outro e corromperiam o finalize
+			// (fonte dos ENOENT/corrupção em produção). O sufixo é só identidade
+			// de staging: o nome final do ContentItem vem de `name` (formData
+			// "filename"), então a dedupe por nome não muda, e o resume continua
+			// funcionando porque o taskId é estável entre retries.
+			const targetPath = `${folderPath ? folderPath + "/" : ""}${safeName}.${id.slice(0, 8)}`;
 			return {
-				id: crypto.randomUUID(),
+				id,
 				file,
 				name: safeName,
 				size: file.size,
@@ -702,6 +771,27 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 							signal: chunkController.signal,
 						});
 
+						// Defensivo: 409 { finalizing: true } num POST de chunk significa
+						// que outro finalize detém os parts de staging (não deveria
+						// acontecer com paths únicos por task). Pula os chunks restantes
+						// e deixa o finalizeWithRetry replar o item do vencedor pelo
+						// protocolo de backoff 409.
+						if (response.status === 409) {
+							let finalizing = false;
+							try {
+								const body = (await response.clone().json()) as {
+									finalizing?: unknown;
+								};
+								finalizing = body?.finalizing === true;
+							} catch {
+								/* não-JSON — cai no erro genérico abaixo */
+							}
+							if (finalizing) {
+								currentChunk = task.totalChunks;
+								break;
+							}
+						}
+
 						if (!response.ok) {
 							throw new Error(`Server returned ${response.status}`);
 						}
@@ -753,14 +843,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 				if (task.caption) formData.append("caption", task.caption);
 				if (thumbFile) formData.append("thumbnail", thumbFile);
 
-				const metaRes = await fetch("/api/upload-chunk/complete", {
-					method: "POST",
-					body: formData,
-					signal: withTimeoutSignal(
-						controller.signal,
-						COMPLETE_FETCH_TIMEOUT_MS,
-					),
-				});
+				const metaRes = await finalizeWithRetry(formData, controller.signal);
 
 				if (!metaRes.ok) {
 					let detail = "";
