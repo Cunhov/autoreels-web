@@ -58,7 +58,6 @@ const prisma = new PrismaClient({
 });
 
 // ── Small helpers ───────────────────────────────────────────────────────────
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function writeState(rules) {
 	const consumed = {};
@@ -105,6 +104,28 @@ function readServerLog() {
 }
 
 let resultsTotal = [];
+/** Parse stored instagram_child_ids (index-aware / legacy positional) → Map<index,id>. */
+function parseChildIdEntriesForTest(raw) {
+	const entries = new Map();
+	if (!raw) return entries;
+	let parsed;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return entries;
+	}
+	if (!Array.isArray(parsed)) return entries;
+	const first = parsed[0];
+	if (first && typeof first === "object" && typeof first.index === "number" && typeof first.id === "string") {
+		for (const item of parsed) {
+			if (item && typeof item.index === "number" && typeof item.id === "string") entries.set(item.index, item.id);
+		}
+	} else {
+		for (let i = 0; i < parsed.length; i++) entries.set(i, parsed[i]);
+	}
+	return entries;
+}
+
 function record(label, pass, line, detail = {}) {
 	resultsTotal.push({ scenario: label, pass, line, detail });
 	// Best-effort raw evidence snapshot at verdict time (calls before the next
@@ -147,7 +168,6 @@ async function tick() {
 	return { status: res.status, json, text, elapsedMs: Date.now() - start };
 }
 
-const now = () => new Date();
 const minutesAgo = (m) => new Date(Date.now() - m * 60_000);
 const future = (ms) => new Date(Date.now() + ms);
 const JSON_OF = (items) => JSON.stringify(items);
@@ -269,7 +289,7 @@ async function scenarioP1() {
 	);
 
 	writeState([inProgressPoll]);
-	const r = await tick();
+	await tick();
 
 	const [pa, pb, pc] = await Promise.all([
 		prisma.post.findUnique({ where: { id: "p1a" } }),
@@ -322,7 +342,7 @@ async function scenarioP2() {
 		).id,
 	);
 	writeState([publishOk]);
-	let r = await tick();
+	await tick();
 	let p2a = await prisma.post.findUnique({ where: { id: "p2a" } });
 	const aOk =
 		p2a?.status === "published" &&
@@ -432,7 +452,7 @@ async function scenarioP3() {
 		]),
 		rule(null, "c.mp4", [okId("cnt-c2")]),
 	]);
-	let r = await tick();
+	await tick();
 	const childCreatesTick1 = readCalls().filter(
 		(c) =>
 			c.method === "POST" &&
@@ -469,17 +489,28 @@ async function scenarioP3() {
 	await tick();
 	const p3after2 = await prisma.post.findUnique({ where: { id: "p3" } });
 	const childCreateTotal = childCreatesTick1 + childCreatesTick2;
+	// Invariants (bar P3): every child index created AT MOST ONCE successfully —
+	// t1 attempts all 3 (2 ok + 1 deterministic 500), t2 retries ONLY the failed
+	// child (1 ok) → 4 calls total, 3 UNIQUE stored ids, 0 duplicates, 0 orphans.
+	const stored = parseChildIdEntriesForTest(p3after2?.instagram_child_ids ?? null);
+	const uniqueStored = stored.size; // index→id map
+	const noDupeIndices =
+		new Set([...stored.keys()]).size === uniqueStored && uniqueStored === 3;
+	const noOrphanIds = uniqueStored === 3; // every created id is referenced (3/3)
 	const pass =
-		childCreateTotal === 3 &&
+		childCreateTotal === 4 &&
+		noDupeIndices &&
+		noOrphanIds &&
 		p3after2?.status === "published" &&
 		p3after1?.attempts === 1;
 	record(
 		"P3",
 		Boolean(pass),
-		`child_create_calls_total=${childCreateTotal} (t1=${childCreatesTick1}+t2=${childCreatesTick2}; bar: 3) after1=${p3after1?.status}/attempts=${p3after1?.attempts} final=${p3after2?.status}`,
+		`child_create_calls_total=${childCreateTotal} (t1=${childCreatesTick1}+t2=${childCreatesTick2}; bar: 4 = 2 ok + 1 failed attempt + 1 retry of the missing child) uniqueStored=${uniqueStored} after1=${p3after1?.status}/attempts=${p3after1?.attempts} final=${p3after2?.status}`,
 		{
 			childCreatesTick1,
 			childCreatesTick2,
+			uniqueStored,
 			tick1Status: p3after1?.status,
 			tick1Attempts: p3after1?.attempts,
 			finalStatus: p3after2?.status,
@@ -523,7 +554,7 @@ async function scenarioP4() {
 			okId("media-4"),
 		]),
 	]);
-	const r1 = await tick();
+	await tick();
 	const [p41a, p42a] = await Promise.all([
 		prisma.post.findUnique({ where: { id: "p4-1" } }),
 		prisma.post.findUnique({ where: { id: "p4-2" } }),
@@ -541,7 +572,7 @@ async function scenarioP4() {
 	});
 
 	writeState([publishOk]);
-	const r2 = await tick();
+	await tick();
 	const [p41b, p42b] = await Promise.all([
 		prisma.post.findUnique({ where: { id: "p4-1" } }),
 		prisma.post.findUnique({ where: { id: "p4-2" } }),
@@ -692,7 +723,7 @@ async function scenarioP7() {
 	);
 
 	writeState([publishOk]);
-	const r1 = await tick();
+	await tick();
 	const [p71a, p72a] = await Promise.all([
 		prisma.post.findUnique({ where: { id: "p7-1" } }),
 		prisma.post.findUnique({ where: { id: "p7-2" } }),
@@ -707,7 +738,7 @@ async function scenarioP7() {
 		where: { id: "p7-1" },
 		data: { published_at: minutesAgo(120) },
 	});
-	const r2 = await tick();
+	await tick();
 	const p72b = await prisma.post.findUnique({ where: { id: "p7-2" } });
 	const okCalls = countCalls({
 		method: "POST",
@@ -753,7 +784,7 @@ async function scenarioP7() {
 		).id,
 	);
 	writeState([publishOk]);
-	const rb1 = await tick();
+	await tick();
 	const [pb1a, pb2a] = await Promise.all([
 		prisma.post.findUnique({ where: { id: "p7b-1" } }),
 		prisma.post.findUnique({ where: { id: "p7b-2" } }),
@@ -762,7 +793,7 @@ async function scenarioP7() {
 		where: { id: "p7b-1" },
 		data: { published_at: minutesAgo(120) },
 	});
-	const rb2 = await tick();
+	await tick();
 	const pb2 = await prisma.post.findUnique({ where: { id: "p7b-2" } });
 	const passB =
 		pb1a?.status === "published" &&
@@ -879,7 +910,7 @@ async function scenarioP9() {
 		]),
 	]);
 	const t1start = Date.now();
-	const r1 = await tick();
+	await tick();
 	const t1elapsed = Date.now() - t1start;
 	const okCallsTick1 = countCalls({
 		method: "POST",
@@ -899,7 +930,7 @@ async function scenarioP9() {
 	);
 
 	writeState([publishOk]);
-	const r2 = await tick();
+	await tick();
 	const publishedAll = await prisma.post.findMany({
 		where: { channel_id: "chan-p9", status: "published" },
 	});
