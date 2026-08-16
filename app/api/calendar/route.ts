@@ -101,6 +101,7 @@ export async function GET(req: Request) {
 			caption: true,
 			channel_id: true,
 			planner_id: true,
+			planner: { select: { name: true } },
 			error_message: true,
 			failed_reason: true,
 			children_urls: true,
