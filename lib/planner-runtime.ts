@@ -250,6 +250,22 @@ export async function resolveCaptionTemplateVars(
 	};
 }
 
+/**
+ * Aplica a substituição de variáveis de template de legenda com as MESMAS
+ * semânticas usadas na publicação (runtime) e no preview:
+ *   - variáveis CONHECIDAS ({post_title}, {date}, ...) → valor resolvido
+ *   - variáveis DESCONHECIDAS ({qualquer_coisa}) → '' — nunca vazam chaves
+ *     literais para a legenda publicada (eram mantidas literais no preview).
+ * Exportada para o preview (app/api/planners/[id]/preview) usar exatamente a
+ * mesma regex — a divergência runtime×preview era inconsistência visível.
+ */
+export function substituteCaptionTemplate(
+	template: string,
+	vars: Record<string, string>,
+): string {
+	return template.replace(/\{[a-zA-Z0-9_]+\}/g, (m: string) => vars[m] ?? "");
+}
+
 /** Aplica templates de legenda e retorna a legenda final. */
 async function applyCaptionTemplate(opts: {
 	prisma: PrismaLike;
@@ -290,10 +306,7 @@ async function applyCaptionTemplate(opts: {
 	// Replace KNOWN template variables with their resolved value and strip any
 	// UNKNOWN {placeholder} to empty string (never leak raw braces into a
 	// published caption — unknown vars were previously kept literal).
-	return chosen.replace(
-		/\{[a-zA-Z0-9_]+\}/g,
-		(m: string) => vars[m] ?? "",
-	);
+	return substituteCaptionTemplate(chosen, vars);
 }
 
 /**

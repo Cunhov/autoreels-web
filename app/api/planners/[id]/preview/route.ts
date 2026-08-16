@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { getSessionUserId } from '@/lib/api';
-import { describeChannelHealth, resolvePlannerRuntime } from '@/lib/planner-runtime';
+import { describeChannelHealth, resolvePlannerRuntime, substituteCaptionTemplate } from '@/lib/planner-runtime';
 
 /** Wall-clock "HH:MM" in a given IANA timezone. */
 function getTimeInTimeZone(date: Date, tz: string): { hh: string; mm: string } {
@@ -111,7 +111,7 @@ export async function GET(
             ? captionTemplates[Math.floor(Math.random() * captionTemplates.length)]
             : captionTemplates[templateIndex % captionTemplates.length];
         const vars = await resolveTemplateVars(runtime.selectedContent, planner, config, (planner.channels || [])[0]?.name || '', now);
-        finalCaption = chosen.replace(/\{post_title\}|\{post_caption\}|\{date\}|\{channel_name\}|\{hashtags\}/g, (m: string) => vars[m] ?? '');
+        finalCaption = substituteCaptionTemplate(chosen, vars);
     }
 
     // ── Gating + next_run_at (best-effort estimation, mirrors cron Phase 0) ────

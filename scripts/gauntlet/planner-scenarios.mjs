@@ -267,6 +267,101 @@ async function scenarioPL7() {
 	await prisma.channel.deleteMany({ where: { id: "pl7-c" } });
 }
 
+// ── PL8b: wizard "Preview next run" must use the SAME caption semantics as the
+// runtime — unknown {placeholder} → '' (commit 66adae3 stripped them in the
+// runtime but the preview route kept them LITERAL: visible inconsistency).
+async function scenarioPL8bPreview() {
+	await prisma.planner.create({
+		data: {
+			id: "pl8b",
+			user_id: "admin",
+			name: "PL8b Preview",
+			status: "active",
+			config: JSON.stringify({
+				frequency: { value: 5, unit: "minutes" },
+				timezone: "America/Sao_Paulo",
+				sort_order: "random_loop",
+				start_time: "",
+				sleep_schedule: null,
+				caption_templates: ["Hello {unknown_var} and {date}!"],
+				caption_rotation: "sequential",
+				content: [
+					{
+						type: "config",
+						url: "https://example.com/pl8b.mp4",
+						media_type: "REELS",
+						caption: "base",
+					},
+				],
+			}),
+			state: null,
+		},
+	});
+	const res = await fetch(`${BASE}/api/planners/pl8b/preview`, {
+		headers: { Cookie: SESSION_COOKIE },
+	});
+	let json = null;
+	try {
+		json = await res.json();
+	} catch {
+		/* non-JSON */
+	}
+	const caption = json?.runtime?.caption ?? "";
+	const noBracesLeft = !caption.includes("{") && !caption.includes("}");
+	const knownResolved = caption.startsWith("Hello  and ");
+	const pass =
+		res.status === 200 && noBracesLeft && knownResolved;
+	record(
+		"PL8b",
+		pass,
+		`preview caption="${caption}" → 200=${res.status === 200} bracesStripped=${noBracesLeft} knownResolved=${knownResolved} — pre-fix the preview kept {unknown_var} LITERAL while the runtime stripped it`,
+		{ status: res.status, caption },
+	);
+	await prisma.planner.deleteMany({ where: { id: "pl8b" } }).catch(() => {});
+}
+
+// ── PL3b: sleep start == end is a never-sleeping window (isSleepingNow is
+// always false) — the server must reject it like the wizard does (pre-fix this
+// rule existed only client-side).
+async function scenarioPL3bSleep() {
+	const payload = {
+		name: "pl3b-sleep-probe",
+		channel_ids: [],
+		config: {
+			frequency: { value: 5, unit: "minutes" },
+			timezone: "America/Sao_Paulo",
+			start_time: "",
+			sleep_schedule: { start: "10:00", end: "10:00" },
+			sort_order: "random_loop",
+			caption_templates: [],
+			caption_rotation: "off",
+			content: [],
+		},
+	};
+	const res = await fetch(`${BASE}/api/planners`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json", Cookie: SESSION_COOKIE },
+		body: JSON.stringify(payload),
+	});
+	let json = null;
+	try {
+		json = await res.json();
+	} catch {
+		/* non-JSON */
+	}
+	const details = Array.isArray(json?.details) ? json.details : [];
+	const rejected =
+		res.status === 400 &&
+		details.includes("Sleep start and end must be different times.");
+	const pass = rejected;
+	record(
+		"PL3b",
+		pass,
+		`sleep start==end → HTTP ${res.status} details=${JSON.stringify(details)} — pre-fix the server accepted the never-sleeping window (wizard-only check)`,
+		{ status: res.status, details },
+	);
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 await seedUser();
 try {
@@ -288,6 +383,26 @@ try {
 		line: `EXCEPTION: ${err?.message || String(err)}`,
 	});
 	console.error(`SCENARIO PL8-API: EXCEPTION — ${err?.stack || err}`);
+}
+try {
+	await scenarioPL8bPreview();
+} catch (err) {
+	resultsTotal.push({
+		scenario: "PL8b",
+		pass: false,
+		line: `EXCEPTION: ${err?.message || String(err)}`,
+	});
+	console.error(`SCENARIO PL8b: EXCEPTION — ${err?.stack || err}`);
+}
+try {
+	await scenarioPL3bSleep();
+} catch (err) {
+	resultsTotal.push({
+		scenario: "PL3b",
+		pass: false,
+		line: `EXCEPTION: ${err?.message || String(err)}`,
+	});
+	console.error(`SCENARIO PL3b: EXCEPTION — ${err?.stack || err}`);
 }
 console.log("\n=== SUMMARY (scenarios) ===");
 for (const r of resultsTotal)
