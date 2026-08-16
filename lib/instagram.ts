@@ -11,6 +11,30 @@ export function getGraphBaseUrl(token: string) {
     return cleaned.startsWith("IG") ? "https://graph.instagram.com" : "https://graph.facebook.com";
 }
 
+// Messages the Graph API returns for a token that is NOT a valid IG/FB token
+// (the API literally calls it a malformed "session key"), plus revoked/expired
+// tokens. These are permanent: retrying every tick only spams the log.
+const PERMANENT_TOKEN_ERROR_RE = /error validating access token|session key is malformed|invalid oauth 2\.0 access token|session has expired|revoked/i;
+// Missing client credentials is a server misconfiguration — every refresh
+// attempt fails identically, so it is also permanent for retry purposes.
+const MISSING_CREDENTIALS_RE = /must be configured to refresh facebook-based tokens/i;
+
+/**
+ * Classify a token-refresh failure.
+ *
+ * "permanent" → the attempt will never succeed on its own (invalid/revoked
+ * token, or missing INSTAGRAM_CLIENT_ID/SECRET): the caller should mark the
+ * channel and stop retrying every tick.
+ * "transient" → network/5xx/timeout style failures: retry next tick.
+ */
+export function classifyTokenRefreshError(err: unknown): "permanent" | "transient" {
+    const message = err instanceof Error ? err.message : String(err ?? "");
+    if (PERMANENT_TOKEN_ERROR_RE.test(message) || MISSING_CREDENTIALS_RE.test(message)) {
+        return "permanent";
+    }
+    return "transient";
+}
+
 export async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 15_000) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
