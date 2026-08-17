@@ -420,21 +420,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 			const newTasks: UploadTask[] = [];
 
 			// ── Group files into carousel folders using webkitRelativePath ──────
-			// Handles three shapes at once:
-			//   • one folder dropped/selected → its direct children form a group
+			// A group = the DIRECTORY of each file (dirname of the relative path),
+			// which handles every nesting shape at once:
+			//   • one folder dropped → its direct children form a group
 			//   • a parent folder containing carousel subfolders → each subfolder
 			//     is its own group
-			//   • MULTIPLE folders dropped/selected at once → each top-level
-			//     folder is its own group (previously they all merged into one!)
+			//   • MULTIPLE folders dropped at once → each top-level folder is its
+			//     own group
+			//   • MULTIPLE parent folders containing carousel subfolders → each
+			//     subfolder is STILL its own group (keying on the root only used to
+			//     merge every subfolder of a parent into one carousel — the
+			//     user-reported "all slides of all carousels in one folder" bug)
 			const folderGroups = new Map<string, File[]>();
 			const looseFiles: File[] = [];
-			const hasRelPath = (f: File) =>
-				!!f.webkitRelativePath && f.webkitRelativePath.includes("/");
-
-			const pathRoots = new Set(
-				files.filter(hasRelPath).map((f) => f.webkitRelativePath.split("/")[0]),
-			);
-			const hasSingleRoot = pathRoots.size === 1;
 
 			for (const file of files) {
 				// Skip OS junk (macOS .DS_Store, hidden files, zip artifacts) —
@@ -443,13 +441,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
 				const relPath = file.webkitRelativePath as string;
 				if (relPath && relPath.includes("/")) {
-					const parts = relPath.split("/");
-					// Key = the folder boundary for this file:
-					// single root → sub-path under the root (nested subfolders
-					// stay separate); multiple roots → the root itself.
-					const key = hasSingleRoot
-						? parts.slice(1, -1).join("/") || parts[0]
-						: parts[0];
+					// Key = the folder boundary for this file: its full directory.
+					// "Pasta/CarrosselA/1.jpg" → "Pasta/CarrosselA". Distinct paths
+					// never collide, so same-named subfolders under different
+					// parents stay separate instead of being merged.
+					const key = relPath.slice(0, relPath.lastIndexOf("/"));
 					if (!folderGroups.has(key)) folderGroups.set(key, []);
 					folderGroups.get(key)!.push(file);
 				} else {
