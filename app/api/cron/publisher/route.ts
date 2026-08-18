@@ -625,6 +625,20 @@ interface PublisherResults {
                             }
                         }
 
+                        // Persist the normalized child URLs onto the post. A later
+                        // reconcile (Phase 2) normalizes the stored URLs again; when the
+                        // result differs from what is stored, the existing IG container
+                        // was created from stale media (raw 9:16 or padded) and gets
+                        // re-created with the fresh crop.
+                        const persistedChildren = normalizedChildren.map(({ child }) => child);
+                        const newChildrenUrls = JSON.stringify(persistedChildren);
+                        if (newChildrenUrls !== post.children_urls) {
+                            await prisma.post.update({
+                                where: { id: post.id },
+                                data: { children_urls: newChildrenUrls },
+                            });
+                        }
+
                         // Parallelize creation of the missing carousel child containers
                         const childResults = await Promise.all(
                             normalizedChildren
@@ -821,9 +835,11 @@ interface PublisherResults {
                             throw new MalformedDataError('No child container IDs stored');
                         }
 
-                        // Reconcile: create containers for children that have no stored
-                        // id yet (a partially-failed carousel can land in this lane with
-                        // an incomplete set). Only the missing ones are created.
+                        // Reconcile: (re)create containers for children that have no
+                        // stored id yet OR whose media changed since the container was
+                        // created (pre-fix carousels hold raw 9:16 or padded media —
+                        // normalize() now returns the cropped URL). Existing children
+                        // with fresh media are kept untouched.
                         let childrenData: { url: string; type: string }[] = [];
                         if (post.children_urls) {
                             try {
@@ -832,24 +848,27 @@ interface PublisherResults {
                                 throw new MalformedDataError('Malformed children_urls');
                             }
                         }
-                        const missingChildren = childrenData
-                            .map((child, idx) => ({ child, idx }))
-                            .filter(({ idx }) => !childEntries.has(idx));
-                        if (missingChildren.length > 0) {
-                            // Same ratio normalization as Phase 1 — the reconciles
-                            // create containers for children that failed earlier, and
-                            // must send the same (normalized) media the first pass did.
+                        const reconcileTargets: { idx: number; child: { url: string; type: string } }[] = [];
+                        const reconcileNotes: string[] = [];
+                        for (let idx = 0; idx < childrenData.length; idx++) {
+                            const stored = childrenData[idx];
+                            if (stored.type === 'video') {
+                                if (!childEntries.has(idx)) reconcileTargets.push({ idx, child: stored });
+                                continue;
+                            }
+                            const res = await normalizeCarouselChild({ url: stored.url, userId: post.user_id });
+                            const child = res.normalized ? { ...stored, url: res.url } : stored;
+                            if (!childEntries.has(idx) || child.url !== stored.url) {
+                                reconcileTargets.push({ idx, child });
+                                if (res.note) reconcileNotes.push(`Child reconcile[${idx}] normalized: ${res.note}`);
+                            }
+                        }
+                        for (const note of reconcileNotes) {
+                            await logPlanner(post.planner_id || 'unknown', note, 'info');
+                        }
+                        if (reconcileTargets.length > 0) {
                             const created: { idx: number; id: string }[] = [];
-                            for (const { child, idx } of missingChildren) {
-                                if (child.type !== 'video') {
-                                    const res = await normalizeCarouselChild({ url: child.url, userId: post.user_id });
-                                    if (res.normalized) {
-                                        child.url = res.url;
-                                        if (res.note) {
-                                            await logPlanner(post.planner_id || 'unknown', `Child reconcile[${idx}] normalized: ${res.note}`, 'info');
-                                        }
-                                    }
-                                }
+                            for (const { child, idx } of reconcileTargets) {
                                 const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, child.url);
                                 const childParams = buildCarouselChildParams({
                                     child,
@@ -881,6 +900,19 @@ interface PublisherResults {
                                     data: { instagram_child_ids: serializeChildIdEntries(childEntries) },
                                 });
                             }
+                            // Persist the reconciled (possibly cropped) URLs so a later
+                            // run sees already-normalized media and stops re-creating.
+                            const persistedChildren = childrenData.map((c, idx) => {
+                                const target = reconcileTargets.find((t) => t.idx === idx);
+                                return target?.child ?? c;
+                            });
+                            const newChildrenUrls = JSON.stringify(persistedChildren);
+                            if (newChildrenUrls !== post.children_urls) {
+                                await prisma.post.update({
+                                    where: { id: post.id },
+                                    data: { children_urls: newChildrenUrls },
+                                });
+                            }
                             // Still incomplete (some reconciled children failed): the
                             // carousel cannot be assembled yet — retry on a later tick. Bump
                             // the attempt bookkeeping like every other retryable lane so an
@@ -888,7 +920,7 @@ interface PublisherResults {
                             // dead-letter instead of spinning forever.
                             const stillMissing = childrenData.some((_, idx) => !childEntries.has(idx));
                             if (stillMissing) {
-                                const reconcileMsg = `Carousel ${post.id}: ${missingChildren.length} child(ren) missing or failed to initialize — reconcile incomplete`;
+                                const reconcileMsg = `Carousel ${post.id}: children missing or failed to initialize — reconcile incomplete`;
                                 await logPlanner(post.planner_id || 'unknown', reconcileMsg, 'info');
                                 await handleRetryableFailure({
                                     post,
@@ -901,7 +933,39 @@ interface PublisherResults {
                             }
                         }
 
-                        const childIds = sortedChildIds(childEntries);
+                        // Mount the carousel in ALPHABETICAL slide order (A-Z; 1-10).
+                        // Posts created before the alphabetical-order fix carry
+                        // children_urls in created_at order; resolve the original file
+                        // names from content_items and order the child ids by name.
+                        const namesByUrl = new Map<string, string>();
+                        try {
+                            const urlList = [...new Set(childrenData.map((c) => c.url).filter(Boolean))];
+                            if (urlList.length > 0) {
+                                const known = await prisma.contentItem.findMany({
+                                    where: { url: { in: urlList } },
+                                    select: { url: true, name: true },
+                                });
+                                for (const item of known) {
+                                    if (item.name && item.url) {
+                                        namesByUrl.set(item.url, String(item.name));
+                                    }
+                                }
+                            }
+                        } catch {
+                            // name resolution is best-effort — fall back to stored order
+                        }
+                        // Fall back to the stored order when any slide has no resolvable
+                        // name (external/import-url children) — never guess on partial data.
+                        const childIds =
+                            childrenData.some((c) => !namesByUrl.has(c.url))
+                                ? sortedChildIds(childEntries)
+                                : childrenData
+                                    .map((c, idx) => ({ idx, name: namesByUrl.get(c.url) || '' }))
+                                    .sort((a, b) =>
+                                        a.name.localeCompare(b.name, undefined, { numeric: true }) || a.idx - b.idx
+                                    )
+                                    .map((e) => childEntries.get(e.idx))
+                                    .filter((id): id is string => Boolean(id));
                         // Parallelize child status checks
                         const statusPromises = childIds.map(async (cid) => {
                             const res = await fetchWithTimeout(`${baseUrl}/${GRAPH_API_VERSION}/${cid}?fields=status_code&access_token=${accessToken}`);

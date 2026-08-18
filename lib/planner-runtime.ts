@@ -480,9 +480,20 @@ export async function resolvePlannerRuntime(
 			if (libItem.type === "carousel_folder") {
 				const subItems = await prisma.contentItem.findMany({
 					where: { parent_id: libItem.id },
-					orderBy: { created_at: "asc" },
 				});
-				children = subItems
+				// Order slides alphabetically by name (A-Z; 1-10), matching how the
+				// uploader sorts files into the carousel (localeCompare with numeric
+				// collation). created_at cannot be trusted here: parallel uploads
+				// complete out of order, so the insertion date does not mirror the
+				// alphabetical order the user sees in the library.
+				const sortedSubItems = [...subItems].sort((a, b) =>
+					String(a.name || "").localeCompare(
+						String(b.name || ""),
+						undefined,
+						{ numeric: true },
+					),
+				);
+				children = sortedSubItems
 					.map((c: any) => {
 						const urlStr = c.url || "";
 						const isVideo =

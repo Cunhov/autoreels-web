@@ -12,9 +12,10 @@ import { getPublicUrl } from "@/lib/storage";
  * image defines the crop for ALL slides ("Carousel images are all cropped
  * based on the first image in the carousel, with the default being a 1:1
  * aspect ratio"). A 9:16 portrait image (0.5625) is outside the accepted
- * range, so Instagram either rejects it or crops it badly — the bug the user
- * hit. Instead of failing the post, we normalize offending images to the
- * nearest supported ratio by PADDING (blurred background), never cropping.
+ * range, so Instagram either rejects it or crops it badly. To match
+ * Instagram's native behavior we CROP (fill the target frame, cutting the
+ * excess top/bottom or left/right) rather than pad: padding produces the
+ * "zoomed out" letterbox look users reported as wrong.
  */
 
 // Accepted Instagram feed/carousel ratios (w/h). Minimum ~3:4, max 1.91:1.
@@ -25,7 +26,7 @@ export const CAROUSEL_MAX_RATIO = 1.91; // landscape 1.91:1
 export const CAROUSEL_TARGET_RATIO_TALL = 4 / 5; // 0.8
 export const CAROUSEL_TARGET_RATIO_WIDE = 1.91;
 
-const CACHE_SUBDIR = "carousel-cache";
+const CACHE_SUBDIR = "carousel-cache-v2";
 
 export interface NormalizeResult {
 	/** URL to send to the Instagram API (cache file when normalized). */
@@ -99,27 +100,14 @@ async function readImageDimensions(filePath: string) {
 }
 
 /**
- * Build a blurred-background padded version of `filePath` sized to `targetW`
- * x `targetH` (the original is composited centered at full quality on top).
+ * Center-crop `filePath` to exactly `targetW` x `targetH`. The excess top/
+ * bottom (tall images) or left/right (wide images) is cut away so the output
+ * fills the target frame — the same crop Instagram applies natively.
  * Returns the output buffer.
  */
-async function padWithBlurBackground(
-	filePath: string,
-	targetW: number,
-	targetH: number,
-) {
-	const original = await sharp(filePath, { failOn: "none" })
-		.resize(targetW, targetH, { fit: "contain", withoutEnlargement: false })
-		.toBuffer();
-
-	// Background: cover-resize + heavy blur (classic Instagram story look).
-	const bg = await sharp(filePath, { failOn: "none" })
-		.resize(targetW, targetH, { fit: "cover" })
-		.blur(40)
-		.toBuffer();
-
-	return sharp(bg)
-		.composite([{ input: original, gravity: "centre" }])
+async function cropToTarget(filePath: string, targetW: number, targetH: number) {
+	return sharp(filePath, { failOn: "none" })
+		.resize(targetW, targetH, { fit: "cover", position: "centre" })
 		.jpeg({ quality: 90 })
 		.toBuffer();
 }
@@ -127,12 +115,13 @@ async function padWithBlurBackground(
 /**
  * Normalize one carousel child image so its aspect ratio is inside
  * Instagram's accepted range (3:4 … 1.91:1). Images already in range are
- * returned untouched (zero cost). Out-of-range images (e.g. 9:16) are padded
- * to the nearest supported ratio with a blurred background — content is never
- * cropped.
+ * returned untouched (zero cost). Out-of-range images (e.g. 9:16) are
+ * center-cropped to the nearest supported ratio — 9:16 → 4:5 (cuts top /
+ * bottom), > 1.91:1 → 1.91:1 (cuts left/right) — matching Instagram's own
+ * crop behavior exactly.
  *
  * The normalized result is written to a deterministic cache file under
- * data/uploads/carousel-cache/{userId}/ so retries and partial-failure
+ * data/uploads/carousel-cache-v2/{userId}/ so retries and partial-failure
  * reconciles reuse the same file instead of re-encoding.
  */
 export async function normalizeCarouselChild(opts: {
@@ -167,19 +156,19 @@ export async function normalizeCarouselChild(opts: {
 		return { url: originalUrl, normalized: false };
 	}
 
-	// ── Compute the target canvas (pad, never crop) ──────────────────────────
+	// ── Compute the target canvas (crop to fill, Instagram-style) ────────────
 	let targetW: number;
 	let targetH: number;
 	let targetLabel: string;
 	if (ratio < CAROUSEL_MIN_RATIO) {
-		// Too tall (e.g. 9:16 = 0.5625 < 0.75) → pad the sides up to 4:5.
-		targetH = dims.height;
-		targetW = Math.round(dims.height * CAROUSEL_TARGET_RATIO_TALL);
+		// Too tall (e.g. 9:16 = 0.5625 < 0.75) → crop top/bottom to 4:5.
+		targetW = dims.width;
+		targetH = Math.round(dims.width / CAROUSEL_TARGET_RATIO_TALL);
 		targetLabel = "4:5";
 	} else {
-		// Too wide (> 1.91:1) → pad top/bottom up to 1.91:1.
-		targetW = dims.width;
-		targetH = Math.round(dims.width / CAROUSEL_TARGET_RATIO_WIDE);
+		// Too wide (> 1.91:1) → crop left/right to 1.91:1.
+		targetW = Math.round(dims.height * CAROUSEL_TARGET_RATIO_WIDE);
+		targetH = dims.height;
 		targetLabel = "1.91:1";
 	}
 
@@ -219,7 +208,7 @@ export async function normalizeCarouselChild(opts: {
 		}
 
 		await mkdir(safeCacheDir, { recursive: true });
-		const outBuf = await padWithBlurBackground(filePath, targetW, targetH);
+		const outBuf = await cropToTarget(filePath, targetW, targetH);
 
 		// Atomic write: .part then rename — a concurrent worker reading the
 		// cache never sees a half-written file.
