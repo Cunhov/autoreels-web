@@ -11,6 +11,7 @@ import {
 } from '@/lib/instagram';
 import { runPlannerOnce } from '@/lib/planner-runtime';
 import { sendNotification } from '@/lib/notify';
+import { normalizeCarouselChild } from '@/lib/carousel-normalize';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -601,13 +602,34 @@ interface PublisherResults {
                         // child containers (partial failure). Only create the ones we
                         // do not have an id for — never duplicate existing children.
                         const existingChildren = parseChildIdEntries(post.instagram_child_ids ?? null);
-                        const missingChildren = childrenData
-                            .map((child, idx) => ({ child, idx }))
-                            .filter(({ idx }) => !existingChildren.has(idx));
+
+                        // Normalize out-of-range aspect ratios (e.g. 9:16) BEFORE
+                        // creating containers: Instagram crops every slide to the
+                        // FIRST slide's ratio and rejects ratios outside 3:4…1.91:1.
+                        // Normalizing is best-effort — failures fall back to the
+                        // original URL so the post is never blocked.
+                        const normalizedChildren = await Promise.all(
+                            childrenData.map(async (child, idx) => {
+                                if (child.type === 'video') return { child, idx, note: undefined };
+                                const res = await normalizeCarouselChild({ url: child.url, userId: post.user_id });
+                                return {
+                                    child: res.normalized ? { ...child, url: res.url } : child,
+                                    idx,
+                                    note: res.note,
+                                };
+                            }),
+                        );
+                        for (const { idx, note } of normalizedChildren) {
+                            if (note) {
+                                await logPlanner(plannerId, `[Phase1] Carousel child[${idx}] normalized: ${note}`, 'info');
+                            }
+                        }
 
                         // Parallelize creation of the missing carousel child containers
                         const childResults = await Promise.all(
-                            missingChildren.map(async ({ child, idx }): Promise<{ idx: number; id?: string; error?: string; status?: number }> => {
+                            normalizedChildren
+                                .filter(({ idx }) => !existingChildren.has(idx))
+                                .map(async ({ child, idx }): Promise<{ idx: number; id?: string; error?: string; status?: number }> => {
                                 const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, child.url);
                                 const childParams = buildCarouselChildParams({
                                     child,
@@ -814,8 +836,20 @@ interface PublisherResults {
                             .map((child, idx) => ({ child, idx }))
                             .filter(({ idx }) => !childEntries.has(idx));
                         if (missingChildren.length > 0) {
+                            // Same ratio normalization as Phase 1 — the reconciles
+                            // create containers for children that failed earlier, and
+                            // must send the same (normalized) media the first pass did.
                             const created: { idx: number; id: string }[] = [];
                             for (const { child, idx } of missingChildren) {
+                                if (child.type !== 'video') {
+                                    const res = await normalizeCarouselChild({ url: child.url, userId: post.user_id });
+                                    if (res.normalized) {
+                                        child.url = res.url;
+                                        if (res.note) {
+                                            await logPlanner(post.planner_id || 'unknown', `Child reconcile[${idx}] normalized: ${res.note}`, 'info');
+                                        }
+                                    }
+                                }
                                 const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, child.url);
                                 const childParams = buildCarouselChildParams({
                                     child,
