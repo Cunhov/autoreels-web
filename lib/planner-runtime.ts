@@ -42,6 +42,7 @@ type PlannerContentItem = {
 	caption?: string;
 	caption_fallback?: string;
 	title_fallback?: string;
+	title?: string; // legacy — metadados de upload direto (sem row no banco)
 	location_id?: string | null;
 	share_to_feed?: boolean;
 	thumbnail_url?: string;
@@ -211,6 +212,14 @@ export function describeChannelHealth(channel: ChannelLike, now = new Date()) {
 /**
  * Resolve as variáveis de template de legenda ({post_title}, {post_caption},
  * {date}, {channel_name}, {hashtags}). O lookup de library item é IDOR-safe.
+ *
+ * FEEDBACK-LOOP GUARD: o wizard grava o texto digitado pelo usuário (que
+ * contém {post_caption}/{date}/...) no campo `caption` de CADA entrada de
+ * config.content. Resolver {post_caption} a partir desse mesmo campo expande
+ * o template dentro dele mesmo — a legenda publicada saía duplicada e com
+ * chave literal ("A A {post_caption} B ... B 22/08/2026 C"). Por isso
+ * {post_caption} e {post_title} resolvem SOMENTE da row do ContentItem no
+ * banco e dos campos explícitos *_fallback — NUNCA de selectedContent.caption.
  */
 export async function resolveCaptionTemplateVars(
 	prisma: PrismaLike,
@@ -220,9 +229,8 @@ export async function resolveCaptionTemplateVars(
 	channelName: string,
 	now: Date,
 ): Promise<Record<string, string>> {
-	let title = selectedContent?.title_fallback || "";
-	let itemCaption =
-		selectedContent?.caption_fallback || selectedContent?.caption || "";
+	let title = "";
+	let itemCaption = "";
 	let libTags: string | null | undefined = (
 		selectedContent as { tags?: string | null } | null
 	)?.tags;
@@ -233,11 +241,16 @@ export async function resolveCaptionTemplateVars(
 			select: { title: true, caption: true, tags: true },
 		});
 		if (libItem) {
-			title = libItem.title || title;
-			itemCaption = libItem.caption || itemCaption;
+			title = libItem.title || "";
+			itemCaption = libItem.caption || "";
 			libTags = libItem.tags;
 		}
 	}
+	// Fallbacks explícitos por último. `selectedContent.caption` fica
+	// deliberadamente fora da cadeia: é onde o template digitado vive.
+	title =
+		title || selectedContent?.title_fallback || selectedContent?.title || "";
+	itemCaption = itemCaption || selectedContent?.caption_fallback || "";
 	const tz = getPlannerTimezone(config);
 	const dateStr = new Intl.DateTimeFormat("pt-BR", {
 		timeZone: tz,
@@ -396,8 +409,7 @@ export async function buildPostData(opts: {
 		thumbnail_url:
 			runtime.thumbnailUrl ||
 			(safeChildren.length > 0 ? safeChildren[0].url : null),
-		children_urls:
-			safeChildren.length > 0 ? JSON.stringify(safeChildren) : null,
+		children_urls: safeChildren.length > 0 ? JSON.stringify(safeChildren) : null,
 		share_to_feed: runtime.shareToFeed,
 		location_id: runtime.locationId,
 		collaborators: normalizeCollaborators(runtime.collaborators),
@@ -487,18 +499,15 @@ export async function resolvePlannerRuntime(
 				// complete out of order, so the insertion date does not mirror the
 				// alphabetical order the user sees in the library.
 				const sortedSubItems = [...subItems].sort((a, b) =>
-					String(a.name || "").localeCompare(
-						String(b.name || ""),
-						undefined,
-						{ numeric: true },
-					),
+					String(a.name || "").localeCompare(String(b.name || ""), undefined, {
+						numeric: true,
+					}),
 				);
 				children = sortedSubItems
 					.map((c: any) => {
 						const urlStr = c.url || "";
 						const isVideo =
-							c.type === "video" ||
-							(urlStr && /\.(mp4|mov)(\?.*)?$/i.test(urlStr));
+							c.type === "video" || (urlStr && /\.(mp4|mov)(\?.*)?$/i.test(urlStr));
 						return {
 							url: urlStr,
 							type: isVideo ? "video" : "image",
@@ -514,18 +523,38 @@ export async function resolvePlannerRuntime(
 					thumbnailUrl = children[0].url;
 				}
 			}
-
-			const itemTitle = libItem.title || selectedContent.title_fallback || "";
-			const itemCaption =
-				libItem.caption || selectedContent.caption_fallback || "";
-
-			caption = (caption || "")
-				.replace(/{post_title}/g, itemTitle)
-				.replace(/{post_caption}/g, itemCaption);
 		} else {
 			warnings.push(`Library item not found: ${libId}`);
 		}
 	}
+
+	// SINGLE SUBSTITUTION PATH — a caption da entrada (onde o wizard grava o
+	// template digitado) é resolvida via resolveCaptionTemplateVars +
+	// substituteCaptionTemplate, as MESMAS funções do lane de publicação
+	// (applyCaptionTemplate com rotation=off). Isso garante:
+	//   - zero chaves literais ({date}, {channel_name}, {hashtags} e
+	//     desconhecidas eram vazadas por um .replace ad-hoc de só 2 variáveis);
+	//   - parity preview×publicação para o mesmo estado;
+	//   - que o caso "library item not found" também resolva limpo (via
+	//     fallbacks) em vez de publicar o template cru.
+	// NÃO re-substituir este valor em outro lugar: buildPostData/preview
+	// resolvem a partir das mesmas fontes — alimentar runtime.caption de volta
+	// em substituteCaptionTemplate quebraria a idempotência se um valor
+	// resolvido contiver "{".
+	const firstChannel = (planner.channels || [])[0];
+	const channelName =
+		firstChannel && typeof firstChannel.name === "string"
+			? firstChannel.name
+			: "";
+	const templateVars = await resolveCaptionTemplateVars(
+		prisma,
+		selectedContent,
+		{ user_id: planner.user_id },
+		config,
+		channelName,
+		now,
+	);
+	caption = substituteCaptionTemplate(caption || "", templateVars);
 
 	if (!thumbnailUrl && children.length > 0) {
 		thumbnailUrl = children[0].thumbnail_url || children[0].url;
@@ -728,9 +757,7 @@ export async function runPlannerOnce(
 	// sequencial em planners com múltiplos canais.
 	const nextState = {
 		...runtime.nextState,
-		...(useTemplates
-			? { template_index: templateIndex + postDatas.length }
-			: {}),
+		...(useTemplates ? { template_index: templateIndex + postDatas.length } : {}),
 	};
 
 	const ops: any[] = postDatas.map((d) => prisma.post.create({ data: d }));

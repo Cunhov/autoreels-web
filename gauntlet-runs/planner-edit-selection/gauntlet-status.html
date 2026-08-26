@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Gauntlet — planner-edit-selection</title>
+    <style>
+      body {
+        font-family: -apple-system, sans-serif;
+        background: #0d1117;
+        color: #e6edf3;
+        max-width: 900px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        font-size: 1.3rem;
+      }
+      .badge {
+        padding: 0.15rem 0.5rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+      }
+      .red {
+        background: #490202;
+        color: #ff8182;
+      }
+      .green {
+        background: #033a16;
+        color: #4ae168;
+      }
+      .amber {
+        background: #452700;
+        color: #f5a524;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      td,
+      th {
+        text-align: left;
+        padding: 0.4rem 0.6rem;
+        border-bottom: 1px solid #21262d;
+      }
+      code {
+        color: #79c0ff;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Gauntlet Loop — Planner edit: seleção na library + tags de legenda</h1>
+    <p>
+      <span class="badge amber">PAUSADO — provider indisponível (503)</span>
+      Budget: <b>unlimited (win or user stop)</b> · Modelo: ox-alpha · Barra:
+      E2E real no browser + gates
+    </p>
+
+    <h2>Preflight</h2>
+    <ul>
+      <li>
+        ✅ Bar real e alcançável: comportamento medido por Playwright contra
+        standalone server local
+      </li>
+      <li>
+        ✅ Infra existente reusada: boot.sh, planner-run.sh, planner-visual.mjs
+        (JWT cookie + seed SQLite)
+      </li>
+      <li>
+        ✅ Instrumento de medição (S1–S4): baseline vermelho capturado em
+        <code>out/baseline.json</code>
+      </li>
+      <li>
+        ✅ Gates definidos: <code>tsc --noEmit</code>,
+        <code>npm run lint</code>, <code>npm run build</code>, harness exit 0
+      </li>
+      <li>
+        ⚠️ Limpar .next antes do tsc (artefato duplicado routes.d 2.ts gera
+        TS2300 espúrio)
+      </li>
+      <li>
+        🔴 <b>Bug 3 descoberto pelo instrumento</b>: feedback loop na publicação
+        — legenda sai duplicada com chave literal (<code
+          >"A A {post_caption} ... B 22/08/2026 C"</code
+        >) — CORRIGIDO E APROVADO PELO CRITIC
+      </li>
+      <li>
+        ✅ Gates re-executados pelo supervisor: tsc ✅ build ✅ lint sem erro
+        novo vs HEAD ✅ harness ALL PASS ✅
+      </li>
+      <li>
+        🔧 Instrumento corrigido na pausa:
+        <code>planner-edit-run.sh</code> faz mkdir de gates/ antes do redirect
+        (gate .md nunca mais vazio)
+      </li>
+    </ul>
+
+    <h2>Pieces &amp; rounds</h2>
+    <table>
+      <tr>
+        <th>Piece</th>
+        <th>Rodada</th>
+        <th>Status</th>
+        <th>Veredito</th>
+      </tr>
+      <tr>
+        <td>Harness S1–S4 (instrumento)</td>
+        <td>r0</td>
+        <td><span class="badge green">baseline ✓</span></td>
+        <td>S1 ❌ S2 ❌ S3preview ❌ S3direct ❌ S4 ⚠️ — bugs reproduzidos</td>
+      </tr>
+      <tr>
+        <td>Bug 1 — seleção sobrevive a paginação/remount</td>
+        <td>r1</td>
+        <td><span class="badge green">builder ✓</span></td>
+        <td>S1=130/130 PASS, S2=127 exatos; critic pendente (provider 503)</td>
+      </tr>
+      <tr>
+        <td>Bug 2+3 — zero vazamento de {tag} + feedback loop</td>
+        <td>r1</td>
+        <td><span class="badge green">WIN</span></td>
+        <td>Critic aprovou após 8 ataques; parity + idempotência provadas</td>
+      </tr>
+      <tr>
+        <td>Critics adversariais (contexto fresco)</td>
+        <td>r1</td>
+        <td><span class="badge amber">tags WIN · seleção pausado</span></td>
+        <td>6× network_error/503; retomar com 1 critic fresco circunscrito</td>
+      </tr>
+      <tr>
+        <td>UX micro-detalhes (contador, feedback, estados)</td>
+        <td>—</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </table>
+  </body>
+</html>

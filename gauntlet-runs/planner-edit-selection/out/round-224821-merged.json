@@ -1,0 +1,57 @@
+{
+  "label": "baseline",
+  "mode": "prod",
+  "commit": "2cbe47b",
+  "scenarios": {
+    "S1": {
+      "pass": false,
+      "reopenedBadge": {
+        "selected": 100,
+        "total": 130
+      },
+      "reopenedWizardCounter": 100,
+      "checkedAfterFullLoad": 100,
+      "rowsRendered": 130
+    },
+    "S2": {
+      "pass": false,
+      "reopenedBadge": {
+        "selected": 98,
+        "total": 130
+      },
+      "reopenedWizardCounter": 98,
+      "checkedAfterFullLoad": 98,
+      "deselectedStillUnchecked": {
+        "Sel Item 005": true,
+        "Sel Item 060": true,
+        "Sel Item 120": true
+      }
+    },
+    "S3preview": {
+      "pass": false,
+      "caption": "A  B {date} C {unknown_var}"
+    },
+    "S4preview": {
+      "pass": true,
+      "caption": "A MinhaLegenda B {date} C {unknown_var}"
+    },
+    "S3direct": {
+      "pass": false,
+      "ok": true,
+      "skipped": null,
+      "errors": [],
+      "caption": "A A {post_caption} B {date} C {unknown_var} B 22/08/2026 C ",
+      "dateResolved": true,
+      "noLiteralBraces": false
+    },
+    "S4direct": {
+      "pass": true,
+      "ok": true,
+      "caption": "A MinhaLegenda B 22/08/2026 C ",
+      "containsResolved": true
+    }
+  },
+  "consoleErrors": [],
+  "pageErrors": [],
+  "pass": false
+}

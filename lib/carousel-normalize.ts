@@ -105,7 +105,11 @@ async function readImageDimensions(filePath: string) {
  * fills the target frame — the same crop Instagram applies natively.
  * Returns the output buffer.
  */
-async function cropToTarget(filePath: string, targetW: number, targetH: number) {
+async function cropToTarget(
+	filePath: string,
+	targetW: number,
+	targetH: number,
+) {
 	return sharp(filePath, { failOn: "none" })
 		.resize(targetW, targetH, { fit: "cover", position: "centre" })
 		.jpeg({ quality: 90 })

@@ -1,0 +1,76 @@
+
+> autoreels-web@0.1.0 build
+> next build
+
+▲ Next.js 16.1.6 (Turbopack)
+- Environments: .env.local, .env
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 4.4s
+  Running TypeScript ...
+  Collecting page data using 7 workers ...
+  Generating static pages using 7 workers (0/40) ...
+  Generating static pages using 7 workers (10/40) 
+  Generating static pages using 7 workers (20/40) 
+  Generating static pages using 7 workers (30/40) 
+✓ Generating static pages using 7 workers (40/40) in 196.8ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /analytics
+├ ƒ /api/admin/backups
+├ ƒ /api/admin/fix-planners
+├ ƒ /api/admin/restore
+├ ƒ /api/auth/[...nextauth]
+├ ƒ /api/calendar
+├ ƒ /api/channels
+├ ƒ /api/channels/[id]
+├ ƒ /api/channels/[id]/insights
+├ ƒ /api/channels/[id]/refresh
+├ ƒ /api/channels/[id]/test
+├ ƒ /api/channels/[id]/token
+├ ƒ /api/channels/oauth/callback
+├ ƒ /api/channels/oauth/start
+├ ƒ /api/content-items
+├ ƒ /api/content-items/[id]
+├ ƒ /api/content-items/bulk
+├ ƒ /api/content-items/tags
+├ ƒ /api/cron/backup
+├ ƒ /api/cron/maintenance
+├ ƒ /api/cron/metrics
+├ ƒ /api/cron/publisher
+├ ƒ /api/file/[...path]
+├ ƒ /api/health
+├ ƒ /api/import-url
+├ ƒ /api/planners
+├ ƒ /api/planners/[id]
+├ ƒ /api/planners/[id]/duplicate
+├ ƒ /api/planners/[id]/preview
+├ ƒ /api/planners/[id]/run
+├ ƒ /api/planners/logs/[plannerId]
+├ ƒ /api/posts
+├ ƒ /api/posts/[id]
+├ ƒ /api/settings
+├ ƒ /api/storage
+├ ƒ /api/summary
+├ ƒ /api/upload
+├ ƒ /api/upload-chunk
+├ ƒ /api/upload-chunk/complete
+├ ƒ /api/upload-chunk/status
+├ ƒ /api/video/thumbnail
+├ ƒ /api/video/trim
+├ ○ /calendar
+├ ○ /channels
+├ ○ /content
+├ ○ /login
+├ ○ /new
+├ ○ /planners
+├ ○ /settings
+└ ○ /upload
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

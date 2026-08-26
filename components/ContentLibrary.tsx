@@ -229,9 +229,7 @@ const GridCellInner = ({
 				onDragEnd={handleDragEnd}
 				onDragOver={(e) => handleDragOver(e, item.id, item)}
 				onDragLeave={handleDragLeave}
-				onDrop={(e) =>
-					item.type === "carousel_folder" && handleDrop(e, item.id)
-				}
+				onDrop={(e) => item.type === "carousel_folder" && handleDrop(e, item.id)}
 				onClick={() => {
 					if (item.type === "carousel_folder") {
 						if (mode === "select" && disableUrlNavigation) {
@@ -248,10 +246,10 @@ const GridCellInner = ({
 				className={`
                     w-full h-full group relative aspect-square rounded-2xl border overflow-hidden cursor-pointer transition-all duration-200
                     ${
-											selectedIds.includes(item.id)
-												? "ring-2 ring-ios-blue border-transparent shadow-lg scale-[1.02]"
-												: "border-ios-separator hover:border-ios-blue/50 hover:shadow-md"
-										}
+																					selectedIds.includes(item.id)
+																						? "ring-2 ring-ios-blue border-transparent shadow-lg scale-[1.02]"
+																						: "border-ios-separator hover:border-ios-blue/50 hover:shadow-md"
+																				}
                     ${dropTargetId === item.id ? "ring-2 ring-green-500 scale-105 bg-green-50 dark:bg-green-900/20" : ""}
                     ${draggedItems.includes(item.id) ? "opacity-50" : ""}
                     bg-ios-card
@@ -328,9 +326,7 @@ const GridCellInner = ({
 							{/* Size / Duration Badge */}
 							<div className="flex items-center gap-2 mt-1 text-[10px] text-gray-200">
 								{item.size && <span>{formatBytes(item.size)}</span>}
-								{item.duration ? (
-									<span>• {formatTime(item.duration)}</span>
-								) : null}
+								{item.duration ? <span>• {formatTime(item.duration)}</span> : null}
 							</div>
 						</div>
 					</div>
@@ -437,6 +433,11 @@ const gridCellComparer = (prev: GridCellProps, next: GridCellProps) =>
 	prev.style?.left === next.style?.left &&
 	prev.style?.top === next.style?.top;
 
+// SAFETY: react-window v2 invokes cellComponent with the static shape
+// { data, columnIndex, rowIndex, style } (cellProps supplies `data`);
+// GridCellInner reads every other value from that single `data` object, so
+// the narrower prop type is guaranteed at every call site even though
+// memo() widens it.
 const GridCell = memo(GridCellInner, gridCellComparer) as unknown as (props: {
 	data: GridCellData;
 }) => React.ReactElement | null;
@@ -622,6 +623,26 @@ export default function ContentLibrary({
 
 	const [loading, setLoading] = useState(true);
 	const [selectedIds, setSelectedIds] = useState<string[]>(initialSelection);
+	// Value-sync with the parent's initialSelection: adopt external changes
+	// that arrive after mount (e.g. the wizard finishes loading a planner
+	// after this library mounted, or the library remounts on tab switch).
+	// Adoption stops once the user interacts locally — from then on the
+	// parent only echoes our own onSelectionChange output, so re-adopting
+	// could clobber newer local choices during an echo round-trip.
+	const initialSelectionKey = useMemo(
+		() => [...new Set(initialSelection)].sort().join("\n"),
+		[initialSelection],
+	);
+	const lastInitialSelectionKeyRef = useRef<string | null>(initialSelectionKey);
+	const selectionTouchedRef = useRef(false);
+	useEffect(() => {
+		if (lastInitialSelectionKeyRef.current === initialSelectionKey) return;
+		lastInitialSelectionKeyRef.current = initialSelectionKey;
+		if (selectionTouchedRef.current) return;
+		const next = initialSelectionKey ? initialSelectionKey.split("\n") : [];
+		setSelectedIds(next);
+		setSelectionOrder([...next]);
+	}, [initialSelectionKey]);
 	const [search, setSearch] = useState("");
 	const [debouncedSearch, setDebouncedSearch] = useState("");
 	const [showFilters, setShowFilters] = useState(false);
@@ -767,8 +788,7 @@ export default function ContentLibrary({
 				params.set("types", finalTypes.join(","));
 			}
 
-			if (filterTags.length > 0)
-				params.set("include_tags", filterTags.join(","));
+			if (filterTags.length > 0) params.set("include_tags", filterTags.join(","));
 			if (excludeTags.length > 0)
 				params.set("exclude_tags", excludeTags.join(","));
 
@@ -869,12 +889,14 @@ export default function ContentLibrary({
 				if (controller.signal.aborted) return;
 
 				setItems((data as ContentItem[]).map(normalizeItem));
-				if (keepSelection) {
-					// Keep only the ids that still exist in the refreshed page
-					const visibleIds = new Set((data as ContentItem[]).map((i) => i.id));
-					setSelectedIds((prev) => prev.filter((id) => visibleIds.has(id)));
-					setSelectionOrder((prev) => prev.filter((id) => visibleIds.has(id)));
-				}
+				// When keepSelection is true we intentionally do NOT prune the
+				// selection down to the freshly fetched page. Selection is
+				// pagination-independent: ids beyond the first PAGE_SIZE items stay
+				// selected so editing a planner shows EVERY previously chosen item
+				// (user-reported bug: pruning to visibleIds here silently dropped
+				// all selections past page 1, and "Load more" never brought them
+				// back). Pruning happens only where an item is confirmed gone:
+				// explicit deletes, or folder navigation (keepSelection=false).
 				setTotalCount(json.totalCount ?? data.length);
 				setHasMore(json.hasMore ?? false);
 				setCurrentOffset(PAGE_SIZE);
@@ -911,10 +933,7 @@ export default function ContentLibrary({
 			// Stale response after navigating away — discard it
 			if (folderAtStart !== currentFolderId) return;
 
-			setItems((prev) => [
-				...prev,
-				...(data as ContentItem[]).map(normalizeItem),
-			]);
+			setItems((prev) => [...prev, ...(data as ContentItem[]).map(normalizeItem)]);
 			setTotalCount(json.totalCount ?? items.length + data.length);
 			setHasMore(json.hasMore ?? false);
 			setCurrentOffset((prev) => prev + PAGE_SIZE);
@@ -1045,6 +1064,7 @@ export default function ContentLibrary({
 
 	const toggleSelection = useCallback(
 		(id: string) => {
+			selectionTouchedRef.current = true;
 			if (selectedIds.includes(id)) {
 				setSelectedIds(selectedIds.filter((sid) => sid !== id));
 				setSelectionOrder(selectionOrder.filter((sid) => sid !== id));
@@ -1147,9 +1167,7 @@ export default function ContentLibrary({
 		const selectedTypes = filterTypes.length > 0 ? filterTypes : allowedTypes;
 		expandTypeFilters(selectedTypes).forEach((type) => typeSet.add(type));
 		const allowedSet = new Set(expandTypeFilters(allowedTypes));
-		const finalTypes = Array.from(typeSet).filter((type) =>
-			allowedSet.has(type),
-		);
+		const finalTypes = Array.from(typeSet).filter((type) => allowedSet.has(type));
 		const defaultAllowedTypes = [
 			"video",
 			"image",
@@ -1363,8 +1381,7 @@ export default function ContentLibrary({
 				console.error("Save failed:", error);
 				setToast({
 					msg:
-						"Failed to save image: " +
-						((error as Error)?.message || "unknown error"),
+						"Failed to save image: " + ((error as Error)?.message || "unknown error"),
 					type: "error",
 					show: true,
 				});
@@ -1386,15 +1403,14 @@ export default function ContentLibrary({
 
 	const sortedItems = useMemo(() => {
 		return [...items].sort((a, b) => {
-			if (a.type === "carousel_folder" && b.type !== "carousel_folder")
-				return -1;
-			if (a.type !== "carousel_folder" && b.type === "carousel_folder")
-				return 1;
+			if (a.type === "carousel_folder" && b.type !== "carousel_folder") return -1;
+			if (a.type !== "carousel_folder" && b.type === "carousel_folder") return 1;
 			return 0;
 		});
 	}, [items]);
 
 	const handleSelectAll = useCallback(() => {
+		selectionTouchedRef.current = true;
 		const allFilteredIds = sortedItems.map((i) => i.id);
 		const allSelected = allFilteredIds.every((id) => selectedIds.includes(id));
 
@@ -1819,8 +1835,7 @@ export default function ContentLibrary({
 								multiple
 								className="hidden"
 								onChange={(e) => {
-									if (e.target.files?.length)
-										onDrop(Array.from(e.target.files));
+									if (e.target.files?.length) onDrop(Array.from(e.target.files));
 									// Reset so selecting the same file again re-triggers onChange
 									e.target.value = "";
 								}}
@@ -1924,9 +1939,7 @@ export default function ContentLibrary({
 										key={type.id}
 										onClick={() => {
 											if (filterTypes.includes(type.id))
-												setFilterTypes(
-													filterTypes.filter((t) => t !== type.id),
-												);
+												setFilterTypes(filterTypes.filter((t) => t !== type.id));
 											else setFilterTypes([...filterTypes, type.id]);
 										}}
 										className={`text-xs px-2 py-1 rounded-md border transition-colors ${
@@ -2007,8 +2020,7 @@ export default function ContentLibrary({
 						handleDragOver(e, null, null);
 				}}
 				onDrop={(e) => {
-					if (e.dataTransfer?.types?.includes("text/plain"))
-						handleDrop(e, null);
+					if (e.dataTransfer?.types?.includes("text/plain")) handleDrop(e, null);
 				}}
 			>
 				{loading ? (
@@ -2021,9 +2033,7 @@ export default function ContentLibrary({
 							<AlertCircle size={32} className="text-ios-red" />
 						</div>
 						<div>
-							<p className="font-medium text-lg">
-								Erro ao carregar a biblioteca
-							</p>
+							<p className="font-medium text-lg">Erro ao carregar a biblioteca</p>
 							<p className="text-sm mt-1 opacity-70">{fetchError}</p>
 						</div>
 						<button
@@ -2040,9 +2050,7 @@ export default function ContentLibrary({
 						</div>
 						<div>
 							<p className="font-medium text-lg">
-								{debouncedSearch
-									? "Nenhum item encontrado"
-									: "Current folder is empty"}
+								{debouncedSearch ? "Nenhum item encontrado" : "Current folder is empty"}
 							</p>
 							<p className="text-sm mt-1 opacity-70">
 								{debouncedSearch
@@ -2087,18 +2095,16 @@ export default function ContentLibrary({
 											title="Select / Deselect All"
 										>
 											{sortedItems.length > 0 &&
-												sortedItems.every((i) =>
-													selectedIds.includes(i.id),
-												) && <Check size={12} />}
+												sortedItems.every((i) => selectedIds.includes(i.id)) && (
+													<Check size={12} />
+												)}
 										</button>
 									</th>
 									<th
 										scope="col"
 										className="px-3 py-3 text-left text-xs font-semibold text-ios-secondary uppercase tracking-wider cursor-pointer hover:text-ios-text select-none"
 										onClick={() =>
-											setSortBy((s) =>
-												s === "name-asc" ? "name-desc" : "name-asc",
-											)
+											setSortBy((s) => (s === "name-asc" ? "name-desc" : "name-asc"))
 										}
 									>
 										<div className="flex items-center gap-1">
@@ -2214,10 +2220,7 @@ export default function ContentLibrary({
 																		alt=""
 																	/>
 																	<div className="absolute inset-0 flex items-center justify-center bg-black/20">
-																		<Folder
-																			size={18}
-																			className="text-white drop-shadow"
-																		/>
+																		<Folder size={18} className="text-white drop-shadow" />
 																	</div>
 																</>
 															) : (
@@ -2512,21 +2515,16 @@ export default function ContentLibrary({
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
 					<div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl">
 						<h3 className="text-lg font-semibold text-ios-text mb-4">
-							Rename {selectAllServer ? totalCount : selectionOrder.length}{" "}
-							Items in Order
+							Rename {selectAllServer ? totalCount : selectionOrder.length} Items in
+							Order
 						</h3>
 						<p className="text-sm text-ios-secondary mb-4">
 							{selectAllServer
 								? `Todos os ${totalCount} itens (com os filtros atuais) serão renomeados como:`
 								: "Items will be renamed as:"}{" "}
-							<code className="bg-ios-background px-2 py-1 rounded">
-								prefix_001
-							</code>
-							,{" "}
-							<code className="bg-ios-background px-2 py-1 rounded">
-								prefix_002
-							</code>
-							, etc.
+							<code className="bg-ios-background px-2 py-1 rounded">prefix_001</code>,{" "}
+							<code className="bg-ios-background px-2 py-1 rounded">prefix_002</code>,
+							etc.
 						</p>
 						<input
 							type="text"
@@ -2562,9 +2560,7 @@ export default function ContentLibrary({
 			{isCreateFolderOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
 					<div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl">
-						<h3 className="text-lg font-semibold text-ios-text mb-4">
-							Nova pasta
-						</h3>
+						<h3 className="text-lg font-semibold text-ios-text mb-4">Nova pasta</h3>
 						<input
 							type="text"
 							value={newFolderName}

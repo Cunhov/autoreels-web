@@ -1,0 +1,70 @@
+{
+  "scenarios": {
+    "S1": {
+      "pass": true,
+      "reopenedBadge": {
+        "selected": 130,
+        "total": 130
+      },
+      "reopenedWizardCounter": 130,
+      "checkedAfterFullLoad": 130,
+      "rowsRendered": 130
+    },
+    "S2": {
+      "pass": true,
+      "reopenedBadge": {
+        "selected": 127,
+        "total": 130
+      },
+      "reopenedWizardCounter": 127,
+      "checkedAfterFullLoad": 127,
+      "deselectedStillUnchecked": {
+        "Sel Item 005": true,
+        "Sel Item 060": true,
+        "Sel Item 120": true
+      }
+    },
+    "S3preview": {
+      "pass": true,
+      "caption": "A  B 22/08/2026 C "
+    },
+    "S4preview": {
+      "pass": true,
+      "caption": "A MinhaLegenda B 22/08/2026 C "
+    }
+  },
+  "evidence": {
+    "s1_createdWithSelection": 130,
+    "s1_reopenedBadge": {
+      "selected": 130,
+      "total": 130
+    },
+    "s1_reopenedWizardCounter": 130,
+    "s1_rowsRendered": 130,
+    "s1_checkedAfterFullLoad": 130,
+    "s1_badgeAfterFullLoad": {
+      "selected": 130,
+      "total": 130
+    },
+    "s2_afterDeselect": {
+      "selected": 127,
+      "total": 130
+    },
+    "s2_reopenedBadge": {
+      "selected": 127,
+      "total": 130
+    },
+    "s2_reopenedWizardCounter": 127,
+    "s2_checkedAfterFullLoad": 127,
+    "s2_deselectedStillUnchecked": {
+      "Sel Item 005": true,
+      "Sel Item 060": true,
+      "Sel Item 120": true
+    },
+    "s3_previewCaption": "A  B 22/08/2026 C ",
+    "s4_previewCaption": "A MinhaLegenda B 22/08/2026 C "
+  },
+  "consoleErrors": [],
+  "pageErrors": [],
+  "pass": true
+}

@@ -1,0 +1,21 @@
+==> temp dir: /var/folders/28/xppyht0s0w9cmfv134s0zxcm0000gn/T//planner-edit-gauntlet.TrkaTg (port 52743, mode prod)
+==> prisma db push (test DB /var/folders/28/xppyht0s0w9cmfv134s0zxcm0000gn/T//planner-edit-gauntlet.TrkaTg/test.db)
+    db push ok
+==> next build
+    build ok
+    static copied into standalone
+==> server ready on port 52743
+==> running scenarios (S1/S2 UI + S3/S4 preview)
+    (scenarios exit 0)
+SCENARIO S1: PASS — reopened counter=130 (want 130), badge={"selected":130,"total":130}, checked=130/130
+SCENARIO S2: PASS — reopened counter=127 (want 127), checked=127, deselectedIntact={"Sel Item 005":true,"Sel Item 060":true,"Sel Item 120":true}
+SCENARIO S3-preview: PASS — caption="A  B 22/08/2026 C " (no "{" allowed; {date} must resolve)
+SCENARIO S4-preview: PASS — caption="A MinhaLegenda B 22/08/2026 C " (must contain "A MinhaLegenda B")
+PLANNER-EDIT VISUAL: PASS — consoleErrors=0 pageErrors=0
+==> running direct (S3/S4 publish lane via runPlannerOnce)
+    (direct exit 0)
+SCENARIO S3direct: PASS — caption="A  B 22/08/2026 C " (no "{" allowed; {date} must resolve)
+SCENARIO S4direct: PASS — caption="A MinhaLegenda B 22/08/2026 C " (must contain "A MinhaLegenda B")
+scripts/gauntlet/planner-edit-run.sh: line 184: gauntlet-runs/planner-edit-selection/out/round-01-tags/gates/round-230857-baseline.md: No such file or directory
+
+==> ALL PLANNER-EDIT SCENARIOS PASS

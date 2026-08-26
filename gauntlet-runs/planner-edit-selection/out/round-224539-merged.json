@@ -1,0 +1,12 @@
+{
+  "label": "baseline",
+  "mode": "prod",
+  "commit": "2cbe47b",
+  "scenarios": {
+    "S3direct": null,
+    "S4direct": null
+  },
+  "consoleErrors": [],
+  "pageErrors": [],
+  "pass": false
+}

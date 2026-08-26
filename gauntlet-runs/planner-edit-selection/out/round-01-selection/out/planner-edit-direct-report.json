@@ -1,0 +1,17 @@
+{
+  "S3direct": {
+    "pass": true,
+    "ok": true,
+    "skipped": null,
+    "errors": [],
+    "caption": "A  B 22/08/2026 C ",
+    "dateResolved": true,
+    "noLiteralBraces": true
+  },
+  "S4direct": {
+    "pass": true,
+    "ok": true,
+    "caption": "A MinhaLegenda B 22/08/2026 C ",
+    "containsResolved": true
+  }
+}
