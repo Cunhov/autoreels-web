@@ -51,7 +51,9 @@ function plannerMediaLabel(
 				: "Imagem";
 	if (youtubeMode === "none") return igLabel;
 	const ytLabel =
-		isCarousel || mediaType === "IMAGE" ? "Post na Comunidade" : "Short do YouTube";
+		isCarousel || mediaType === "IMAGE"
+			? "Post na Comunidade"
+			: "Short do YouTube";
 	return youtubeMode === "only" ? ytLabel : `${igLabel} · ${ytLabel}`;
 }
 
@@ -417,7 +419,9 @@ export default function PlannerWizard({
 						setShareToFeed(firstItem?.share_to_feed !== false);
 					}
 					setCaption((firstItem?.caption as string | undefined) || "");
-					setCaptionFallback((firstItem?.caption_fallback as string | undefined) || "");
+					setCaptionFallback(
+						(firstItem?.caption_fallback as string | undefined) || "",
+					);
 					setTitleFallback((firstItem?.title_fallback as string | undefined) || "");
 					setLocation((firstItem?.location_id as string | undefined) || "");
 					// Caption templates (one per line) + rotation mode
@@ -452,14 +456,10 @@ export default function PlannerWizard({
 					};
 					setAudioId(audioConfig.audio_id || "");
 					setAudioVolume(
-						audioConfig.audio_volume !== undefined
-							? audioConfig.audio_volume
-							: 80,
+						audioConfig.audio_volume !== undefined ? audioConfig.audio_volume : 80,
 					);
 					setVideoVolume(
-						audioConfig.video_volume !== undefined
-							? audioConfig.video_volume
-							: 20,
+						audioConfig.video_volume !== undefined ? audioConfig.video_volume : 20,
 					);
 				} else {
 					setSelectedContentIds([]);
@@ -628,9 +628,7 @@ export default function PlannerWizard({
 			for (const it of items) {
 				hasTitle.set(
 					String(it.id || ""),
-					Boolean(
-						String(it.name || "").trim() || String(it.title || "").trim(),
-					),
+					Boolean(String(it.name || "").trim() || String(it.title || "").trim()),
 				);
 			}
 			return selectedContentIds.every((id) => hasTitle.get(String(id)));
@@ -645,7 +643,11 @@ export default function PlannerWizard({
 		const nowMs = Date.now();
 		if (nowMs - lastPlannerSubmitRef.current < 800) return;
 		lastPlannerSubmitRef.current = nowMs;
-		if (!plannerIdempotencyRef.current) plannerIdempotencyRef.current = (typeof crypto !== 'undefined' && 'randomUUID' in crypto) ? crypto.randomUUID() : String(Date.now()) + Math.random();
+		if (!plannerIdempotencyRef.current)
+			plannerIdempotencyRef.current =
+				typeof crypto !== "undefined" && "randomUUID" in crypto
+					? crypto.randomUUID()
+					: String(Date.now()) + Math.random();
 		setFormError("");
 
 		// Validate sleep schedule: a zero-length window silently disables the timer.
@@ -656,9 +658,7 @@ export default function PlannerWizard({
 
 		// Validate frequency: NaN/0/negative would spam or silently kill the planner.
 		const freqValue =
-			Number.isFinite(frequencyValue) && frequencyValue >= 1
-				? frequencyValue
-				: 10;
+			Number.isFinite(frequencyValue) && frequencyValue >= 1 ? frequencyValue : 10;
 
 		// Short do YouTube exige título: com planner só-YouTube e mídia em vídeo,
 		// exige que a legenda resolvida tenha texto (ou Título reserva). Usa o
@@ -726,9 +726,7 @@ export default function PlannerWizard({
 				const res = await fetch(`/api/content-items?${params.toString()}`);
 				if (res.ok) {
 					const payload = await res.json();
-					const folders = Array.isArray(payload)
-						? payload
-						: payload.items || [];
+					const folders = Array.isArray(payload) ? payload : payload.items || [];
 					const folderIds = new Set(
 						folders.map((f: { id?: string }) => f?.id).filter(Boolean),
 					);
@@ -925,9 +923,7 @@ export default function PlannerWizard({
 				// Convert local datetime string to an absolute ISO timestamp so the
 				// server (UTC) interprets the user's local wall-clock correctly.
 				start_time: startTime ? new Date(startTime).toISOString() : "",
-				sleep_schedule: sleepEnabled
-					? { start: sleepStart, end: sleepEnd }
-					: null,
+				sleep_schedule: sleepEnabled ? { start: sleepStart, end: sleepEnd } : null,
 				sort_order: sortOrder,
 				caption_templates: captionTemplates
 					.split("\n")
@@ -942,14 +938,15 @@ export default function PlannerWizard({
 				plannerId ? `/api/planners/${plannerId}` : "/api/planners",
 				{
 					method: plannerId ? "PATCH" : "POST",
-					headers: { "Content-Type": "application/json", "x-idempotency-key": plannerIdempotencyRef.current || "" },
+					headers: {
+						"Content-Type": "application/json",
+						"x-idempotency-key": plannerIdempotencyRef.current || "",
+					},
 					body: JSON.stringify({
 						name,
 						channel_ids: selectedChannels,
 						config: plannerConfig,
-						...(plannerId
-							? { reset_state: contentChanged }
-							: { status: "active" }),
+						...(plannerId ? { reset_state: contentChanged } : { status: "active" }),
 						_idempotencyKey: plannerIdempotencyRef.current,
 					}),
 				},
@@ -980,22 +977,38 @@ export default function PlannerWizard({
 		}
 	};
 
-    useEffect(() => {
-        if (!isOpen) return;
-        const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-        document.addEventListener('keydown', h);
-        return () => document.removeEventListener('keydown', h);
-    }, [isOpen, onClose]);
+	useEffect(() => {
+		if (!isOpen) return;
+		const h = (e: KeyboardEvent) => {
+			if (e.key === "Escape") onClose();
+		};
+		document.addEventListener("keydown", h);
+		return () => document.removeEventListener("keydown", h);
+	}, [isOpen, onClose]);
 
 	if (!isOpen) return null;
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={onClose}>
-			<div role="dialog" aria-modal="true" aria-labelledby="planner-wizard-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85dvh]">
+		<div
+			className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+			role="presentation"
+			onClick={onClose}
+		>
+			<div
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="planner-wizard-title"
+				tabIndex={-1}
+				onClick={(e) => e.stopPropagation()}
+				className="bg-ios-card w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85dvh]"
+			>
 				{/* Header */}
 				<div className="px-6 py-4 border-b border-ios-separator flex items-center justify-between bg-ios-background">
 					<div>
-						<h2 id="planner-wizard-title" className="text-[17px] font-semibold text-ios-text">
+						<h2
+							id="planner-wizard-title"
+							className="text-[17px] font-semibold text-ios-text"
+						>
 							New Planner
 						</h2>
 						<div className="flex items-center gap-2 text-xs text-ios-secondary mt-1">
@@ -1078,9 +1091,7 @@ export default function PlannerWizard({
 													: "bg-transparent border-gray-300"
 											}`}
 										>
-											{selectedChannels.includes(channel.id) && (
-												<Check size={14} />
-											)}
+											{selectedChannels.includes(channel.id) && <Check size={14} />}
 										</div>
 										{channel.platform === "youtube" ? (
 											<div className="w-10 h-10 rounded-full bg-ios-red/10 flex items-center justify-center">
@@ -1094,9 +1105,7 @@ export default function PlannerWizard({
 											</div>
 										)}
 										<div>
-											<h4 className="font-semibold text-ios-text">
-												{channel.name}
-											</h4>
+											<h4 className="font-semibold text-ios-text">{channel.name}</h4>
 											<p className="text-xs text-ios-secondary font-mono">
 												{channel.account_id}
 											</p>
@@ -1105,7 +1114,8 @@ export default function PlannerWizard({
 								))}
 								{channels.length === 0 && (
 									<div className="text-center py-10 text-ios-secondary">
-										Nenhum canal conectado — adicione uma conta do Instagram ou YouTube em Canais.
+										Nenhum canal conectado — adicione uma conta do Instagram ou YouTube em
+										Canais.
 									</div>
 								)}
 							</div>
@@ -1147,16 +1157,16 @@ export default function PlannerWizard({
 									<div className="h-full border border-ios-separator rounded-xl overflow-hidden min-h-[300px]">
 										{isCarousel && (
 											<div className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs p-2 border-b border-blue-100 dark:border-blue-900/30">
-												📂 Select folders to post as carousels. Each folder
-												becomes one carousel post.
+												📂 Select folders to post as carousels. Each folder becomes one
+												carousel post.
 											</div>
 										)}
 										{isCarousel && youtubeMode !== "none" && (
 											<div className="bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-xs p-2 border-b border-amber-100 dark:border-amber-900/30">
-												⚠️ Pastas de carrossel com SÓ vídeos não podem ser
-												publicadas na Comunidade do YouTube (ela não suporta
-												vídeos) — o post falharia na publicação. Certifique-se de
-												que cada pasta tenha ao menos uma imagem.
+												⚠️ Pastas de carrossel com SÓ vídeos não podem ser publicadas na
+												Comunidade do YouTube (ela não suporta vídeos) — o post falharia na
+												publicação. Certifique-se de que cada pasta tenha ao menos uma
+												imagem.
 											</div>
 										)}
 										<ContentLibrary
@@ -1181,8 +1191,7 @@ export default function PlannerWizard({
 								{preservedCount > 0 && (
 									<span className="text-amber-600 dark:text-amber-400">
 										{" "}
-										· {preservedCount} legacy upload item(s) will be preserved
-										on save.
+										· {preservedCount} legacy upload item(s) will be preserved on save.
 									</span>
 								)}
 							</p>
@@ -1239,9 +1248,7 @@ export default function PlannerWizard({
 												{onlyYoutubeSelected ? "Post na Comunidade" : "Post / Image"}
 											</option>
 											<option value="CAROUSEL">Carousel</option>
-											{!youtubeSelected && (
-												<option value="STORIES">Story</option>
-											)}
+											{!youtubeSelected && <option value="STORIES">Story</option>}
 										</select>
 									</div>
 									{mediaType === "REELS" && !isCarousel && !onlyYoutubeSelected && (
@@ -1259,13 +1266,9 @@ export default function PlannerWizard({
 												<div
 													className={`w-4 h-4 border rounded flex items-center justify-center ${shareToFeed ? "bg-ios-blue border-ios-blue" : "border-gray-300"}`}
 												>
-													{shareToFeed && (
-														<Check size={10} className="text-white" />
-													)}
+													{shareToFeed && <Check size={10} className="text-white" />}
 												</div>
-												<span className="text-sm text-ios-text">
-													Share to Feed
-												</span>
+												<span className="text-sm text-ios-text">Share to Feed</span>
 											</div>
 										</div>
 									)}
@@ -1278,17 +1281,13 @@ export default function PlannerWizard({
 										</label>
 										<div className="flex gap-2">
 											<button
-												onClick={() =>
-													setCaption((prev) => prev + " {post_title}")
-												}
+												onClick={() => setCaption((prev) => prev + " {post_title}")}
 												className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
 											>
 												+ Title
 											</button>
 											<button
-												onClick={() =>
-													setCaption((prev) => prev + " {post_caption}")
-												}
+												onClick={() => setCaption((prev) => prev + " {post_caption}")}
 												className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
 											>
 												+ Caption
@@ -1340,14 +1339,10 @@ export default function PlannerWizard({
 											}
 										}}
 										className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-20 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
-										placeholder={
-											"One template per line\nTemplate 1\nTemplate 2"
-										}
+										placeholder={"One template per line\nTemplate 1\nTemplate 2"}
 									/>
 									<div>
-										<p className="text-[11px] text-gray-400 mb-1">
-											Available variables:
-										</p>
+										<p className="text-[11px] text-gray-400 mb-1">Available variables:</p>
 										<div className="flex flex-wrap gap-1">
 											{[
 												"{post_title}",
@@ -1360,10 +1355,7 @@ export default function PlannerWizard({
 													key={v}
 													onClick={() =>
 														setCaptionTemplates(
-															(prev) =>
-																prev +
-																(prev && !prev.endsWith("\n") ? "\n" : "") +
-																v,
+															(prev) => prev + (prev && !prev.endsWith("\n") ? "\n" : "") + v,
 														)
 													}
 													className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
@@ -1374,9 +1366,9 @@ export default function PlannerWizard({
 										</div>
 									</div>
 									<p className="text-[11px] text-gray-400">
-										When rotation is active, templates replace the caption
-										above. {"{date}"} uses the post date; {"{hashtags}"} is
-										empty unless the selected content has tags.
+										When rotation is active, templates replace the caption above.{" "}
+										{"{date}"} uses the post date; {"{hashtags}"} is empty unless the
+										selected content has tags.
 									</p>
 								</div>
 
@@ -1386,8 +1378,8 @@ export default function PlannerWizard({
 											Fallback Title
 										</label>
 										<p className="text-[11px] text-gray-400 mb-2">
-											Used if the selected content has an empty title and{" "}
-											{"{post_title}"} is used.
+											Used if the selected content has an empty title and {"{post_title}"}{" "}
+											is used.
 										</p>
 										<input
 											value={titleFallback}
@@ -1420,22 +1412,22 @@ export default function PlannerWizard({
 								</div>
 
 								<div className="space-y-4">
-								{!onlyYoutubeSelected && (
-									<div>
-										<label className="text-xs font-medium text-ios-text mb-1.5 block">
-											Location ID (Optional)
-										</label>
-										<input
-											value={location}
-											onChange={(e) => {
-												setLocation(e.target.value);
-												setSettingsTouched(true);
-											}}
-											className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
-											placeholder="Instagram Location ID"
-										/>
-									</div>
-								)}
+									{!onlyYoutubeSelected && (
+										<div>
+											<label className="text-xs font-medium text-ios-text mb-1.5 block">
+												Location ID (Optional)
+											</label>
+											<input
+												value={location}
+												onChange={(e) => {
+													setLocation(e.target.value);
+													setSettingsTouched(true);
+												}}
+												className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
+												placeholder="Instagram Location ID"
+											/>
+										</div>
+									)}
 
 									{mediaType !== "STORIES" && !onlyYoutubeSelected && (
 										<div>
@@ -1452,31 +1444,31 @@ export default function PlannerWizard({
 												placeholder="e.g. user1, user2"
 											/>
 											<p className="text-[10px] text-gray-400 mt-1">
-												Comma-separated Instagram usernames to invite as
-												collaborators.
+												Comma-separated Instagram usernames to invite as collaborators.
 											</p>
 										</div>
 									)}
 
-									{(mediaType === "IMAGE" || mediaType === "CAROUSEL") && !onlyYoutubeSelected && (
-										<div>
-											<label className="text-xs font-medium text-ios-text mb-1.5 block">
-												User Tags (Optional)
-											</label>
-											<input
-												value={userTags}
-												onChange={(e) => {
-													setUserTags(e.target.value);
-													setSettingsTouched(true);
-												}}
-												className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
-												placeholder="e.g. user1, user2"
-											/>
-											<p className="text-[10px] text-gray-400 mt-1">
-												Comma-separated Instagram usernames to tag on the image.
-											</p>
-										</div>
-									)}
+									{(mediaType === "IMAGE" || mediaType === "CAROUSEL") &&
+										!onlyYoutubeSelected && (
+											<div>
+												<label className="text-xs font-medium text-ios-text mb-1.5 block">
+													User Tags (Optional)
+												</label>
+												<input
+													value={userTags}
+													onChange={(e) => {
+														setUserTags(e.target.value);
+														setSettingsTouched(true);
+													}}
+													className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
+													placeholder="e.g. user1, user2"
+												/>
+												<p className="text-[10px] text-gray-400 mt-1">
+													Comma-separated Instagram usernames to tag on the image.
+												</p>
+											</div>
+										)}
 
 									{mediaType === "REELS" && !onlyYoutubeSelected && (
 										<div className="space-y-3 p-3 bg-ios-gray-6 rounded-xl border border-ios-separator">
@@ -1609,9 +1601,7 @@ export default function PlannerWizard({
 								{sleepEnabled && (
 									<div className="grid grid-cols-2 gap-4 animate-in slide-in-from-top-2">
 										<div>
-											<span className="text-xs text-ios-secondary mb-1 block">
-												From
-											</span>
+											<span className="text-xs text-ios-secondary mb-1 block">From</span>
 											<input
 												type="time"
 												value={sleepStart}
@@ -1623,9 +1613,7 @@ export default function PlannerWizard({
 											/>
 										</div>
 										<div>
-											<span className="text-xs text-ios-secondary mb-1 block">
-												To
-											</span>
+											<span className="text-xs text-ios-secondary mb-1 block">To</span>
 											<input
 												type="time"
 												value={sleepEnd}
@@ -1658,17 +1646,20 @@ export default function PlannerWizard({
 									{
 										id: "random_loop",
 										label: "Infinite Random",
-										desc: "Posts randomly without duplicates. Repeats automatically once all items are posted.",
+										desc:
+											"Posts randomly without duplicates. Repeats automatically once all items are posted.",
 									},
 									{
 										id: "old_to_new",
 										label: "Oldest to Newest",
-										desc: "Posts items in chronological order. Repeats once the end is reached.",
+										desc:
+											"Posts items in chronological order. Repeats once the end is reached.",
 									},
 									{
 										id: "new_to_old",
 										label: "Newest to Oldest",
-										desc: "Posts items in reverse chronological order. Repeats once the end is reached.",
+										desc:
+											"Posts items in reverse chronological order. Repeats once the end is reached.",
 									},
 								].map((option) => (
 									<div
@@ -1681,9 +1672,7 @@ export default function PlannerWizard({
 										}`}
 									>
 										<div className="flex items-center justify-between mb-1">
-											<span className="font-semibold text-ios-text">
-												{option.label}
-											</span>
+											<span className="font-semibold text-ios-text">{option.label}</span>
 											{sortOrder === option.id && (
 												<Check size={18} className="text-ios-blue" />
 											)}
@@ -1774,11 +1763,7 @@ export default function PlannerWizard({
 							disabled={loading}
 							className="bg-green-600 hover:bg-green-700 min-w-[120px] justify-center"
 						>
-							{loading
-								? uploading
-									? "Uploading..."
-									: "Creating..."
-								: "Finish"}
+							{loading ? (uploading ? "Uploading..." : "Creating...") : "Finish"}
 						</IOSButton>
 					) : (
 						<IOSButton

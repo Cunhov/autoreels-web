@@ -107,7 +107,7 @@ export default function EditContentModal({
 				setTrimStart(0);
 				setTrimEnd(item.duration || 0);
 			}
-				setVideoMsg(null);
+			setVideoMsg(null);
 			setSaveError(null);
 		}
 	}, [isOpen, itemsToEdit, isBulk]);
@@ -116,10 +116,13 @@ export default function EditContentModal({
 		if (e.key === "Enter" || e.key === ",") {
 			e.preventDefault();
 			// BK-12 split por vírgula e trim cada tag
-			const parts = tagInput.split(",").map(t=>t.trim()).filter(Boolean);
+			const parts = tagInput
+				.split(",")
+				.map((t) => t.trim())
+				.filter(Boolean);
 			const next = [...tags];
 			for (const p of parts) {
-				const clean = escapeHtml(p).slice(0,50);
+				const clean = escapeHtml(p).slice(0, 50);
 				if (clean && !next.includes(clean)) next.push(clean);
 			}
 			setTags(next);
@@ -131,14 +134,17 @@ export default function EditContentModal({
 	const handleTagPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
 		e.preventDefault();
 		const pasted = e.clipboardData.getData("text");
-		const parts = pasted.split(",").map(t=>t.trim()).filter(Boolean);
-		if (parts.length <=1) {
-			const single = escapeHtml(pasted.trim()).slice(0,50);
+		const parts = pasted
+			.split(",")
+			.map((t) => t.trim())
+			.filter(Boolean);
+		if (parts.length <= 1) {
+			const single = escapeHtml(pasted.trim()).slice(0, 50);
 			if (single && !tags.includes(single)) setTags([...tags, single]);
 		} else {
 			const next = [...tags];
 			for (const p of parts) {
-				const clean = escapeHtml(p).slice(0,50);
+				const clean = escapeHtml(p).slice(0, 50);
 				if (clean && !next.includes(clean)) next.push(clean);
 			}
 			setTags(next);
@@ -162,22 +168,27 @@ export default function EditContentModal({
 			const updates: Record<string, unknown> = {};
 
 			if (isBulk) {
-				if (title.trim()) updates.title = escapeHtml(title.trim()).slice(0,200);
+				if (title.trim()) updates.title = escapeHtml(title.trim()).slice(0, 200);
 				if (caption.trim()) {
 					let cap = caption.trim();
-					if (cap.length> CAPTION_MAX) cap = cap.slice(0,CAPTION_MAX);
+					if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
 					updates.caption = escapeHtml(cap);
 				}
-				if (tags.length > 0) updates.tags = tags.map(t=> escapeHtml(t.trim()).slice(0,50)).filter(Boolean);
+				if (tags.length > 0)
+					updates.tags = tags
+						.map((t) => escapeHtml(t.trim()).slice(0, 50))
+						.filter(Boolean);
 			} else {
-				updates.name = escapeHtml(name.trim()).slice(0,200);
+				updates.name = escapeHtml(name.trim()).slice(0, 200);
 				let singleTitle = title.trim();
-				if (singleTitle) singleTitle = escapeHtml(singleTitle).slice(0,200);
+				if (singleTitle) singleTitle = escapeHtml(singleTitle).slice(0, 200);
 				updates.title = singleTitle;
 				let cap = caption.trim();
-				if (cap.length> CAPTION_MAX) cap = cap.slice(0,CAPTION_MAX);
+				if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
 				updates.caption = escapeHtml(cap);
-				updates.tags = tags.map(t=> escapeHtml(t.trim()).slice(0,50)).filter(Boolean);
+				updates.tags = tags
+					.map((t) => escapeHtml(t.trim()).slice(0, 50))
+					.filter(Boolean);
 			}
 
 			if (Object.keys(updates).length === 0) {
@@ -257,10 +268,7 @@ export default function EditContentModal({
 			onEditComplete(); // refresh the library so the new thumbnail shows
 		} catch (error) {
 			console.error("Thumbnail extraction error:", error);
-			setVideoMessage(
-				(error as Error).message || "Erro ao extrair capa",
-				"error",
-			);
+			setVideoMessage((error as Error).message || "Erro ao extrair capa", "error");
 		} finally {
 			setVideoBusy(false);
 		}
@@ -311,31 +319,44 @@ export default function EditContentModal({
 			onEditComplete(); // refresh the library so the new item appears
 		} catch (error) {
 			console.error("Video trim error:", error);
-			setVideoMessage(
-				(error as Error).message || "Erro ao cortar vídeo",
-				"error",
-			);
+			setVideoMessage((error as Error).message || "Erro ao cortar vídeo", "error");
 		} finally {
 			setVideoBusy(false);
 		}
 	};
 
-    useEffect(() => {
-        if (!isOpen) return;
-        const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-        document.addEventListener('keydown', h);
-        return () => document.removeEventListener('keydown', h);
-    }, [isOpen, onClose]);
+	useEffect(() => {
+		if (!isOpen) return;
+		const h = (e: KeyboardEvent) => {
+			if (e.key === "Escape") onClose();
+		};
+		document.addEventListener("keydown", h);
+		return () => document.removeEventListener("keydown", h);
+	}, [isOpen, onClose]);
 
 	if (!isOpen) return null;
 
 	return (
-		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200" role="presentation" onClick={onClose}>
-			<div role="dialog" aria-modal="true" aria-labelledby="edit-content-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-white dark:bg-[#1C1C1E] w-full max-w-md rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto scale-100 animate-in zoom-in-95 duration-200">
+		<div
+			className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+			role="presentation"
+			onClick={onClose}
+		>
+			<div
+				role="dialog"
+				aria-modal="true"
+				aria-labelledby="edit-content-title"
+				tabIndex={-1}
+				onClick={(e) => e.stopPropagation()}
+				className="bg-white dark:bg-[#1C1C1E] w-full max-w-md rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto scale-100 animate-in zoom-in-95 duration-200"
+			>
 				{/* Header */}
 				<div className="px-5 py-4 border-b border-gray-100 dark:border-white/10 flex items-center justify-between bg-white/50 dark:bg-white/5 backdrop-blur-md">
 					<div>
-						<h2 id="edit-content-title" className="text-[17px] font-semibold text-gray-900 dark:text-white">
+						<h2
+							id="edit-content-title"
+							className="text-[17px] font-semibold text-gray-900 dark:text-white"
+						>
 							{isBulk ? `Editar ${itemsToEdit.length} itens` : "Editar item"}
 						</h2>
 					</div>
@@ -367,9 +388,7 @@ export default function EditContentModal({
 					<div>
 						<label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
 							Título{" "}
-							<span className="text-gray-400 lowercase font-normal">
-								(opcional)
-							</span>
+							<span className="text-gray-400 lowercase font-normal">(opcional)</span>
 						</label>
 						<input
 							type="text"
@@ -381,15 +400,17 @@ export default function EditContentModal({
 								isBulk ? "Deixe vazio para manter o atual" : "Título do post"
 							}
 						/>
-						<div className={`text-right text-[11px] tabular-nums ${title.length>200 ? "text-red-500" : "text-gray-400"}`}>{title.length}/200</div>
+						<div
+							className={`text-right text-[11px] tabular-nums ${title.length > 200 ? "text-red-500" : "text-gray-400"}`}
+						>
+							{title.length}/200
+						</div>
 					</div>
 
 					<div>
 						<label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
 							Legenda{" "}
-							<span className="text-gray-400 lowercase font-normal">
-								(opcional)
-							</span>
+							<span className="text-gray-400 lowercase font-normal">(opcional)</span>
 						</label>
 						<textarea
 							value={caption}
@@ -401,7 +422,11 @@ export default function EditContentModal({
 								isBulk ? "Deixe vazio para manter a atual" : "Escreva uma legenda..."
 							}
 						/>
-						<div className={`text-right text-[11px] tabular-nums ${caption.length> CAPTION_MAX ? "text-red-500" : "text-gray-400"}`}>{caption.length}/{CAPTION_MAX}</div>
+						<div
+							className={`text-right text-[11px] tabular-nums ${caption.length > CAPTION_MAX ? "text-red-500" : "text-gray-400"}`}
+						>
+							{caption.length}/{CAPTION_MAX}
+						</div>
 					</div>
 
 					<div>
@@ -415,10 +440,7 @@ export default function EditContentModal({
 									className="bg-blue-500/10 text-blue-500 px-2 py-1 rounded-md text-sm flex items-center gap-1"
 								>
 									{tag}
-									<button
-										onClick={() => removeTag(tag)}
-										className="hover:text-blue-700"
-									>
+									<button onClick={() => removeTag(tag)} className="hover:text-blue-700">
 										<X size={12} />
 									</button>
 								</span>
@@ -482,10 +504,7 @@ export default function EditContentModal({
 										min={0}
 										max={videoDuration > 0 ? videoDuration : 1}
 										step={0.1}
-										value={Math.min(
-											thumbTime,
-											videoDuration > 0 ? videoDuration : 1,
-										)}
+										value={Math.min(thumbTime, videoDuration > 0 ? videoDuration : 1)}
 										onChange={(e) => setThumbTime(Number(e.target.value))}
 										disabled={videoBusy}
 										className="flex-1 accent-blue-500"
@@ -560,25 +579,27 @@ export default function EditContentModal({
 				{/* Footer */}
 				<div className="p-4 border-t border-gray-100 dark:border-white/10 bg-gray-50 dark:bg-white/5 space-y-2">
 					{saveError && (
-						<p className="text-[12px] font-medium text-red-500 dark:text-red-400 text-center">{saveError}</p>
+						<p className="text-[12px] font-medium text-red-500 dark:text-red-400 text-center">
+							{saveError}
+						</p>
 					)}
 					<div className="flex gap-3">
-					<IOSButton
-						variant="secondary"
-						onClick={onClose}
-						className="flex-1 justify-center"
-						disabled={loading}
-					>
-						Cancelar
-					</IOSButton>
-					<IOSButton
-						variant="primary"
-						onClick={handleSave}
-						className="flex-1 justify-center"
-						disabled={loading}
-					>
-						{loading ? "Salvando..." : "Salvar alterações"}
-					</IOSButton>
+						<IOSButton
+							variant="secondary"
+							onClick={onClose}
+							className="flex-1 justify-center"
+							disabled={loading}
+						>
+							Cancelar
+						</IOSButton>
+						<IOSButton
+							variant="primary"
+							onClick={handleSave}
+							className="flex-1 justify-center"
+							disabled={loading}
+						>
+							{loading ? "Salvando..." : "Salvar alterações"}
+						</IOSButton>
 					</div>
 				</div>
 			</div>
