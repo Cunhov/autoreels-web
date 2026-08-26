@@ -41,14 +41,19 @@ export default function MediaUploader({
 		if (e.target.files && e.target.files.length > 0) {
 			const incoming = Array.from(e.target.files);
 			// BK-15 validar MIME e tamanho
-			const allowedPrefixes = (accept ?? "video/*,image/*").split(",").map(a=>a.trim()).filter(Boolean);
-			const filtered = incoming.filter(f=>{
-				if (f.size > 100*1024*1024) return false;
+			const allowedPrefixes = (accept ?? "video/*,image/*")
+				.split(",")
+				.map((a) => a.trim())
+				.filter(Boolean);
+			const filtered = incoming.filter((f) => {
+				if (f.size > 100 * 1024 * 1024) return false;
 				if (!f.type) return true;
-				return allowedPrefixes.some(p=> f.type.startsWith(p.replace("*","")));
+				return allowedPrefixes.some((p) => f.type.startsWith(p.replace("*", "")));
 			});
 			if (filtered.length !== incoming.length) {
-				setLimitMessage(`${incoming.length - filtered.length} arquivo(s) ignorado(s): tipo/tamanho inválido`);
+				setLimitMessage(
+					`${incoming.length - filtered.length} arquivo(s) ignorado(s): tipo/tamanho inválido`,
+				);
 			}
 			addFiles(filtered);
 		}
@@ -114,9 +119,7 @@ export default function MediaUploader({
 				<div className="w-16 h-16 bg-ios-blue/10 text-ios-blue rounded-full flex items-center justify-center mb-4">
 					<Upload size={32} />
 				</div>
-				<h3 className="text-lg font-semibold text-ios-text mb-1">
-					Enviar mídia
-				</h3>
+				<h3 className="text-lg font-semibold text-ios-text mb-1">Enviar mídia</h3>
 				<p className="text-ios-secondary text-sm max-w-[200px]">
 					Arraste e solte imagens ou vídeos aqui ou clique para selecionar.
 				</p>
@@ -131,10 +134,10 @@ export default function MediaUploader({
 			</div>
 
 			{limitMessage && (
-			<p className="text-xs text-ios-orange font-medium">{limitMessage}</p>
-		)}
+				<p className="text-xs text-ios-orange font-medium">{limitMessage}</p>
+			)}
 
-		{files.length > 0 && (
+			{files.length > 0 && (
 				<div className="bg-ios-card border border-ios-separator rounded-xl overflow-hidden divide-y divide-ios-separator">
 					<div className="p-3 bg-ios-background/50 border-b border-ios-separator flex justify-between items-center">
 						<span className="text-xs font-semibold text-ios-secondary uppercase tracking-wider px-1">
@@ -171,7 +174,8 @@ export default function MediaUploader({
 										e.stopPropagation();
 										removeFile(idx);
 									}}
-									className="p-2 text-ios-secondary hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+									aria-label={`Remover ${file.name}`}
+									className="p-2 text-ios-secondary hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ios-blue"
 								>
 									<X size={18} />
 								</button>

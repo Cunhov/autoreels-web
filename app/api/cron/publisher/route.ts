@@ -14,8 +14,12 @@ import {
 import { runPlannerOnce } from "@/lib/planner-runtime";
 import { sendNotification } from "@/lib/notify";
 import { normalizeCarouselChild } from "@/lib/carousel-normalize";
-import { adaptImageToSquareWithBlur, type AdaptOutput } from "@/lib/youtube-community-image";
-import { YoutubeApiError,
+import {
+	adaptImageToSquareWithBlur,
+	type AdaptOutput,
+} from "@/lib/youtube-community-image";
+import {
+	YoutubeApiError,
 	createCommunityPostText,
 	createShort,
 	getSession,
@@ -127,7 +131,12 @@ function classifyError(
 	// Config ausente (ex.: getYoutubeConfig lança "YOUTUBE_API_KEY não
 	// configurada") é permanente: sem isso posts YT viram transient, ocupam o
 	// lote do cron a cada tick e starving publicações válidas.
-	if (/YOUTUBE_API_KEY|YOUTUBE_API_BASE_URL|não configurada|missing credentials/i.test(msg)) return "definitive";
+	if (
+		/YOUTUBE_API_KEY|YOUTUBE_API_BASE_URL|não configurada|missing credentials/i.test(
+			msg,
+		)
+	)
+		return "definitive";
 	if (/carousel has no media items/i.test(msg)) return "definitive";
 
 	// Unknown/network errors: retry rather than burn the post
@@ -388,12 +397,23 @@ async function isChannelThrottled(
 		orderBy: { published_at: "desc" },
 		select: { published_at: true },
 	});
-	if (lastPublished?.published_at && now.getTime() - lastPublished.published_at.getTime() < minIntervalMs) return true;
+	if (
+		lastPublished?.published_at &&
+		now.getTime() - lastPublished.published_at.getTime() < minIntervalMs
+	)
+		return true;
 	// BK-03: burst inclui posts em processing/ready (ainda nao publicados mas ja contam no intervalo)
 	const recentProcessing = await prisma.post.count({
 		where: {
 			channel_id: channel.id,
-			status: { in: ["processing", "processing_upload", "processing_children", "ready_to_publish"] },
+			status: {
+				in: [
+					"processing",
+					"processing_upload",
+					"processing_children",
+					"ready_to_publish",
+				],
+			},
 			created_at: { gte: new Date(now.getTime() - minIntervalMs) },
 		},
 	});
@@ -455,9 +475,7 @@ async function refreshDueChannelTokens(
 	maxExecMs: number,
 ) {
 	const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-	const fourteenDaysFromNow = new Date(
-		now.getTime() + 14 * 24 * 60 * 60 * 1000,
-	);
+	const fourteenDaysFromNow = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
 
 	const channels = await prisma.channel.findMany({
 		where: {
@@ -498,9 +516,7 @@ async function refreshDueChannelTokens(
 				// the channel (reconnect via OAuth flips status back to 'active');
 				// missing server credentials only pause the refresh, the channel
 				// itself is fine.
-				const missingCredentials = /must be configured to refresh/i.test(
-					message,
-				);
+				const missingCredentials = /must be configured to refresh/i.test(message);
 				await prisma.channel
 					.update({
 						where: { id: channel.id },
@@ -668,7 +684,10 @@ async function readCommunityImage(
 	// terceiros: baixa no servidor (com guarda SSRF e teto de bytes) para o
 	// multipart não depender de o storage local conter o arquivo.
 	if (/^https?:\/\//i.test(mediaUrl)) {
-		const res = await downloadRemoteImageWithRedirectGuard(mediaUrl, remainingBudgetMs);
+		const res = await downloadRemoteImageWithRedirectGuard(
+			mediaUrl,
+			remainingBudgetMs,
+		);
 		if (!res.ok) {
 			// 5xx = servidor de origem/trânsito falhou — TRANSITENTE (retry no
 			// próximo tick; o cliente pode ter recuperado). 4xx = o recurso não
@@ -764,7 +783,10 @@ async function downloadRemoteImageWithRedirectGuard(
 		// materializador em paralelo não pode estourar o budget do cron.
 		const perRequestTimeout =
 			remainingBudgetMs != null
-				? Math.max(1_000, Math.min(COMMUNITY_REMOTE_IMAGE_TIMEOUT_MS, remainingBudgetMs))
+				? Math.max(
+						1_000,
+						Math.min(COMMUNITY_REMOTE_IMAGE_TIMEOUT_MS, remainingBudgetMs),
+					)
 				: COMMUNITY_REMOTE_IMAGE_TIMEOUT_MS;
 		const res = await fetchWithTimeout(
 			current,
@@ -836,7 +858,8 @@ function collectCommunityImageUrls(post: YoutubePublishPost): {
 	// Fallback legado (post sem children_urls): só quando NENHUM child foi
 	// vídeo — se o carrossel continha apenas vídeos, image_url aponta para o
 	// primeiro child (vídeo) e não pode virar "imagem".
-	if (!urls.length && !droppedVideos && post.image_url) urls.push(post.image_url);
+	if (!urls.length && !droppedVideos && post.image_url)
+		urls.push(post.image_url);
 	return { urls, droppedVideos };
 }
 
@@ -857,23 +880,31 @@ async function publishYoutubePost(opts: {
 			where: { id: post.id },
 			data: {
 				status: "failed",
-				error_message:
-					"Canal YouTube sem sessão vinculada — reconecte em Canais",
+				error_message: "Canal YouTube sem sessão vinculada — reconecte em Canais",
 				failed_reason: "Missing Credentials",
 			},
 		});
 		results.errors++;
-		await logPlanner(plannerId, `Post ${post.id}: canal YouTube sem sessão vinculada`, "error");
+		await logPlanner(
+			plannerId,
+			`Post ${post.id}: canal YouTube sem sessão vinculada`,
+			"error",
+		);
 		await notifyPostFailed(post, "Canal YouTube sem sessão vinculada");
 		return;
 	}
 
 	try {
-		const isCommunityPost = post.youtube_type === "community" || (!post.youtube_type && !post.video_url && !!(post.image_url || post.children_urls));
+		const isCommunityPost =
+			post.youtube_type === "community" ||
+			(!post.youtube_type &&
+				!post.video_url &&
+				!!(post.image_url || post.children_urls));
 		if (isCommunityPost) {
 			const message = (post.caption || "").trim();
 			if (!message) throw new MalformedDataError("Post na Comunidade exige texto");
-			const { urls: rawImageUrls, droppedVideos } = collectCommunityImageUrls(post);
+			const { urls: rawImageUrls, droppedVideos } =
+				collectCommunityImageUrls(post);
 			const imageUrls = [...rawImageUrls];
 			if (droppedVideos > 0) {
 				await logPlanner(
@@ -922,7 +953,8 @@ async function publishYoutubePost(opts: {
 				// imagem é limitado a min(30s, orçamento restante) e a falha é
 				// DEGRADADA: uma mídia ruim não derruba o post inteiro — só falha
 				// quando NENHUMA imagem materializa.
-				const images: { buffer: Buffer; contentType: string; filename: string }[] = [];
+				const images: { buffer: Buffer; contentType: string; filename: string }[] =
+					[];
 				const failures: { url: string; error: unknown }[] = [];
 				// Margem reservada para o upload multipart + persistência no banco.
 				const materializeDeadline = startTime + maxExecMs - 15_000;
@@ -947,11 +979,14 @@ async function publishYoutubePost(opts: {
 				});
 				if (failures.length > 0) {
 					const detail = failures
-						.map((f) => `${f.url}: ${f.error instanceof Error ? f.error.message : String(f.error)}`)
+						.map(
+							(f) =>
+								`${f.url}: ${f.error instanceof Error ? f.error.message : String(f.error)}`,
+						)
 						.join("; ");
 					await logPlanner(
 						plannerId,
-						`[YouTube] ${failures.length} imagem(ns) da Comunidade não materializaram (publicando as demais): ${detail}`,
+						`[YouTube] ${failures.length === 1 ? "1 imagem" : `${failures.length} imagens`} da Comunidade não materializaram (publicando as demais): ${detail}`,
 						"warning",
 					).catch(() => {});
 				}
@@ -966,7 +1001,10 @@ async function publishYoutubePost(opts: {
 						(f) => !isTransientCommunityImageError(f.error),
 					);
 					const detail = failures
-						.map((f) => `[${f.url}] ${f.error instanceof Error ? f.error.message : String(f.error)}`)
+						.map(
+							(f) =>
+								`[${f.url}] ${f.error instanceof Error ? f.error.message : String(f.error)}`,
+						)
 						.join("; ");
 					if (allDefinitive) {
 						throw new MalformedDataError(
@@ -1024,14 +1062,20 @@ async function publishYoutubePost(opts: {
 									}
 									return adapted;
 								} catch (e: unknown) {
-									const msg = (e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)).replace(/\n/g, " ");
+									const msg = (
+										e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)
+									).replace(/\n/g, " ");
 									await logPlanner(
 										plannerId,
 										`[YouTube] imagem ${idx + 1} blur falhou (${msg}), mantendo original`,
 										"warning",
 									).catch(() => {});
 									console.warn(`[YouTube] blur falhou imagem ${idx + 1}: ${msg}`);
-									return { ...original, wasAdapted: false, fallbackReason: msg } as AdaptOutput;
+									return {
+										...original,
+										wasAdapted: false,
+										fallbackReason: msg,
+									} as AdaptOutput;
 								}
 							}),
 						);
@@ -1039,11 +1083,18 @@ async function publishYoutubePost(opts: {
 					}
 					adaptedImages = adaptResults;
 				} catch (e: unknown) {
-					const msg = (e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)).replace(/\n/g, " ");
+					const msg = (
+						e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)
+					).replace(/\n/g, " ");
 					console.warn(`[YouTube] falha geral no blur paralelo: ${msg}`);
-					adaptedImages = images.map((img) => ({ ...img, wasAdapted: false }) as AdaptOutput);
+					adaptedImages = images.map(
+						(img) => ({ ...img, wasAdapted: false }) as AdaptOutput,
+					);
 				}
-				const imagesToUpload = adaptedImages.length > 0 ? adaptedImages : images.map((img) => ({ ...img, wasAdapted: false }) as AdaptOutput);
+				const imagesToUpload =
+					adaptedImages.length > 0
+						? adaptedImages
+						: images.map((img) => ({ ...img, wasAdapted: false }) as AdaptOutput);
 				// Orçamento ANTES do upload: um multipart pode levar até 120s na
 				// API externa; se o tick já está no limite, não inicia o upload —
 				// reverte para pending (retry no próximo ciclo) em vez de arriscar
@@ -1106,11 +1157,15 @@ async function publishYoutubePost(opts: {
 			`[YouTube] Enviando Short (${post.video_url}) para a API externa`,
 			"info",
 		);
-		const videoFile = await readLocalUploadFile(post.video_url, SHORT_MAX_FILE_BYTES);
+		const videoFile = await readLocalUploadFile(
+			post.video_url,
+			SHORT_MAX_FILE_BYTES,
+		);
 		// Título: opção salva ou caption (limite de 100 chars da API)
-		const title = (
-			options.title?.trim() || (post.caption || "").trim()
-		).slice(0, 100);
+		const title = (options.title?.trim() || (post.caption || "").trim()).slice(
+			0,
+			100,
+		);
 		if (!title) {
 			throw new MalformedDataError("Short do YouTube exige título");
 		}
@@ -1127,7 +1182,9 @@ async function publishYoutubePost(opts: {
 			monetizeWithAds: options.monetize_with_ads ?? false,
 			pinnedCommentText: options.pinned_comment_text || undefined,
 			video: {
-				blob: new Blob([bufferView(videoFile.buffer)], { type: videoFile.contentType }),
+				blob: new Blob([bufferView(videoFile.buffer)], {
+					type: videoFile.contentType,
+				}),
 				filename: videoFile.filename,
 				contentType: videoFile.contentType,
 			},
@@ -1148,8 +1205,7 @@ async function publishYoutubePost(opts: {
 			"info",
 		);
 	} catch (e: unknown) {
-		const rawMsg =
-			e instanceof Error ? e.message : String(e ?? "Unknown error");
+		const rawMsg = e instanceof Error ? e.message : String(e ?? "Unknown error");
 
 		// O regex NÃO é um sinal inequívoco: na API externa a mesma mensagem é
 		// lançada sempre que o bootstrap HTML não rende um channelId — inclusive
@@ -1163,8 +1219,7 @@ async function publishYoutubePost(opts: {
 						.catch(() => "")
 				: "";
 			if (sessionStatus === "expired") {
-				const friendly =
-					"Sessão do YouTube expirada — reconecte em Canais";
+				const friendly = "Sessão do YouTube expirada — reconecte em Canais";
 				await logPlanner(
 					plannerId,
 					`[YouTube] Post ${post.id}: ${friendly}`,
@@ -1207,9 +1262,10 @@ async function publishYoutubePost(opts: {
 			e instanceof MalformedDataError
 				? "definitive"
 				: classifyError(withIgStatus(rawMsg, ytStatus), ytStatus);
-		const errMsg = e instanceof Error && e.name === "AbortError"
-			? "API do YouTube expirou o tempo limite"
-			: rawMsg;
+		const errMsg =
+			e instanceof Error && e.name === "AbortError"
+				? "API do YouTube expirou o tempo limite"
+				: rawMsg;
 
 		if (kind === "rate-limited") {
 			await handleRetryableFailure({
@@ -1247,7 +1303,11 @@ async function publishYoutubePost(opts: {
 		}
 
 		// Erro definitivo → falha imediata
-		await logPlanner(plannerId, `[YouTube] Erro definitivo post=${post.id}: ${errMsg}`, "error");
+		await logPlanner(
+			plannerId,
+			`[YouTube] Erro definitivo post=${post.id}: ${errMsg}`,
+			"error",
+		);
 		await prisma.post.update({
 			where: { id: post.id },
 			data: {
@@ -1274,13 +1334,25 @@ async function tryAcquireDistributedLock(): Promise<boolean> {
 	const now = new Date();
 	const expiresAt = new Date(now.getTime() + PUBLISHER_LOCK_TTL_MS);
 	try {
-		const existing = await prisma.cronLock.findUnique({ where: { key: PUBLISHER_LOCK_KEY } });
+		const existing = await prisma.cronLock.findUnique({
+			where: { key: PUBLISHER_LOCK_KEY },
+		});
 		if (!existing) {
-			await prisma.cronLock.create({ data: { key: PUBLISHER_LOCK_KEY, locked_at: now, expires_at: expiresAt, owner: "publisher" } });
+			await prisma.cronLock.create({
+				data: {
+					key: PUBLISHER_LOCK_KEY,
+					locked_at: now,
+					expires_at: expiresAt,
+					owner: "publisher",
+				},
+			});
 			return true;
 		}
 		if (existing.expires_at.getTime() < now.getTime()) {
-			const res = await prisma.cronLock.updateMany({ where: { key: PUBLISHER_LOCK_KEY, expires_at: existing.expires_at }, data: { locked_at: now, expires_at: expiresAt, owner: "publisher" } });
+			const res = await prisma.cronLock.updateMany({
+				where: { key: PUBLISHER_LOCK_KEY, expires_at: existing.expires_at },
+				data: { locked_at: now, expires_at: expiresAt, owner: "publisher" },
+			});
 			return res.count === 1;
 		}
 		return false;
@@ -1291,7 +1363,11 @@ async function tryAcquireDistributedLock(): Promise<boolean> {
 }
 
 async function releaseDistributedLock(): Promise<void> {
-	try { await prisma.cronLock.deleteMany({ where: { key: PUBLISHER_LOCK_KEY } }); } catch {}
+	try {
+		await prisma.cronLock.deleteMany({ where: { key: PUBLISHER_LOCK_KEY } });
+	} catch (err) {
+		console.warn("[publisher] release lock falhou:", err);
+	}
 }
 
 export async function GET(request: Request) {
@@ -1491,6 +1567,7 @@ async function handler(request: Request) {
 			// ═══════════════════════════════════════════════════════════════════════
 
 			// BK-02: Claim atomico via transacao + verificacao de retorno (multi-pod)
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
 			let claimedPosts: any[] = [];
 			{
 				const pendingPosts = await prisma.post.findMany({
@@ -1530,17 +1607,16 @@ async function handler(request: Request) {
 				const plannerId = post.planner_id || "unknown";
 				let lastStatus = 0;
 				try {
-						// Pre-flight: abort immediately with no external calls
-						// Posts da Comunidade do YouTube podem ser só texto (sem mídia).
-						// `youtube_type === "community"` é marcador confiável MESMO com
-						// canal deletado (relação channel null) — sem isso um post
-						// texto-sem-mídia de canal removido falharia "Missing Media" em
-						// vez de chegar ao publisher com a mensagem correta. Também
-						// deixa posts YT sem mídia (Short sem vídeo) chegarem ao
-						// publisher, que reporta "Short do YouTube exige um vídeo".
-						const hasMedia =
-							post.video_url || post.image_url || post.children_urls;
-						if (!hasMedia && !post.youtube_type) {
+					// Pre-flight: abort immediately with no external calls
+					// Posts da Comunidade do YouTube podem ser só texto (sem mídia).
+					// `youtube_type === "community"` é marcador confiável MESMO com
+					// canal deletado (relação channel null) — sem isso um post
+					// texto-sem-mídia de canal removido falharia "Missing Media" em
+					// vez de chegar ao publisher com a mensagem correta. Também
+					// deixa posts YT sem mídia (Short sem vídeo) chegarem ao
+					// publisher, que reporta "Short do YouTube exige um vídeo".
+					const hasMedia = post.video_url || post.image_url || post.children_urls;
+					if (!hasMedia && !post.youtube_type) {
 						await prisma.post.update({
 							where: { id: post.id },
 							data: {
@@ -1575,10 +1651,7 @@ async function handler(request: Request) {
 					// tem youtube_type. O pre-flight deixa passar (só texto/YT
 					// sem mídia) e o publishYoutubePost falha com a mensagem certa
 					// (ex.: "Canal YouTube sem sessão vinculada").
-					if (
-						post.channel?.platform === "youtube" ||
-						!!post.youtube_type
-					) {
+					if (post.channel?.platform === "youtube" || !!post.youtube_type) {
 						await publishYoutubePost({
 							post,
 							plannerId,
@@ -1616,8 +1689,7 @@ async function handler(request: Request) {
 						post.channel?.access_token || null,
 					);
 					const accountId = (post.channel?.account_id || "").trim();
-					if (!accessToken || !accountId)
-						throw new Error("Missing credentials");
+					if (!accessToken || !accountId) throw new Error("Missing credentials");
 
 					const baseUrl = getGraphBaseUrl(accessToken);
 					const mediaType = post.media_type || "REELS";
@@ -1655,8 +1727,7 @@ async function handler(request: Request) {
 						// original URL so the post is never blocked.
 						const normalizedChildren = await Promise.all(
 							childrenData.map(async (child, idx) => {
-								if (child.type === "video")
-									return { child, idx, note: undefined };
+								if (child.type === "video") return { child, idx, note: undefined };
 								const res = await normalizeCarouselChild({
 									url: child.url,
 									userId: post.user_id,
@@ -1683,9 +1754,7 @@ async function handler(request: Request) {
 						// result differs from what is stored, the existing IG container
 						// was created from stale media (raw 9:16 or padded) and gets
 						// re-created with the fresh crop.
-						const persistedChildren = normalizedChildren.map(
-							({ child }) => child,
-						);
+						const persistedChildren = normalizedChildren.map(({ child }) => child);
 						const newChildrenUrls = JSON.stringify(persistedChildren);
 						if (newChildrenUrls !== post.children_urls) {
 							await prisma.post.update({
@@ -1708,10 +1777,7 @@ async function handler(request: Request) {
 										error?: string;
 										status?: number;
 									}> => {
-										const mediaUrlAbsolute = makeAbsoluteUrl(
-											systemBaseUrl,
-											child.url,
-										);
+										const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, child.url);
 										const childParams = buildCarouselChildParams({
 											child,
 											idx,
@@ -1765,13 +1831,11 @@ async function handler(request: Request) {
 									...failedChildren.map((f) => f.status || 0),
 								);
 								const errMsg = `Carousel failed: ${failedChildren.length} children failed to initialize (${mergedChildren.size} OK). First error: ${failedChildren[0].error}`;
-								const countAs =
-									worstStatus === 429 ? "rate_limited" : "transient";
+								const countAs = worstStatus === 429 ? "rate_limited" : "transient";
 								await prisma.post.update({
 									where: { id: post.id },
 									data: {
-										instagram_child_ids:
-											serializeChildIdEntries(mergedChildren),
+										instagram_child_ids: serializeChildIdEntries(mergedChildren),
 									},
 								});
 								// Revert the claim; the retry (pending) resumes from the
@@ -1813,9 +1877,7 @@ async function handler(request: Request) {
 							});
 							results.pending++;
 						} else {
-							throw new Error(
-								"No carousel child containers created (unknown reason)",
-							);
+							throw new Error("No carousel child containers created (unknown reason)");
 						}
 						continue;
 					}
@@ -1827,8 +1889,7 @@ async function handler(request: Request) {
 						mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, post.image_url);
 						bodyParams.append("image_url", mediaUrlAbsolute);
 						bodyParams.append("caption", post.caption || "");
-						if (post.location_id)
-							bodyParams.append("location_id", post.location_id);
+						if (post.location_id) bodyParams.append("location_id", post.location_id);
 						if (post.user_tags) {
 							const usernames = post.user_tags
 								.split(",")
@@ -1866,8 +1927,7 @@ async function handler(request: Request) {
 								"share_to_feed",
 								post.share_to_feed === false ? "false" : "true",
 							);
-							if (post.location_id)
-								bodyParams.append("location_id", post.location_id);
+							if (post.location_id) bodyParams.append("location_id", post.location_id);
 							if (post.audio_configuration) {
 								const audioConfig = safeJsonParse<{
 									audio_id?: string;
@@ -1875,10 +1935,7 @@ async function handler(request: Request) {
 									video_volume?: number;
 								} | null>(post.audio_configuration, null);
 								if (audioConfig && audioConfig.audio_id) {
-									bodyParams.append(
-										"audio_configuration",
-										JSON.stringify(audioConfig),
-									);
+									bodyParams.append("audio_configuration", JSON.stringify(audioConfig));
 								}
 							}
 						}
@@ -2060,15 +2117,11 @@ async function handler(request: Request) {
 								url: stored.url,
 								userId: post.user_id,
 							});
-							const child = res.normalized
-								? { ...stored, url: res.url }
-								: stored;
+							const child = res.normalized ? { ...stored, url: res.url } : stored;
 							if (!childEntries.has(idx) || child.url !== stored.url) {
 								reconcileTargets.push({ idx, child });
 								if (res.note)
-									reconcileNotes.push(
-										`Child reconcile[${idx}] normalized: ${res.note}`,
-									);
+									reconcileNotes.push(`Child reconcile[${idx}] normalized: ${res.note}`);
 							}
 						}
 						for (const note of reconcileNotes) {
@@ -2077,10 +2130,7 @@ async function handler(request: Request) {
 						if (reconcileTargets.length > 0) {
 							const created: { idx: number; id: string }[] = [];
 							for (const { child, idx } of reconcileTargets) {
-								const mediaUrlAbsolute = makeAbsoluteUrl(
-									systemBaseUrl,
-									child.url,
-								);
+								const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, child.url);
 								const childParams = buildCarouselChildParams({
 									child,
 									idx,
@@ -2149,11 +2199,7 @@ async function handler(request: Request) {
 							);
 							if (stillMissing) {
 								const reconcileMsg = `Carousel ${post.id}: children missing or failed to initialize — reconcile incomplete`;
-								await logPlanner(
-									post.planner_id || "unknown",
-									reconcileMsg,
-									"info",
-								);
+								await logPlanner(post.planner_id || "unknown", reconcileMsg, "info");
 								await handleRetryableFailure({
 									post,
 									errMsg: reconcileMsg,
@@ -2259,8 +2305,7 @@ async function handler(request: Request) {
 								caption: post.caption || "",
 								access_token: accessToken,
 							});
-							if (post.location_id)
-								body.append("location_id", post.location_id);
+							if (post.location_id) body.append("location_id", post.location_id);
 							if (post.collaborators) {
 								const list = post.collaborators
 									.split(",")
@@ -2308,8 +2353,7 @@ async function handler(request: Request) {
 							// (container_created_at, set in Phase 1/2). Falls back to created_at
 							// for legacy posts that predate the column.
 							const createdRef = post.container_created_at ?? post.created_at;
-							const timeSinceCreation =
-								Date.now() - (createdRef?.getTime() || 0);
+							const timeSinceCreation = Date.now() - (createdRef?.getTime() || 0);
 							if (timeSinceCreation > 3 * 60 * 1000) {
 								await prisma.post.update({
 									where: { id: post.id },
@@ -2325,12 +2369,7 @@ async function handler(request: Request) {
 							}
 						} else if (data.status_code === "ERROR") {
 							const msg = `IG Processing Error: ${data.error?.message || JSON.stringify(data)}`;
-							await logPlanner(
-								post.planner_id || "unknown",
-								msg,
-								"error",
-								data,
-							);
+							await logPlanner(post.planner_id || "unknown", msg, "error", data);
 							await prisma.post.update({
 								where: { id: post.id },
 								data: {

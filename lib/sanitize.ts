@@ -39,7 +39,10 @@ export function sanitizeWithLimit(input: unknown, maxLength: number): string {
 }
 
 /** Valida e sanitiza nome (trim check, maxLength, escape). Retorna null se inválido (só espaços). */
-export function validateName(input: unknown, max = CHANNEL_NAME_MAX): string | null {
+export function validateName(
+  input: unknown,
+  max = CHANNEL_NAME_MAX,
+): string | null {
   if (typeof input !== "string") return null;
   const trimmed = input.trim();
   if (!trimmed) return null;
@@ -64,32 +67,65 @@ export function isNonEmptyTrimmed(value: unknown): boolean {
 }
 
 /** Valida MIME e tamanho para video/image (BK-15). */
-export const ALLOWED_VIDEO_MIMES = ["video/mp4","video/quicktime","video/webm","video/x-msvideo","video/x-matroska","video/3gpp","video/mpeg"];
-export const ALLOWED_IMAGE_MIMES = ["image/jpeg","image/png","image/gif","image/webp","image/bmp","image/avif"];
+export const ALLOWED_VIDEO_MIMES = [
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+  "video/x-msvideo",
+  "video/x-matroska",
+  "video/3gpp",
+  "video/mpeg",
+];
+export const ALLOWED_IMAGE_MIMES = [
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "image/bmp",
+  "image/avif",
+];
 
 export const MAX_VIDEO_BYTES = 100 * 1024 * 1024; // 100MB
 export const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB
 
-export function validateFileTypeAndSize(file: File, kind: "video"|"image"): string | null {
+export function validateFileTypeAndSize(
+  file: File,
+  kind: "video" | "image",
+): string | null {
   if (kind === "video") {
-    if (file.type && !file.type.startsWith("video/") && !ALLOWED_VIDEO_MIMES.includes(file.type)) {
+    if (
+      file.type &&
+      !file.type.startsWith("video/") &&
+      !ALLOWED_VIDEO_MIMES.includes(file.type)
+    ) {
       return `Tipo de vídeo não suportado: ${file.type || "desconhecido"}`;
     }
-    if (file.size > MAX_VIDEO_BYTES) return `Vídeo excede ${MAX_VIDEO_BYTES/1024/1024}MB`;
+    if (file.size > MAX_VIDEO_BYTES)
+      return `Vídeo excede ${MAX_VIDEO_BYTES / 1024 / 1024}MB`;
   } else {
-    if (file.type && !ALLOWED_IMAGE_MIMES.includes(file.type) && !file.type.startsWith("image/")) {
+    if (
+      file.type &&
+      !ALLOWED_IMAGE_MIMES.includes(file.type) &&
+      !file.type.startsWith("image/")
+    ) {
       return `Tipo de imagem não suportado: ${file.type}`;
     }
-    if (file.size > MAX_IMAGE_BYTES) return `Imagem excede ${MAX_IMAGE_BYTES/1024/1024}MB`;
+    if (file.size > MAX_IMAGE_BYTES)
+      return `Imagem excede ${MAX_IMAGE_BYTES / 1024 / 1024}MB`;
   }
   return null;
 }
 
-/** Valida community image count: retorna mensagem unificada */
+/** Valida community image count: retorna mensagem unificada (PT-BR plural correto) */
 export function communityImageMessage(count: number): string {
   if (count === 0) return "0 imagens — post somente texto (OK)";
-  if (count >= 1 && count <= 10) return `${count} imagem(ns) — envio multipart`;
-  return `Limite de 10 imagens — ${count-10} descartada(s). Remova uma imagem para adicionar outra.`;
+  if (count === 1) return "1 imagem — envio multipart";
+  if (count >= 2 && count <= 10) return `${count} imagens — envio multipart`;
+  return `Limite de 10 imagens — ${count - 10} descartada(s). Remova uma imagem para adicionar outra.`;
+}
+
+export function formatImageCount(count: number): string {
+  return count === 1 ? "1 imagem" : `${count} imagens`;
 }
 
 /** Trunca youtube_options para null padronizado (BK-19). */
@@ -97,10 +133,15 @@ export function normalizeYoutubeOptions(value: unknown): string | null {
   if (value === undefined || value === null || value === "") return null;
   if (typeof value === "string") {
     const trimmed = value.trim();
-    if (!trimmed || trimmed === "null" || trimmed === "{}" || trimmed === "[]") return null;
+    if (!trimmed || trimmed === "null" || trimmed === "{}" || trimmed === "[]")
+      return null;
     try {
       const parsed = JSON.parse(trimmed);
-      if (!parsed || (typeof parsed === "object" && Object.keys(parsed).length===0)) return null;
+      if (
+        !parsed ||
+        (typeof parsed === "object" && Object.keys(parsed).length === 0)
+      )
+        return null;
       return JSON.stringify(parsed);
     } catch {
       return null;
@@ -108,7 +149,7 @@ export function normalizeYoutubeOptions(value: unknown): string | null {
   }
   if (typeof value === "object") {
     const keys = Object.keys(value as object);
-    if (keys.length===0) return null;
+    if (keys.length === 0) return null;
     return JSON.stringify(value);
   }
   return null;

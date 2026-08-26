@@ -1,25 +1,27 @@
 export default function IOSButton({
     children,
     onClick,
-    variant = 'primary',
+    variant = "primary",
     disabled = false,
-    className = '',
-    type = 'button'
+    className = "",
+    type = "button",
 }: {
     children: React.ReactNode;
     onClick?: () => void;
-    variant?: 'primary' | 'destructive' | 'secondary' | 'ghost';
+    variant?: "primary" | "destructive" | "secondary" | "ghost";
     disabled?: boolean;
     className?: string;
-    type?: 'button' | 'submit' | 'reset';
+    type?: "button" | "submit" | "reset";
 }) {
-    const baseStyles = "ios-btn px-4 py-3 rounded-xl font-semibold text-[17px] w-full flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed";
+    const baseStyles =
+        "ios-btn px-4 py-3 rounded-xl font-semibold text-[17px] flex items-center justify-center gap-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ios-blue focus-visible:ring-offset-2 active:scale-[0.98]";
 
     const variants = {
         primary: "bg-ios-blue text-white shadow-sm hover:bg-blue-600",
         destructive: "bg-ios-red text-white shadow-sm hover:bg-red-600",
-        secondary: "bg-gray-200 dark:bg-gray-700 text-ios-text hover:bg-gray-300",
-        ghost: "bg-transparent text-ios-blue hover:bg-blue-50/10"
+        secondary:
+            "bg-gray-200 dark:bg-gray-700 text-ios-text hover:bg-gray-300",
+        ghost: "bg-transparent text-ios-blue hover:bg-blue-50/10",
     };
 
     return (

@@ -2,9 +2,26 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Upload, X, Radio, Calendar as CalendarIcon, Youtube, Film, MessageSquare, ImagePlus } from "lucide-react";
+import {
+	Upload,
+	X,
+	Radio,
+	Calendar as CalendarIcon,
+	Youtube,
+	Film,
+	MessageSquare,
+	ImagePlus,
+} from "lucide-react";
 import { useUploadActions } from "@/contexts/UploadContext";
-import { YT_TITLE_MAX, CAPTION_MAX, DESCRIPTION_MAX, PINNED_MAX, MAX_VIDEO_BYTES, MAX_IMAGE_BYTES, escapeHtml } from "@/lib/sanitize";
+import {
+	YT_TITLE_MAX,
+	CAPTION_MAX,
+	DESCRIPTION_MAX,
+	PINNED_MAX,
+	MAX_VIDEO_BYTES,
+	MAX_IMAGE_BYTES,
+	escapeHtml,
+} from "@/lib/sanitize";
 import IOSSwitch from "@/components/IOSSwitch";
 
 interface Channel {
@@ -50,7 +67,9 @@ export default function NewPost() {
 	// Opções do Short (salvas em Post.youtube_options)
 	const [ytTitle, setYtTitle] = useState("");
 	const [ytDescription, setYtDescription] = useState("");
-	const [ytPrivacy, setYtPrivacy] = useState<"PUBLIC" | "UNLISTED" | "PRIVATE">("PUBLIC");
+	const [ytPrivacy, setYtPrivacy] = useState<"PUBLIC" | "UNLISTED" | "PRIVATE">(
+		"PUBLIC",
+	);
 	const [ytMadeForKids, setYtMadeForKids] = useState(false);
 	const [ytMonetize, setYtMonetize] = useState(false);
 	const [ytPinnedComment, setYtPinnedComment] = useState("");
@@ -112,7 +131,9 @@ export default function NewPost() {
 		} catch (err) {
 			console.error("Failed to load channels:", err);
 			setChannels([]);
-			setChannelsError("Não foi possível carregar os canais. Verifique sua conexão e tente novamente.");
+			setChannelsError(
+				"Não foi possível carregar os canais. Verifique sua conexão e tente novamente.",
+			);
 		} finally {
 			setChannelsLoaded(true);
 		}
@@ -130,13 +151,13 @@ export default function NewPost() {
 				return;
 			}
 			if (selected.size > MAX_VIDEO_BYTES) {
-				setError(`Arquivo excede limite de ${MAX_VIDEO_BYTES/1024/1024}MB`);
+				setError(`Arquivo excede limite de ${MAX_VIDEO_BYTES / 1024 / 1024}MB`);
 				e.target.value = "";
 				return;
 			}
 			// Community image size check also
 			if (isImage && selected.size > MAX_IMAGE_BYTES) {
-				setError(`Imagem excede ${MAX_IMAGE_BYTES/1024/1024}MB`);
+				setError(`Imagem excede ${MAX_IMAGE_BYTES / 1024 / 1024}MB`);
 				e.target.value = "";
 				return;
 			}
@@ -149,7 +170,9 @@ export default function NewPost() {
 	};
 
 	/** Seleção de imagens para o post da Comunidade (máx. 10) — BK-09 unifica mensagens + BK-15 valida tipo/tamanho */
-	const handleCommunityImagesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+	const handleCommunityImagesChange = (
+		e: React.ChangeEvent<HTMLInputElement>,
+	) => {
 		const incoming = Array.from(e.target.files || []);
 		// BK-15: filtra MIME e tamanho antes de criar objectURL
 		const valid: typeof incoming = [];
@@ -159,7 +182,9 @@ export default function NewPost() {
 				continue;
 			}
 			if (f.size > MAX_IMAGE_BYTES) {
-				setError(`Imagem ${f.name} excede ${MAX_IMAGE_BYTES/1024/1024}MB e foi ignorada`);
+				setError(
+					`Imagem ${f.name} excede ${MAX_IMAGE_BYTES / 1024 / 1024}MB e foi ignorada`,
+				);
 				continue;
 			}
 			valid.push(f);
@@ -170,7 +195,10 @@ export default function NewPost() {
 		}));
 		// Merge/descartes calculados FORA do updater (updaters devem ser puros;
 		// em StrictMode são invocados duas vezes).
-		const merged = [...communityImages, ...selected].slice(0, MAX_COMMUNITY_IMAGES);
+		const merged = [...communityImages, ...selected].slice(
+			0,
+			MAX_COMMUNITY_IMAGES,
+		);
 		let dropped = 0;
 		for (const item of [...communityImages, ...selected]) {
 			if (!merged.includes(item)) {
@@ -229,7 +257,12 @@ export default function NewPost() {
 		e.preventDefault();
 		if (!canSubmit || uploading) return;
 		// BK-20: CONFIRMACAO VISUAL para PUBLIC — modal antes de enviar (mantém PUBLIC como default)
-		if (isYoutubeChannel && youtubeType === "short" && ytPrivacy === "PUBLIC" && !showPublicConfirm) {
+		if (
+			isYoutubeChannel &&
+			youtubeType === "short" &&
+			ytPrivacy === "PUBLIC" &&
+			!showPublicConfirm
+		) {
 			setShowPublicConfirm(true);
 			return;
 		}
@@ -237,7 +270,11 @@ export default function NewPost() {
 		const nowMs = Date.now();
 		if (nowMs - lastSubmitRef.current < 800) return;
 		lastSubmitRef.current = nowMs;
-		if (!idempotencyKeyRef.current) idempotencyKeyRef.current = (typeof crypto !== 'undefined' && 'randomUUID' in crypto) ? crypto.randomUUID() : String(Date.now()) + Math.random();
+		if (!idempotencyKeyRef.current)
+			idempotencyKeyRef.current =
+				typeof crypto !== "undefined" && "randomUUID" in crypto
+					? crypto.randomUUID()
+					: String(Date.now()) + Math.random();
 
 		// BK-10: validar scheduledAt (Date.parse + isNaN + min = agora)
 		if (scheduledAt) {
@@ -261,7 +298,9 @@ export default function NewPost() {
 			setError(`Descrição excede ${DESCRIPTION_LIMIT} caracteres e será truncada`);
 		}
 		if (ytPinnedComment.length > PINNED_LIMIT) {
-			setError(`Comentário fixado excede ${PINNED_LIMIT} caracteres e será truncado`);
+			setError(
+				`Comentário fixado excede ${PINNED_LIMIT} caracteres e será truncado`,
+			);
 		}
 
 		setUploading(true);
@@ -312,9 +351,7 @@ export default function NewPost() {
 				// Convert local datetime string to absolute ISO so the server (UTC)
 				// interprets the user's local wall-clock correctly. If empty, the
 				// cron publisher picks it up on the next tick (it treats NULL as due).
-				scheduled_at: scheduledAt
-					? new Date(scheduledAt).toISOString()
-					: null,
+				scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null,
 			};
 			if (videoUrl) body.video_url = videoUrl;
 			if (imageUrl) body.image_url = imageUrl;
@@ -330,20 +367,22 @@ export default function NewPost() {
 				body.youtube_type = youtubeType;
 				if (youtubeType === "short") {
 					// BK-08 slice apenas no submit com aviso + BK-07 escape HTML
-				let finalTitle = ytTitle.trim();
-				if (finalTitle.length > YT_TITLE_MAX) {
-					finalTitle = finalTitle.slice(0, YT_TITLE_MAX);
-					setError(`Título truncado para ${YT_TITLE_MAX} caracteres`);
-				}
-				finalTitle = escapeHtml(finalTitle);
-				// BK-14 slice description/pinned
-				let finalDesc = ytDescription.slice(0, DESCRIPTION_LIMIT);
-				if (ytDescription.length > DESCRIPTION_LIMIT) finalDesc = escapeHtml(finalDesc);
-				else finalDesc = escapeHtml(finalDesc);
-				let finalPinned = ytPinnedComment.trim().slice(0, PINNED_LIMIT);
-				if (ytPinnedComment.trim().length > PINNED_LIMIT) finalPinned = escapeHtml(finalPinned);
-				else finalPinned = escapeHtml(finalPinned);
-				body.youtube_options = JSON.stringify({
+					let finalTitle = ytTitle.trim();
+					if (finalTitle.length > YT_TITLE_MAX) {
+						finalTitle = finalTitle.slice(0, YT_TITLE_MAX);
+						setError(`Título truncado para ${YT_TITLE_MAX} caracteres`);
+					}
+					finalTitle = escapeHtml(finalTitle);
+					// BK-14 slice description/pinned
+					let finalDesc = ytDescription.slice(0, DESCRIPTION_LIMIT);
+					if (ytDescription.length > DESCRIPTION_LIMIT)
+						finalDesc = escapeHtml(finalDesc);
+					else finalDesc = escapeHtml(finalDesc);
+					let finalPinned = ytPinnedComment.trim().slice(0, PINNED_LIMIT);
+					if (ytPinnedComment.trim().length > PINNED_LIMIT)
+						finalPinned = escapeHtml(finalPinned);
+					else finalPinned = escapeHtml(finalPinned);
+					body.youtube_options = JSON.stringify({
 						title: finalTitle,
 						description: finalDesc,
 						privacy: ytPrivacy,
@@ -358,8 +397,14 @@ export default function NewPost() {
 
 			const res = await fetch("/api/posts", {
 				method: "POST",
-				headers: { "Content-Type": "application/json", "x-idempotency-key": idempotencyKeyRef.current || "" },
-				body: JSON.stringify({ ...body, _idempotencyKey: idempotencyKeyRef.current }),
+				headers: {
+					"Content-Type": "application/json",
+					"x-idempotency-key": idempotencyKeyRef.current || "",
+				},
+				body: JSON.stringify({
+					...body,
+					_idempotencyKey: idempotencyKeyRef.current,
+				}),
 			});
 
 			if (!res.ok) {
@@ -428,7 +473,7 @@ export default function NewPost() {
 							title="Agendamento"
 							type="datetime-local"
 							value={scheduledAt}
-							min={new Date().toISOString().slice(0,16)}
+							min={new Date().toISOString().slice(0, 16)}
 							onChange={(e) => setScheduledAt(e.target.value)}
 							className="bg-transparent text-[17px] text-ios-blue text-right focus:outline-none"
 						/>
@@ -438,9 +483,8 @@ export default function NewPost() {
 				{/* ── Escolha do tipo de conteúdo YouTube ─────────────────────── */}
 				{channelsLoaded && channelsError === "" && channels.length === 0 && (
 					<div className="mx-4 p-3 rounded-xl bg-ios-orange/10 text-ios-orange text-sm">
-						Nenhum canal conectado — adicione um canal YouTube ou Instagram
-						em <span className="font-semibold">Canais</span> antes de agendar
-						um post.
+						Nenhum canal conectado — adicione um canal YouTube ou Instagram em{" "}
+						<span className="font-semibold">Canais</span> antes de agendar um post.
 					</div>
 				)}
 				{channelsError && (
@@ -478,7 +522,7 @@ export default function NewPost() {
 				)}
 
 				{/* ── Mídia ── */}
-				{(!isYoutubeChannel || youtubeType === "short") ? (
+				{!isYoutubeChannel || youtubeType === "short" ? (
 					/* Vídeo: Reels do Instagram OU Short do YouTube */
 					<div className="px-4">
 						<label
@@ -515,7 +559,9 @@ export default function NewPost() {
 							) : (
 								<div className="w-full h-full flex flex-col items-center justify-center text-ios-text-secondary gap-2 cursor-pointer">
 									<Upload size={32} />
-									<span className="text-sm font-medium">{isYoutubeChannel ? "Selecionar vídeo do Short" : "Selecionar vídeo"}</span>
+									<span className="text-sm font-medium">
+										{isYoutubeChannel ? "Selecionar vídeo do Short" : "Selecionar vídeo"}
+									</span>
 									<span className="text-[10px]">9:16 MP4</span>
 								</div>
 							)}
@@ -539,8 +585,12 @@ export default function NewPost() {
 						>
 							<div className="w-full flex flex-col items-center justify-center text-ios-text-secondary gap-2">
 								<ImagePlus size={28} />
-								<span className="text-sm font-medium">Adicionar imagens (opcional)</span>
-								<span className="text-[10px]">JPEG, PNG, GIF ou WebP · até {MAX_COMMUNITY_IMAGES}</span>
+								<span className="text-sm font-medium">
+									Adicionar imagens (opcional)
+								</span>
+								<span className="text-[10px]">
+									JPEG, PNG, GIF ou WebP · até {MAX_COMMUNITY_IMAGES}
+								</span>
 							</div>
 							<input
 								id="community-images-upload"
@@ -554,30 +604,45 @@ export default function NewPost() {
 						</label>
 						{imagesDropped > 0 && (
 							<p className="text-[11px] text-ios-orange px-1">
-								Limite de {MAX_COMMUNITY_IMAGES} imagens — {imagesDropped} descartada(s). Remova uma imagem para adicionar outra.
+								Limite de {MAX_COMMUNITY_IMAGES} imagens — {imagesDropped}{" "}
+								descartada(s). Remova uma imagem para adicionar outra.
 							</p>
 						)}
 						{communityImages.length === 0 && (
-							<p className="text-[11px] text-ios-text-secondary px-1">0 imagens — post somente texto (OK)</p>
+							<p className="text-[11px] text-ios-text-secondary px-1">
+								0 imagens — post somente texto (OK)
+							</p>
 						)}
-						{communityImages.length > 0 && communityImages.length <= MAX_COMMUNITY_IMAGES && (
-							<p className="text-[11px] text-ios-text-secondary px-1">{communityImages.length} imagem(ns) — envio multipart</p>
-						)}
+						{communityImages.length > 0 &&
+							communityImages.length <= MAX_COMMUNITY_IMAGES && (
+								<p className="text-[11px] text-ios-text-secondary px-1">
+									{communityImages.length === 1
+										? "1 imagem — envio multipart"
+										: `${communityImages.length} imagens — envio multipart`}
+								</p>
+							)}
 						{communityImages.length > 0 && (
 							<div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
 								{communityImages.map((img, i) => (
-								<div key={`${img.file.name}-${i}`} className="relative aspect-square rounded-lg overflow-hidden bg-ios-gray-6 border border-ios-separator">
-									{/* eslint-disable-next-line @next/next/no-img-element -- preview local de blob URL */}
-									<img src={img.url} alt={img.file.name} className="w-full h-full object-cover" />
-									<button
-										type="button"
-										onClick={() => removeCommunityImage(i)}
-										className="absolute top-1 right-1 bg-black/50 backdrop-blur p-0.5 rounded-full text-white"
+									<div
+										key={`${img.file.name}-${i}`}
+										className="relative aspect-square rounded-lg overflow-hidden bg-ios-gray-6 border border-ios-separator"
 									>
-										<X size={12} />
-									</button>
-								</div>
-							))}
+										{/* eslint-disable-next-line @next/next/no-img-element -- preview local de blob URL */}
+										<img
+											src={img.url}
+											alt={img.file.name}
+											className="w-full h-full object-cover"
+										/>
+										<button
+											type="button"
+											onClick={() => removeCommunityImage(i)}
+											className="absolute top-1 right-1 bg-black/50 backdrop-blur p-0.5 rounded-full text-white"
+										>
+											<X size={12} />
+										</button>
+									</div>
+								))}
 							</div>
 						)}
 					</div>
@@ -588,11 +653,16 @@ export default function NewPost() {
 					<div className="ios-inset-grouped bg-ios-card divide-y divide-ios-separator">
 						<div className="p-4 bg-ios-card">
 							<div className="flex items-center justify-between mb-1.5">
-								<label htmlFor="yt-title" className="text-[15px] text-ios-text font-medium flex items-center gap-2">
+								<label
+									htmlFor="yt-title"
+									className="text-[15px] text-ios-text font-medium flex items-center gap-2"
+								>
 									<Youtube size={17} className="text-ios-red" />
 									Título <span className="text-ios-red">*</span>
 								</label>
-								<span className={`text-[11px] tabular-nums ${titleExceeds ? "text-ios-red font-semibold" : "text-ios-text-secondary"}`}>
+								<span
+									className={`text-[11px] tabular-nums ${titleExceeds ? "text-ios-red font-semibold" : "text-ios-text-secondary"}`}
+								>
 									{ytTitle.length}/{MAX_TITLE_LENGTH}
 								</span>
 							</div>
@@ -606,12 +676,17 @@ export default function NewPost() {
 								className="w-full bg-transparent text-[16px] text-ios-text placeholder:text-ios-text-secondary focus:outline-none"
 							/>
 							{titleExceeds && (
-								<p className="text-[11px] text-ios-red mt-1">O título excede o limite de {MAX_TITLE_LENGTH} caracteres do YouTube.</p>
+								<p className="text-[11px] text-ios-red mt-1">
+									O título excede o limite de {MAX_TITLE_LENGTH} caracteres do YouTube.
+								</p>
 							)}
 						</div>
 
 						<div className="p-4 bg-ios-card">
-							<label htmlFor="yt-description" className="text-[15px] text-ios-text font-medium block mb-1.5">
+							<label
+								htmlFor="yt-description"
+								className="text-[15px] text-ios-text font-medium block mb-1.5"
+							>
 								Descrição
 							</label>
 							<div className="relative">
@@ -624,7 +699,11 @@ export default function NewPost() {
 									placeholder="Descrição do vídeo (opcional)"
 									className="block w-full bg-transparent text-[16px] text-ios-text placeholder:text-ios-text-secondary focus:outline-none resize-none"
 								/>
-								<span className={`absolute bottom-1 right-2 text-[11px] tabular-nums ${ytDescription.length > DESCRIPTION_LIMIT ? "text-ios-red" : "text-ios-text-secondary"}`}>{ytDescription.length}/{DESCRIPTION_LIMIT}</span>
+								<span
+									className={`absolute bottom-1 right-2 text-[11px] tabular-nums ${ytDescription.length > DESCRIPTION_LIMIT ? "text-ios-red" : "text-ios-text-secondary"}`}
+								>
+									{ytDescription.length}/{DESCRIPTION_LIMIT}
+								</span>
 							</div>
 						</div>
 
@@ -632,14 +711,23 @@ export default function NewPost() {
 							<span className="text-[17px] text-ios-text font-medium flex items-center gap-2">
 								Privacidade
 								{ytPrivacy === "PUBLIC" && (
-									<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-400 text-amber-900 border border-amber-500/30" title="Será publicado publicamente — visível para todos no YouTube">⚠️ Público</span>
+									<span
+										className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-400 text-amber-900 border border-amber-500/30"
+										title="Será publicado publicamente — visível para todos no YouTube"
+									>
+										⚠️ Público
+									</span>
 								)}
 							</span>
 							<div className="flex items-center gap-2">
 								{ytPrivacy === "PUBLIC" && (
-									<span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title="Visível para todos" aria-label="Público" />
+									<span
+										className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"
+										title="Visível para todos"
+										aria-label="Público"
+									/>
 								)}
-							<select
+								<select
 									title="Privacidade do Short"
 									value={ytPrivacy}
 									onChange={(e) => setYtPrivacy(e.target.value as typeof ytPrivacy)}
@@ -653,18 +741,34 @@ export default function NewPost() {
 						</div>
 
 						<label className="flex items-center justify-between p-4 bg-ios-card cursor-pointer">
-							<span className="text-[17px] text-ios-text font-medium">Feito para crianças</span>
-							<IOSSwitch checked={ytMadeForKids} onChange={setYtMadeForKids} ariaLabel="Feito para crianças" />
+							<span className="text-[17px] text-ios-text font-medium">
+								Feito para crianças
+							</span>
+							<IOSSwitch
+								checked={ytMadeForKids}
+								onChange={setYtMadeForKids}
+								ariaLabel="Feito para crianças"
+							/>
 						</label>
 
 						<label className="flex items-center justify-between p-4 bg-ios-card cursor-pointer">
-							<span className="text-[17px] text-ios-text font-medium">Monetizar com anúncios</span>
-							<IOSSwitch checked={ytMonetize} onChange={setYtMonetize} ariaLabel="Monetizar com anúncios" />
+							<span className="text-[17px] text-ios-text font-medium">
+								Monetizar com anúncios
+							</span>
+							<IOSSwitch
+								checked={ytMonetize}
+								onChange={setYtMonetize}
+								ariaLabel="Monetizar com anúncios"
+							/>
 						</label>
 
 						<div className="p-4 bg-ios-card">
-							<label htmlFor="yt-pinned" className="text-[15px] text-ios-text font-medium block mb-1.5">
-								Comentário fixado <span className="text-ios-text-secondary font-normal">(opcional)</span>
+							<label
+								htmlFor="yt-pinned"
+								className="text-[15px] text-ios-text font-medium block mb-1.5"
+							>
+								Comentário fixado{" "}
+								<span className="text-ios-text-secondary font-normal">(opcional)</span>
 							</label>
 							<div className="relative">
 								<input
@@ -676,7 +780,11 @@ export default function NewPost() {
 									placeholder="Comentário criado e fixado automaticamente após publicar"
 									className="w-full bg-transparent text-[16px] text-ios-text placeholder:text-ios-text-secondary focus:outline-none pr-16"
 								/>
-								<span className={`absolute bottom-1 right-2 text-[11px] tabular-nums ${ytPinnedComment.length > PINNED_LIMIT ? "text-ios-red" : "text-ios-text-secondary"}`}>{ytPinnedComment.length}/{PINNED_LIMIT}</span>
+								<span
+									className={`absolute bottom-1 right-2 text-[11px] tabular-nums ${ytPinnedComment.length > PINNED_LIMIT ? "text-ios-red" : "text-ios-text-secondary"}`}
+								>
+									{ytPinnedComment.length}/{PINNED_LIMIT}
+								</span>
 							</div>
 						</div>
 					</div>
@@ -701,7 +809,11 @@ export default function NewPost() {
 								value={caption}
 								onChange={(e) => setCaption(e.target.value)}
 							/>
-							<span className={`absolute bottom-2 right-3 text-[11px] tabular-nums ${caption.length > CAPTION_LIMIT ? "text-ios-red" : "text-ios-text-secondary"}`}>{caption.length}/{CAPTION_LIMIT}</span>
+							<span
+								className={`absolute bottom-2 right-3 text-[11px] tabular-nums ${caption.length > CAPTION_LIMIT ? "text-ios-red" : "text-ios-text-secondary"}`}
+							>
+								{caption.length}/{CAPTION_LIMIT}
+							</span>
 						</div>
 					</div>
 				</div>
@@ -713,30 +825,79 @@ export default function NewPost() {
 				)}
 
 				{/* BK-20: Modal de confirmação para PUBLIC */}
-			{showPublicConfirm && isYoutubeChannel && youtubeType === "short" && ytPrivacy === "PUBLIC" && (
-				<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="public-confirm-title">
-					<div className="bg-ios-card w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-ios-separator">
-						<div className="p-5 space-y-3">
-							<div className="flex items-center gap-2 text-amber-600">
-								<span className="w-8 h-8 rounded-full bg-amber-400 flex items-center justify-center text-amber-900 font-bold">!</span>
-								<h3 id="public-confirm-title" className="text-[17px] font-semibold text-ios-text">Publicar como Público?</h3>
-							</div>
-							<p className="text-sm text-ios-secondary">Este Short será <span className="font-semibold text-amber-600">visível para todos</span> no YouTube. Confirme que deseja publicar como <span className="inline-flex px-1.5 py-0.5 rounded bg-amber-400 text-amber-900 text-xs font-bold">PÚBLICO</span>.</p>
-							<div className="flex gap-2 pt-2">
-								<button type="button" onClick={() => setShowPublicConfirm(false)} className="flex-1 py-2.5 rounded-xl bg-ios-separator text-ios-text font-semibold text-sm">Cancelar</button>
-								<button type="button" onClick={() => { setShowPublicConfirm(false); const evt = { preventDefault: () => {} } as unknown as React.FormEvent; handleSubmit(evt); }} className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white font-semibold text-sm">Confirmar e Publicar</button>
+				{showPublicConfirm &&
+					isYoutubeChannel &&
+					youtubeType === "short" &&
+					ytPrivacy === "PUBLIC" && (
+						<div
+							className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+							role="dialog"
+							aria-modal="true"
+							aria-labelledby="public-confirm-title"
+						>
+							<div className="bg-ios-card w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-ios-separator">
+								<div className="p-5 space-y-3">
+									<div className="flex items-center gap-2 text-amber-600">
+										<span className="w-8 h-8 rounded-full bg-amber-400 flex items-center justify-center text-amber-900 font-bold">
+											!
+										</span>
+										<h3
+											id="public-confirm-title"
+											className="text-[17px] font-semibold text-ios-text"
+										>
+											Publicar como Público?
+										</h3>
+									</div>
+									<p className="text-sm text-ios-secondary">
+										Este Short será{" "}
+										<span className="font-semibold text-amber-600">
+											visível para todos
+										</span>{" "}
+										no YouTube. Confirme que deseja publicar como{" "}
+										<span className="inline-flex px-1.5 py-0.5 rounded bg-amber-400 text-amber-900 text-xs font-bold">
+											PÚBLICO
+										</span>
+										.
+									</p>
+									<div className="flex gap-2 pt-2">
+										<button
+											type="button"
+											onClick={() => setShowPublicConfirm(false)}
+											className="flex-1 py-2.5 rounded-xl bg-ios-separator text-ios-text font-semibold text-sm"
+										>
+											Cancelar
+										</button>
+										<button
+											type="button"
+											onClick={() => {
+												setShowPublicConfirm(false);
+												const evt = {
+													preventDefault: () => {},
+												} as unknown as React.FormEvent;
+												handleSubmit(evt);
+											}}
+											className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white font-semibold text-sm"
+										>
+											Confirmar e Publicar
+										</button>
+									</div>
+								</div>
 							</div>
 						</div>
-					</div>
-				</div>
-			)}
-			<div className="px-4">
+					)}
+				<div className="px-4">
 					<button
 						type="submit"
 						disabled={!canSubmit || uploading}
 						className="ios-btn bg-ios-blue text-white w-full py-3.5 rounded-xl font-semibold text-[17px] disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
 					>
-						{uploading ? "Enviando..." : isYoutubeChannel ? (youtubeType === "short" ? "Agendar Short" : "Agendar post na Comunidade") : "Compartilhar"}
+						{uploading
+							? "Enviando..."
+							: isYoutubeChannel
+								? youtubeType === "short"
+									? "Agendar Short"
+									: "Agendar post na Comunidade"
+								: "Compartilhar"}
 					</button>
 				</div>
 			</form>
