@@ -14,6 +14,7 @@ import {
 import { runPlannerOnce } from "@/lib/planner-runtime";
 import { sendNotification } from "@/lib/notify";
 import { normalizeCarouselChild } from "@/lib/carousel-normalize";
+import { adaptImageToSquareWithBlur, type AdaptOutput } from "@/lib/youtube-community-image";
 import { YoutubeApiError,
 	createCommunityPostText,
 	createShort,
@@ -547,6 +548,7 @@ interface YoutubePublishPost {
 		id?: string;
 		name?: string | null;
 		settings?: string | null;
+		platform?: string | null;
 	} | null;
 }
 
@@ -856,7 +858,8 @@ async function publishYoutubePost(opts: {
 	}
 
 	try {
-		if (post.youtube_type === "community") {
+		const isCommunityPost = post.youtube_type === "community" || (!post.youtube_type && !post.video_url && !!(post.image_url || post.children_urls));
+		if (isCommunityPost) {
 			const message = (post.caption || "").trim();
 			if (!message) throw new MalformedDataError("Post na Comunidade exige texto");
 			const { urls: rawImageUrls, droppedVideos } = collectCommunityImageUrls(post);
@@ -963,6 +966,73 @@ async function publishYoutubePost(opts: {
 						`Falha transitória ao materializar as imagens do post na Comunidade: ${detail}`,
 					);
 				}
+				// Adaptação automática para 1:1 com blur (somente Comunidade).
+				// Toda imagem não-quadrada vira 1080x1080 com fundo em blur da própria imagem.
+				// Best-effort com observabilidade: falha loga warning e mantém original; 1:1 já quadrada não é tocada.
+				// Paralelizada + checagem de deadline por imagem para não estourar MAX_EXEC_MS.
+				// Sem duplicar arquivo no storage, sem cache em disco — só em memória para o upload.
+				let adaptedImages: AdaptOutput[] = [];
+				try {
+					// Concorrência limitada a 3 para evitar pico de memória com 10 imagens (até 30 pipelines sharp)
+					const adaptResults: AdaptOutput[] = [];
+					const CONCURRENCY = 3;
+					for (let start = 0; start < images.length; start += CONCURRENCY) {
+						const chunk = images.slice(start, start + CONCURRENCY);
+						const chunkResults = await Promise.all(
+							chunk.map(async (original, chunkIdx) => {
+								const idx = start + chunkIdx;
+								// Margem de 4s: evita iniciar sharp quando orçamento quase esgotado
+								if (materializeDeadline - Date.now() < 4000) {
+									await logPlanner(
+										plannerId,
+										`[YouTube] orçamento esgotado — imagem ${idx + 1} mantida original sem blur`,
+										"warning",
+									).catch(() => {});
+									return { ...original, wasAdapted: false } as AdaptOutput;
+								}
+								try {
+									const adapted = await adaptImageToSquareWithBlur(original, idx);
+									if (adapted.wasAdapted) {
+										const origLabel =
+											adapted.origWidth && adapted.origHeight
+												? `${adapted.origWidth}x${adapted.origHeight}`
+												: "original";
+										await logPlanner(
+											plannerId,
+											`[YouTube] imagem ${idx + 1} adaptada para 1:1 com blur (${origLabel} -> 1080x1080)`,
+											"info",
+										).catch(() => {});
+										return adapted;
+									}
+									if (adapted.fallbackReason) {
+										await logPlanner(
+											plannerId,
+											`[YouTube] imagem ${idx + 1} blur ignorado (${adapted.fallbackReason}), mantendo original`,
+											"warning",
+										).catch(() => {});
+									}
+									return adapted;
+								} catch (e: unknown) {
+									const msg = (e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)).replace(/\n/g, " ");
+									await logPlanner(
+										plannerId,
+										`[YouTube] imagem ${idx + 1} blur falhou (${msg}), mantendo original`,
+										"warning",
+									).catch(() => {});
+									console.warn(`[YouTube] blur falhou imagem ${idx + 1}: ${msg}`);
+									return { ...original, wasAdapted: false, fallbackReason: msg } as AdaptOutput;
+								}
+							}),
+						);
+						adaptResults.push(...chunkResults);
+					}
+					adaptedImages = adaptResults;
+				} catch (e: unknown) {
+					const msg = (e instanceof Error ? e.message.slice(0, 200) : String(e).slice(0, 200)).replace(/\n/g, " ");
+					console.warn(`[YouTube] falha geral no blur paralelo: ${msg}`);
+					adaptedImages = images.map((img) => ({ ...img, wasAdapted: false }) as AdaptOutput);
+				}
+				const imagesToUpload = adaptedImages.length > 0 ? adaptedImages : images.map((img) => ({ ...img, wasAdapted: false }) as AdaptOutput);
 				// Orçamento ANTES do upload: um multipart pode levar até 120s na
 				// API externa; se o tick já está no limite, não inicia o upload —
 				// reverte para pending (retry no próximo ciclo) em vez de arriscar
@@ -974,13 +1044,13 @@ async function publishYoutubePost(opts: {
 				}
 				await logPlanner(
 					plannerId,
-					`[YouTube] Publicando post na Comunidade (${images.length} imagem(ns)${failures.length > 0 ? `; ${failures.length} falharam` : ""}) do canal ${post.channel?.name || post.id}`,
+					`[YouTube] Publicando post na Comunidade (${imagesToUpload.length} imagem(ns)${failures.length > 0 ? `; ${failures.length} falharam` : ""}) do canal ${post.channel?.name || post.id}`,
 					"info",
 				);
 				created = await uploadCommunityPost({
 					sessionId,
 					message,
-					images: images.map((img) => ({
+					images: imagesToUpload.map((img) => ({
 						blob: new Blob([bufferView(img.buffer)], { type: img.contentType }),
 						filename: img.filename,
 						contentType: img.contentType,
