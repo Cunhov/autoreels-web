@@ -30,28 +30,31 @@ export function isHHMM(value: unknown): boolean {
     return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
+/** JSON livre de um config/state de planner (shape aceito de qualquer origem). */
+export type PlannerJson = Record<string, unknown>;
+
 /**
  * Parse defensivo do config: aceita string (possivelmente double-stringified),
  * objeto já parseado, ou null/undefined → {}. NUNCA lança.
  */
-export function parsePlannerConfig(rawConfig: unknown): Record<string, any> {
+export function parsePlannerConfig(rawConfig: unknown): PlannerJson {
     if (rawConfig == null) return {};
-    if (typeof rawConfig === 'object') return rawConfig as Record<string, any>;
+    if (typeof rawConfig === 'object') return rawConfig as PlannerJson;
     try {
         const first = JSON.parse(String(rawConfig));
-        return typeof first === 'string' ? JSON.parse(first) : first;
+        return typeof first === 'string' ? JSON.parse(first) : (first as PlannerJson);
     } catch {
         return {};
     }
 }
 
 /** Parse defensivo do estado de publicação (Planner.state). NUNCA lança. */
-export function parsePlannerState(rawState: unknown): Record<string, any> {
+export function parsePlannerState(rawState: unknown): PlannerJson {
     if (rawState == null) return {};
-    if (typeof rawState === 'object') return rawState as Record<string, any>;
+    if (typeof rawState === 'object') return rawState as PlannerJson;
     try {
         const first = JSON.parse(String(rawState));
-        return typeof first === 'string' ? JSON.parse(first) : first;
+        return typeof first === 'string' ? JSON.parse(first) : (first as PlannerJson);
     } catch {
         return {};
     }
@@ -102,7 +105,7 @@ export function validatePlannerConfig(config: unknown): { ok: boolean; errors: s
         return { ok: false, errors: ['config deve ser um objeto JSON'] };
     }
 
-    const c = config as Record<string, any>;
+    const c = config as PlannerJson;
 
     // frequency
     if (c.frequency !== undefined && c.frequency !== null) {
@@ -110,13 +113,14 @@ export function validatePlannerConfig(config: unknown): { ok: boolean; errors: s
         if (typeof freq !== 'object' || Array.isArray(freq)) {
             errors.push('frequency deve ser um objeto { value, unit }');
         } else {
-            if (freq.value !== undefined && freq.value !== null) {
-                const num = Number(freq.value);
+            const f = freq as PlannerJson;
+            if (f.value !== undefined && f.value !== null) {
+                const num = Number(f.value);
                 if (!Number.isFinite(num) || num < 1) {
                     errors.push('frequency.value deve ser um número >= 1');
                 }
             }
-            if (freq.unit !== undefined && freq.unit !== null && !(FREQUENCY_UNITS as readonly string[]).includes(String(freq.unit))) {
+            if (f.unit !== undefined && f.unit !== null && !(FREQUENCY_UNITS as readonly string[]).includes(String(f.unit))) {
                 errors.push('frequency.unit deve ser minutes | hours | days | weeks');
             }
         }
@@ -138,15 +142,16 @@ export function validatePlannerConfig(config: unknown): { ok: boolean; errors: s
         if (typeof s !== 'object' || Array.isArray(s)) {
             errors.push('sleep_schedule deve ser um objeto { start, end } ou null');
         } else {
-            if (s.start !== undefined && s.start !== null && !isHHMM(s.start)) errors.push('sleep_schedule.start deve estar no formato HH:MM');
-            if (s.end !== undefined && s.end !== null && !isHHMM(s.end)) errors.push('sleep_schedule.end deve estar no formato HH:MM');
+            const sched = s as PlannerJson;
+            if (sched.start !== undefined && sched.start !== null && !isHHMM(sched.start)) errors.push('sleep_schedule.start deve estar no formato HH:MM');
+            if (sched.end !== undefined && sched.end !== null && !isHHMM(sched.end)) errors.push('sleep_schedule.end deve estar no formato HH:MM');
             // start == end → janela que nunca dorme (isSleepingNow: hhmm >= s && hhmm < s é
             // sempre false). O wizard já bloqueia com este mesmo texto; o servidor agora
             // aplica a mesma regra para payloads via API.
             if (
-                typeof s.start === 'string' && typeof s.end === 'string' &&
-                isHHMM(s.start) && isHHMM(s.end) &&
-                s.start === s.end
+                typeof sched.start === 'string' && typeof sched.end === 'string' &&
+                isHHMM(sched.start) && isHHMM(sched.end) &&
+                sched.start === sched.end
             ) {
                 errors.push('Sleep start and end must be different times.');
             }
@@ -155,7 +160,8 @@ export function validatePlannerConfig(config: unknown): { ok: boolean; errors: s
 
     // caption templates
     if (c.caption_templates !== undefined) {
-        if (!Array.isArray(c.caption_templates) || c.caption_templates.some((t: unknown) => typeof t !== 'string')) {
+        const templates = c.caption_templates;
+        if (!Array.isArray(templates) || templates.some((t: unknown) => typeof t !== 'string')) {
             errors.push('caption_templates deve ser um array de strings');
         }
     }
@@ -175,8 +181,11 @@ export function validatePlannerConfig(config: unknown): { ok: boolean; errors: s
     if (c.audio_configuration !== undefined && c.audio_configuration !== null) {
         if (typeof c.audio_configuration !== 'object' || Array.isArray(c.audio_configuration)) {
             errors.push('audio_configuration deve ser um objeto');
-        } else if (typeof c.audio_configuration.audio_id !== 'string' || !c.audio_configuration.audio_id.trim()) {
-            errors.push('audio_configuration.audio_id é obrigatório');
+        } else {
+            const audio = c.audio_configuration as PlannerJson;
+            if (typeof audio.audio_id !== 'string' || !audio.audio_id.trim()) {
+                errors.push('audio_configuration.audio_id é obrigatório');
+            }
         }
     }
 
@@ -201,7 +210,7 @@ export function validatePlannerConfig(config: unknown): { ok: boolean; errors: s
 }
 
 /** Timezone default compartilhado. */
-export function getPlannerTimezone(config: Record<string, any>): string {
+export function getPlannerTimezone(config: PlannerJson): string {
     return typeof config.timezone === 'string' && config.timezone.trim() ? config.timezone : DEFAULT_TIMEZONE;
 }
 
@@ -224,14 +233,15 @@ export function getTimeInTimeZone(date: Date, tz: string): { hh: string; mm: str
  * frequência inválida (NaN, 0, negativa) → null (planner deve ser pulado com aviso,
  * em vez de publicar a cada tick ou nunca).
  */
-export function getPlannerIntervalMs(config: Record<string, any>): number | null {
+export function getPlannerIntervalMs(config: PlannerJson): number | null {
     const freq = config.frequency;
     if (!freq || typeof freq !== 'object') return 10 * 60 * 1000; // default 10 min
-    const rawValue = freq.value ?? 10;
+    const f = freq as PlannerJson;
+    const rawValue = f.value ?? 10;
     const val = Number(rawValue);
     if (!Number.isFinite(val) || val < 1) return null;
 
-    const unit = String(freq.unit || 'minutes');
+    const unit = String(f.unit || 'minutes');
     const MULTIPLIERS: Record<string, number> = {
         minutes: 60 * 1000,
         hours: 60 * 60 * 1000,
@@ -242,13 +252,14 @@ export function getPlannerIntervalMs(config: Record<string, any>): number | null
 }
 
 /** Checa se a janela de sleep (HH:MM) está ativa agora, no fuso do planner. */
-export function isSleepingNow(config: Record<string, any>, now: Date): boolean {
+export function isSleepingNow(config: PlannerJson, now: Date): boolean {
     const schedule = config.sleep_schedule;
     if (!schedule || typeof schedule !== 'object') return false;
     const { hh, mm } = getTimeInTimeZone(now, getPlannerTimezone(config));
     const hhmm = `${hh}:${mm}`;
-    const start = String(schedule.start || '00:00');
-    const end = String(schedule.end || '06:00');
+    const sched = schedule as PlannerJson;
+    const start = String(sched.start || '00:00');
+    const end = String(sched.end || '06:00');
     if (start <= end) return hhmm >= start && hhmm < end;
     return hhmm >= start || hhmm < end; // janela que cruza a meia-noite
 }

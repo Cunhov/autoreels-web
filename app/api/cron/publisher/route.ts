@@ -14,14 +14,16 @@ import {
 import { runPlannerOnce } from "@/lib/planner-runtime";
 import { sendNotification } from "@/lib/notify";
 import { normalizeCarouselChild } from "@/lib/carousel-normalize";
-import {
-	YoutubeApiError,
+import { YoutubeApiError,
+	createCommunityPostText,
 	createShort,
 	getSession,
 	getYoutubeSessionId,
 	uploadCommunityPost,
+	type YoutubePostResponse,
 	type YoutubeShortOptions,
 } from "@/lib/youtube";
+import { isHostAllowed } from "@/lib/ssrf-guard";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -124,7 +126,7 @@ function classifyError(
 	// Config ausente (ex.: getYoutubeConfig lança "YOUTUBE_API_KEY não
 	// configurada") é permanente: sem isso posts YT viram transient, ocupam o
 	// lote do cron a cada tick e starving publicações válidas.
-	if (/YOUTUBE_API_KEY|não configurada|missing credentials/i.test(msg)) return "definitive";
+	if (/YOUTUBE_API_KEY|YOUTUBE_API_BASE_URL|não configurada|missing credentials/i.test(msg)) return "definitive";
 	if (/carousel has no media items/i.test(msg)) return "definitive";
 
 	// Unknown/network errors: retry rather than burn the post
@@ -561,6 +563,20 @@ const YT_MIME_TYPES: Record<string, string> = {
 	".webp": "image/webp",
 };
 
+// Imagens de post da Comunidade vindas de URL absoluta (item da biblioteca
+// importado por URL): timeout por imagem + teto de bytes para o cron não
+// travar num host lento nem carregar arquivos gigantes em memória.
+const COMMUNITY_REMOTE_IMAGE_TIMEOUT_MS = 30_000;
+const COMMUNITY_REMOTE_IMAGE_MAX_BYTES = 30 * 1024 * 1024; // ~30 MB
+
+// Teto do arquivo de vídeo de Short aceito pelo cron: o upload é síncrono
+// (lê o vídeo em memória + transmite via multipart) DENTRO do tick do
+// publisher, cujo orçamento total é MAX_EXEC_MS (~45s) e o heartbeat do
+// worker é 60s. Um arquivo gigante estouraria a janela e/ou o pico de
+// memória. 512 MB é folgado para um Short real (<60s); um vídeo maior é
+// quase certamente um arquivo completo erroneamente roteado como Short.
+const SHORT_MAX_FILE_BYTES = 512 * 1024 * 1024; // ~512 MB
+
 /**
  * Lê um arquivo de mídia do storage local usando o MESMO mecanismo de
  * `app/api/file/[...path]/route.ts`: URLs `/api/file/<relpath>` são
@@ -568,6 +584,7 @@ const YT_MIME_TYPES: Record<string, string> = {
  */
 async function readLocalUploadFile(
 	mediaUrl: string,
+	maxBytes?: number,
 ): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
 	const relative = mediaUrl.startsWith("/api/file/")
 		? mediaUrl.slice("/api/file/".length)
@@ -591,6 +608,14 @@ async function readLocalUploadFile(
 			try {
 				const stat = await lstat(candidate); // lstat: rejeita symlinks
 				if (!stat.isFile()) continue;
+				// Teto de bytes (opcional): aplicado ANTES de ler o arquivo para
+				// não carregar gigantes em memória. Erro definitivo, propagado —
+				// NÃO tenta os outros roots (o arquivo existe; só é grande demais).
+				if (maxBytes != null && stat.size > maxBytes) {
+					throw new MalformedDataError(
+						`Arquivo de mídia excede o limite de ${Math.round(maxBytes / 1024 / 1024)} MB: ${mediaUrl}`,
+					);
+				}
 				const buffer = await readFile(candidate);
 				const ext = extname(rel).toLowerCase();
 				return {
@@ -598,8 +623,9 @@ async function readLocalUploadFile(
 					contentType: YT_MIME_TYPES[ext] || "application/octet-stream",
 					filename: rel.split("/").pop() || "midia",
 				};
-			} catch {
-				/* tenta o próximo candidato */
+			} catch (err) {
+				if (err instanceof MalformedDataError) throw err;
+				/* arquivo ausente/perm: tenta o próximo candidato */
 			}
 		}
 	}
@@ -621,9 +647,161 @@ function bufferView(buf: Buffer): Uint8Array<ArrayBuffer> {
 	);
 }
 
-/** Coleta as imagens de um post da Comunidade. */
-function collectCommunityImageUrls(post: YoutubePublishPost): string[] {
+async function readCommunityImage(
+	mediaUrl: string,
+	remainingBudgetMs?: number,
+): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+	// URL absoluta http(s) — conteúdo da biblioteca importado por URL/de
+	// terceiros: baixa no servidor (com guarda SSRF e teto de bytes) para o
+	// multipart não depender de o storage local conter o arquivo.
+	if (/^https?:\/\//i.test(mediaUrl)) {
+		const res = await downloadRemoteImageWithRedirectGuard(mediaUrl, remainingBudgetMs);
+		if (!res.ok) {
+			// 5xx = servidor de origem/trânsito falhou — TRANSITENTE (retry no
+			// próximo tick; o cliente pode ter recuperado). 4xx = o recurso não
+			// existe mais (404) — DEFINITIVO.
+			if (res.status >= 500) {
+				throw new Error(
+					`Falha ao baixar imagem externa (HTTP ${res.status}): ${mediaUrl}`,
+				);
+			}
+			throw new MalformedDataError(
+				`Falha ao baixar imagem externa (HTTP ${res.status}): ${mediaUrl}`,
+			);
+		}
+		const arrayBuffer = await res.arrayBuffer();
+		if (arrayBuffer.byteLength > COMMUNITY_REMOTE_IMAGE_MAX_BYTES) {
+			throw new MalformedDataError(
+				`Imagem externa excede o limite de ${Math.round(COMMUNITY_REMOTE_IMAGE_MAX_BYTES / 1024 / 1024)} MB: ${mediaUrl}`,
+			);
+		}
+		const contentType =
+			(res.headers.get("content-type") || "").split(";")[0].trim() ||
+			"application/octet-stream";
+		// Valida o conteúdo baixado: um content item com URL pública apontando
+		// para HTML/não-imagem geraria falha DEFINITIVA confusa na API externa
+		// (o multipart repassaria o content-type cru). Rejeita aqui com
+		// MalformedDataError claro, citando a URL. octet-stream (sem tipo) é
+		// tolerado — host pode servir a imagem sem content-type.
+		const lowerType = contentType.toLowerCase();
+		if (
+			lowerType &&
+			lowerType !== "application/octet-stream" &&
+			!lowerType.startsWith("image/")
+		) {
+			throw new MalformedDataError(
+				`Conteúdo baixado não é uma imagem (content-type ${contentType}): ${mediaUrl}`,
+			);
+		}
+		const rawName = mediaUrl.split("/").pop()?.split("?")[0] || "imagem-externa";
+		let filename = rawName;
+		try {
+			filename = decodeURIComponent(rawName);
+		} catch {
+			/* nome com escape inválido — mantém o valor cru */
+		}
+		return {
+			buffer: Buffer.from(arrayBuffer),
+			contentType: lowerType || "application/octet-stream",
+			filename: filename || "imagem-externa",
+		};
+	}
+	// URL local (/api/file/... ou relativa) → storage local, path atual. Aplica
+	// o MESMO teto de bytes das URLs remotas: o multipart carrega até 10
+	// imagens simultaneamente em memória, e sem teto um arquivo local gigante
+	// entraria no pico de memória do tick sem nenhuma proteção.
+	return readLocalUploadFile(mediaUrl, COMMUNITY_REMOTE_IMAGE_MAX_BYTES);
+}
+
+/**
+ * Baixa uma URL de imagem remota seguindo redirecionamentos MANUALMENTE,
+ * revalidando a guarda SSRF (`isHostAllowed`) em CADA salto — o host final
+ * pós-redirect nunca pode divergir para loopback/privado. A guarda do host
+ * original sozinha era contornável por um 302 → http://169.254.169.254/...
+ * (paridade com app/api/import-url, que revalida o alvo do redirect).
+ * Erros de DNS/resolver de `isHostAllowed` PROPAGAM (transientes no
+ * publisher); host efetivamente privado/bloqueado → MalformedDataError.
+ */
+async function downloadRemoteImageWithRedirectGuard(
+	mediaUrl: string,
+	remainingBudgetMs?: number,
+): Promise<Response> {
+	const maxRedirects = 5;
+	let current = mediaUrl;
+	for (let hop = 0; hop <= maxRedirects; hop++) {
+		let url: URL;
+		try {
+			url = new URL(current);
+		} catch {
+			throw new MalformedDataError(
+				`URL de imagem da Comunidade inválida: ${current}`,
+			);
+		}
+		if (url.protocol !== "http:" && url.protocol !== "https:") {
+			throw new MalformedDataError(
+				`URL de imagem da Comunidade inválida: ${current}`,
+			);
+		}
+		if (!(await isHostAllowed(url.hostname))) {
+			throw new MalformedDataError(
+				`Host da imagem não é publicamente acessível: ${current}`,
+			);
+		}
+		// Timeout por requisicao: min(30s, orçamento restante do tick) — o
+		// materializador em paralelo não pode estourar o budget do cron.
+		const perRequestTimeout =
+			remainingBudgetMs != null
+				? Math.max(1_000, Math.min(COMMUNITY_REMOTE_IMAGE_TIMEOUT_MS, remainingBudgetMs))
+				: COMMUNITY_REMOTE_IMAGE_TIMEOUT_MS;
+		const res = await fetchWithTimeout(
+			current,
+			{ redirect: "manual" },
+			perRequestTimeout,
+		);
+		if (res.status >= 300 && res.status < 400) {
+			const location = res.headers.get("location");
+			if (!location) {
+				throw new MalformedDataError(
+					`Redirecionamento sem destino ao baixar imagem: ${current}`,
+				);
+			}
+			try {
+				current = new URL(location, url).href;
+			} catch {
+				throw new MalformedDataError(
+					`Destino de redirecionamento inválido ao baixar imagem: ${location}`,
+				);
+			}
+			continue;
+		}
+		return res;
+	}
+	throw new MalformedDataError(
+		`Muitos redirecionamentos ao baixar a imagem: ${mediaUrl}`,
+	);
+}
+
+/**
+ * Um erro de materialização de imagem é TRANSITENTE (retry) ou DEFINITIVO
+ * (malformado)? DNS/resolver, timeout, 5xx e erros de rede genéricos são
+ * transitórios; MalformedDataError (arquivo ausente, URL inválida, teto de
+ * bytes, host bloqueado, 404 remoto) é definitivo.
+ */
+function isTransientCommunityImageError(err: unknown): boolean {
+	if (err instanceof MalformedDataError) return false;
+	if (err instanceof YoutubeApiError) return err.status >= 500;
+	if (err instanceof Error && err.name === "AbortError") return true;
+	if (err instanceof Error && /HTTP [5-9]\d\d/.test(err.message)) return true;
+	return true; // rede/DNS/resolver genérico → transiente
+}
+
+/** Coleta as imagens de um post da Comunidade (vídeos são descartados com contagem). */
+function collectCommunityImageUrls(post: YoutubePublishPost): {
+	urls: string[];
+	droppedVideos: number;
+} {
 	const urls: string[] = [];
+	let droppedVideos = 0;
 	if (post.children_urls) {
 		try {
 			const children = JSON.parse(post.children_urls) as {
@@ -631,14 +809,22 @@ function collectCommunityImageUrls(post: YoutubePublishPost): string[] {
 				type?: string;
 			}[];
 			for (const child of children) {
-				if (child?.url && child.type !== "video") urls.push(child.url);
+				if (!child?.url) continue;
+				if (child.type === "video") {
+					droppedVideos++;
+				} else {
+					urls.push(child.url);
+				}
 			}
 		} catch {
 			throw new MalformedDataError("Malformed children_urls");
 		}
 	}
-	if (!urls.length && post.image_url) urls.push(post.image_url);
-	return urls;
+	// Fallback legado (post sem children_urls): só quando NENHUM child foi
+	// vídeo — se o carrossel continha apenas vídeos, image_url aponta para o
+	// primeiro child (vídeo) e não pode virar "imagem".
+	if (!urls.length && !droppedVideos && post.image_url) urls.push(post.image_url);
+	return { urls, droppedVideos };
 }
 
 /** Publica um post YouTube (Short ou Comunidade) e persiste o resultado. */
@@ -647,8 +833,10 @@ async function publishYoutubePost(opts: {
 	plannerId: string;
 	now: Date;
 	results: PublishResults;
+	startTime: number;
+	maxExecMs: number;
 }): Promise<void> {
-	const { post, plannerId, now, results } = opts;
+	const { post, plannerId, now, results, startTime, maxExecMs } = opts;
 
 	const sessionId = getYoutubeSessionId(post.channel?.settings);
 	if (!sessionId) {
@@ -671,9 +859,14 @@ async function publishYoutubePost(opts: {
 		if (post.youtube_type === "community") {
 			const message = (post.caption || "").trim();
 			if (!message) throw new MalformedDataError("Post na Comunidade exige texto");
-			const imageUrls = collectCommunityImageUrls(post);
-			if (imageUrls.length < 1) {
-				throw new MalformedDataError("Post na Comunidade exige ao menos 1 imagem");
+			const { urls: rawImageUrls, droppedVideos } = collectCommunityImageUrls(post);
+			const imageUrls = [...rawImageUrls];
+			if (droppedVideos > 0) {
+				await logPlanner(
+					plannerId,
+					`[YouTube] Post na Comunidade contém ${droppedVideos} vídeo(s) — a Comunidade do YouTube não suporta vídeos; descartados (publicando apenas imagens)`,
+					"warning",
+				).catch(() => {});
 			}
 			// A API externa aceita no máximo 10 imagens — trunca com aviso no log
 			// do planner em vez de descartar silenciosamente.
@@ -685,24 +878,115 @@ async function publishYoutubePost(opts: {
 				).catch(() => {});
 				imageUrls.length = 10;
 			}
-			const images: { buffer: Buffer; contentType: string; filename: string }[] = [];
-			for (const url of imageUrls) {
-				images.push(await readLocalUploadFile(url));
+			// Carrossel roteado para a Comunidade contendo APENAS vídeos: sem
+			// imagens sobraria um post só de texto descartando TODA a mídia —
+			// falha definitiva com mensagem clara em vez de descarte silencioso.
+			// O backend de criação (POST /api/posts) e o wizard já bloqueiam
+			// este estado na origem; o publisher é a última barreira (o post
+			// pode ter sido criado antes da validação ou via API de terceiros).
+			if (imageUrls.length === 0 && droppedVideos > 0) {
+				throw new MalformedDataError(
+					"Post na Comunidade do YouTube não suporta vídeos — o conteúdo selecionado contém apenas vídeos",
+				);
 			}
-			await logPlanner(
-				plannerId,
-				`[YouTube] Publicando post na Comunidade (${images.length} imagem(ns)) do canal ${post.channel?.name || post.id}`,
-				"info",
-			);
-			const created = await uploadCommunityPost({
-				sessionId,
-				message,
-				images: images.map((img) => ({
-					blob: new Blob([bufferView(img.buffer)], { type: img.contentType }),
-					filename: img.filename,
-					contentType: img.contentType,
-				})),
-			});
+			// Sem imagens → post SÓ de texto via POST /api/post (JSON), que a API
+			// externa aceita; com imagens mantém o multipart (/api/post/upload).
+			let created: YoutubePostResponse;
+			if (imageUrls.length === 0) {
+				await logPlanner(
+					plannerId,
+					`[YouTube] Publicando post na Comunidade (apenas texto) do canal ${post.channel?.name || post.id}`,
+					"info",
+				);
+				created = await createCommunityPostText({ sessionId, message });
+			} else {
+				// Materializa as imagens EM PARALELO (Promise.allSettled) com
+				// deadline global do tick: o loop sequencial antigo baixava até 10
+				// imagens × 30s — ~5 min contra um orçamento de MAX_EXEC_MS (~45s)
+				// e heartbeat do worker de 60s, matando o resto do lote (inclusive
+				// IG) ou sendo morto no meio de um upload. Agora o tempo por
+				// imagem é limitado a min(30s, orçamento restante) e a falha é
+				// DEGRADADA: uma mídia ruim não derruba o post inteiro — só falha
+				// quando NENHUMA imagem materializa.
+				const images: { buffer: Buffer; contentType: string; filename: string }[] = [];
+				const failures: { url: string; error: unknown }[] = [];
+				// Margem reservada para o upload multipart + persistência no banco.
+				const materializeDeadline = startTime + maxExecMs - 15_000;
+				if (Date.now() > materializeDeadline) {
+					// Já estourou antes de começar: não vale a pena iniciar — reverte
+					// para pending (transiente) e o próximo tick publica.
+					throw new Error(
+						"Orçamento do tick esgotado antes de materializar as imagens da Comunidade — retry no próximo ciclo",
+					);
+				}
+				const settled = await Promise.allSettled(
+					imageUrls.map((url) =>
+						readCommunityImage(url, materializeDeadline - Date.now()),
+					),
+				);
+				settled.forEach((result, idx) => {
+					if (result.status === "fulfilled") {
+						images.push(result.value);
+					} else {
+						failures.push({ url: imageUrls[idx], error: result.reason });
+					}
+				});
+				if (failures.length > 0) {
+					const detail = failures
+						.map((f) => `${f.url}: ${f.error instanceof Error ? f.error.message : String(f.error)}`)
+						.join("; ");
+					await logPlanner(
+						plannerId,
+						`[YouTube] ${failures.length} imagem(ns) da Comunidade não materializaram (publicando as demais): ${detail}`,
+						"warning",
+					).catch(() => {});
+				}
+				if (images.length === 0) {
+					// Nenhuma imagem materializou. Se TODAS as falhas forem
+					// definitivas (arquivo ausente, URL inválida, teto de bytes,
+					// host bloqueado, 404 remoto) → malformado, sem retry. Se
+					// houver falha TRANSITENTE (DNS/resolver em pane, timeout,
+					// 5xx do host de origem) → retry no próximo tick, citando a
+					// imagem exata.
+					const allDefinitive = failures.every(
+						(f) => !isTransientCommunityImageError(f.error),
+					);
+					const detail = failures
+						.map((f) => `[${f.url}] ${f.error instanceof Error ? f.error.message : String(f.error)}`)
+						.join("; ");
+					if (allDefinitive) {
+						throw new MalformedDataError(
+							`Nenhuma imagem do post na Comunidade pôde ser lida: ${detail}`,
+						);
+					}
+					throw new Error(
+						`Falha transitória ao materializar as imagens do post na Comunidade: ${detail}`,
+					);
+				}
+				// Orçamento ANTES do upload: um multipart pode levar até 120s na
+				// API externa; se o tick já está no limite, não inicia o upload —
+				// reverte para pending (retry no próximo ciclo) em vez de arriscar
+				// o worker matar o processo no meio (resposta parcial perdida).
+				if (Date.now() > materializeDeadline) {
+					throw new Error(
+						"Orçamento do tick esgotado antes do upload da Comunidade — retry no próximo ciclo",
+					);
+				}
+				await logPlanner(
+					plannerId,
+					`[YouTube] Publicando post na Comunidade (${images.length} imagem(ns)${failures.length > 0 ? `; ${failures.length} falharam` : ""}) do canal ${post.channel?.name || post.id}`,
+					"info",
+				);
+				created = await uploadCommunityPost({
+					sessionId,
+					message,
+					images: images.map((img) => ({
+						blob: new Blob([bufferView(img.buffer)], { type: img.contentType }),
+						filename: img.filename,
+						contentType: img.contentType,
+					})),
+				});
+			}
 			await prisma.post.update({
 				where: { id: post.id },
 				data: {
@@ -741,7 +1025,7 @@ async function publishYoutubePost(opts: {
 			`[YouTube] Enviando Short (${post.video_url}) para a API externa`,
 			"info",
 		);
-		const videoFile = await readLocalUploadFile(post.video_url);
+		const videoFile = await readLocalUploadFile(post.video_url, SHORT_MAX_FILE_BYTES);
 		// Título: opção salva ou caption (limite de 100 chars da API)
 		const title = (
 			options.title?.trim() || (post.caption || "").trim()
@@ -753,9 +1037,12 @@ async function publishYoutubePost(opts: {
 			sessionId,
 			title,
 			description: options.description ?? "",
-			privacy: options.privacy ?? "PRIVATE",
+			privacy: options.privacy ?? "PUBLIC",
 			madeForKids: options.made_for_kids ?? false,
-			categoryId: options.category_id ?? 17,
+			// Categoria neutra (22 = People & Blogs, default do próprio YouTube).
+			// Ver lib/youtube.ts createShort — 17 é "Sports", default questionável
+			// para conteúdo genérico (não há campo de categoria na UI/planner).
+			categoryId: options.category_id ?? 22,
 			monetizeWithAds: options.monetize_with_ads ?? false,
 			pinnedCommentText: options.pinned_comment_text || undefined,
 			video: {
@@ -827,9 +1114,18 @@ async function publishYoutubePost(opts: {
 		}
 
 		// Reaproveita a classificação permanente/transiente do Instagram
-		// mapeando o status HTTP da API externa para igStatus.
+		// mapeando o status HTTP da API externa para igStatus. O `instanceof
+		// MalformedDataError` é avaliado ANTES de envolver com withIgStatus:
+		// envolver primeiro criaria um Error puro e o ramo definitivo (linha
+		// ~209 do classifyError) nunca dispararia para o lane YouTube — posts
+		// malformados (Short sem título, arquivo ausente no storage, children
+		// inválidos) seriam retentados até MAX_TRANSIENT_ATTEMPTS em vez de
+		// falharem imediatamente como no lane IG.
 		const ytStatus = e instanceof YoutubeApiError ? e.status : 0;
-		const kind = classifyError(withIgStatus(rawMsg, ytStatus), ytStatus);
+		const kind =
+			e instanceof MalformedDataError
+				? "definitive"
+				: classifyError(withIgStatus(rawMsg, ytStatus), ytStatus);
 		const errMsg = e instanceof Error && e.name === "AbortError"
 			? "API do YouTube expirou o tempo limite"
 			: rawMsg;
@@ -847,6 +1143,17 @@ async function publishYoutubePost(opts: {
 			return;
 		}
 		if (kind === "transient") {
+			// Limitação conhecida (trade-off documentado, não-resolvido nesta
+			// rodada): sem chave de idempotência na API externa, um retry após
+			// falha transiente pós-confirmação (resposta perdida) PODERIA
+			// republicar o mesmo Short/post — o lane IG mitiga com container
+			// reutilizado; o lane YT não tem GET confiável de reconciliação por
+			// título/frame. O que ESTÁ mitigado: o deadline de materialização + a
+			// checagem de orçamento antes do upload (acima) reduzem bastante a
+			// janela de "resposta perdida no meio do multipart", e o
+			// revertToStatus:"pending" garante que a falha não vira dead-letter.
+			// Reconciliar de verdade exige idempotency-key/consulta de existência
+			// na API externa — fora do escopo desta rodada.
 			await handleRetryableFailure({
 				post,
 				errMsg,
@@ -955,14 +1262,28 @@ async function handler(request: Request) {
 			// ═══════════════════════════════════════════════════════════════════════
 			// PHASE -1: Cleanup — instantly fail posts with no media
 			// ═══════════════════════════════════════════════════════════════════════
-			const cleanupPosts = await prisma.post.findMany({
-				where: {
-					status: "pending",
-					video_url: null,
-					image_url: null,
-					children_urls: null,
-				},
-				select: { id: true, caption: true },
+			const cleanupPosts = (
+				await prisma.post.findMany({
+					where: {
+						status: "pending",
+						video_url: null,
+						image_url: null,
+						children_urls: null,
+					},
+					select: {
+						id: true,
+						caption: true,
+						youtube_type: true,
+					},
+				})
+			).filter((p) => {
+				// Posts da Comunidade do YouTube podem ser SÓ texto (sem mídia) — o
+				// publisher publica via POST /api/post (JSON). O predicado usa
+				// `youtube_type` diretamente (e não a relação `channel`, que vira
+				// null quando o canal é DELETADO e deixaria o post texto-sem-mídia
+				// cair aqui com "Missing Media" enganoso). Igual o pre-flight da
+				// Fase 1; posts IG (youtube_type NULL) continuam sendo limpos.
+				return p.youtube_type !== "community";
 			});
 			if (cleanupPosts.length > 0) {
 				await prisma.post.updateMany({
@@ -1096,10 +1417,17 @@ async function handler(request: Request) {
 				const plannerId = post.planner_id || "unknown";
 				let lastStatus = 0;
 				try {
-					// Pre-flight: abort immediately with no external calls
-					const hasMedia =
-						post.video_url || post.image_url || post.children_urls;
-					if (!hasMedia) {
+						// Pre-flight: abort immediately with no external calls
+						// Posts da Comunidade do YouTube podem ser só texto (sem mídia).
+						// `youtube_type === "community"` é marcador confiável MESMO com
+						// canal deletado (relação channel null) — sem isso um post
+						// texto-sem-mídia de canal removido falharia "Missing Media" em
+						// vez de chegar ao publisher com a mensagem correta. Também
+						// deixa posts YT sem mídia (Short sem vídeo) chegarem ao
+						// publisher, que reporta "Short do YouTube exige um vídeo".
+						const hasMedia =
+							post.video_url || post.image_url || post.children_urls;
+						if (!hasMedia && !post.youtube_type) {
 						await prisma.post.update({
 							where: { id: post.id },
 							data: {
@@ -1128,8 +1456,34 @@ async function handler(request: Request) {
 					}
 
 					// ─── YouTube (Short ou Comunidade): publicação direta ───
-					if (post.channel?.platform === "youtube") {
-						await publishYoutubePost({ post, plannerId, now, results });
+					// `post.channel?.platform === "youtube"` sozinho falharia com o
+					// canal DELETADO (relação null) — `post.youtube_type` é marcador
+					// confiável de post YouTube independente da relação; IG nunca
+					// tem youtube_type. O pre-flight deixa passar (só texto/YT
+					// sem mídia) e o publishYoutubePost falha com a mensagem certa
+					// (ex.: "Canal YouTube sem sessão vinculada").
+					if (
+						post.channel?.platform === "youtube" ||
+						!!post.youtube_type
+					) {
+						await publishYoutubePost({
+							post,
+							plannerId,
+							now,
+							results,
+							startTime,
+							maxExecMs: MAX_EXEC_MS,
+						});
+						// O upload do Short lê o vídeo em memória e o transmite via
+						// multipart DENTRO deste tick (ao contrário do lane IG, que
+						// envia só a URL) — um arquivo grande (ou host lento) pode
+						// estourar o budget de MAX_EXEC_MS. Encerra o lote cedo para
+						// o heartbeat do worker (60s) não matar o processamento no
+						// meio do próximo post.
+						if (Date.now() - startTime > MAX_EXEC_MS) {
+							results.timeout = true;
+							break;
+						}
 						continue;
 					}
 

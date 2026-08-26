@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import Cropper from 'react-easy-crop';
+import Cropper, { type Area } from 'react-easy-crop';
 import * as fabric from 'fabric';
 import { X, Check, Type, Pen, Crop, Undo, Redo, ZoomIn, ZoomOut, Move } from 'lucide-react';
 import { getCroppedImg } from '@/lib/utils';
@@ -19,7 +19,7 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
     const [crop, setCrop] = useState({ x: 0, y: 0 });
     const [zoom, setZoom] = useState(1);
     const [aspect, setAspect] = useState(initialAspectRatio);
-    const [croppedAreaPixels, setCroppedAreaPixels] = useState<any>(null);
+    const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
     const [activeTool, setActiveTool] = useState<EditorTool>('crop');
 
     // Fabric state
@@ -36,24 +36,29 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
     // Temp image for cropping phase
     const [currentImage, setCurrentImage] = useState(imageUrl);
 
-    // Reset when modal opens
+    // Reset when modal opens. setState roda em requestAnimationFrame (assíncrono)
+    // — regra react-hooks/set-state-in-effect: nada de setState síncrono no corpo
+    // do efeito; o reset num frame seguinte é imperceptível para o usuário.
     useEffect(() => {
         if (isOpen) {
-            setCurrentImage(imageUrl);
-            setAspect(initialAspectRatio);
-            setActiveTool('crop');
-            // Reset crop state so a previous session's crop can't be re-applied
-            setCrop({ x: 0, y: 0 });
-            setZoom(1);
-            setCroppedAreaPixels(null);
-            // Reset history
-            setHistory([]);
-            historyIndexRef.current = -1;
-            setHistoryIndex(-1);
+            const raf = requestAnimationFrame(() => {
+                setCurrentImage(imageUrl);
+                setAspect(initialAspectRatio);
+                setActiveTool('crop');
+                // Reset crop state so a previous session's crop can't be re-applied
+                setCrop({ x: 0, y: 0 });
+                setZoom(1);
+                setCroppedAreaPixels(null);
+                // Reset history
+                setHistory([]);
+                historyIndexRef.current = -1;
+                setHistoryIndex(-1);
+            });
+            return () => cancelAnimationFrame(raf);
         }
     }, [isOpen, imageUrl, initialAspectRatio]);
 
-    const onCropComplete = useCallback((croppedArea: any, croppedAreaPixels: any) => {
+    const onCropComplete = useCallback((_croppedArea: Area, croppedAreaPixels: Area) => {
         setCroppedAreaPixels(croppedAreaPixels);
     }, []);
 

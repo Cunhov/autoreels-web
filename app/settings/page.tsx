@@ -12,6 +12,7 @@ import {
 	Trash2,
 	RotateCcw,
 	Youtube,
+	AlertTriangle,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
 import IOSCard from "@/components/IOSComponents";
@@ -192,7 +193,7 @@ export default function SettingsPage() {
 			setBackups(Array.isArray(data.backups) ? data.backups : []);
 		} catch (e: unknown) {
 			console.error("Error loading backups:", e);
-			showToast(errMsg(e, "Failed to load backups"), "err");
+			showToast(errMsg(e, "Falha ao carregar backups"), "err");
 		} finally {
 			setLoadingBackups(false);
 		}
@@ -297,7 +298,7 @@ export default function SettingsPage() {
 		setCreatingBackup(true);
 		try {
 			const res = await fetch("/api/admin/backups", { method: "POST" });
-			if (!res.ok) throw new Error("Failed to create backup");
+			if (!res.ok) throw new Error("Falha ao criar backup");
 			await loadBackups();
 			showToast("Backup criado ✓");
 		} catch (e: unknown) {
@@ -597,7 +598,14 @@ export default function SettingsPage() {
 				) : !ytHealth.configured ? (
 					<div className="space-y-2">
 						<p className="text-sm font-medium text-ios-orange flex items-center gap-1.5">
-							<XCircle size={15} /> Não configurada no servidor
+							<XCircle size={15} /> Integração não configurada no servidor
+						</p>
+						<p className="text-[12px] text-ios-text-secondary">
+							{!ytHealth.base_url_configured && !ytHealth.api_key_configured
+								? "Faltam YOUTUBE_API_BASE_URL e YOUTUBE_API_KEY para usar Shorts e Posts na Comunidade."
+								: !ytHealth.base_url_configured
+									? "Falta YOUTUBE_API_BASE_URL (endereço da API externa) para usar Shorts e Posts na Comunidade."
+									: "Falta YOUTUBE_API_KEY (chave de acesso) para usar Shorts e Posts na Comunidade."}
 						</p>
 						<ul className="text-[12px] text-ios-text-secondary space-y-1 list-disc list-inside">
 							<li>YOUTUBE_API_BASE_URL: {ytHealth.base_url_configured ? "configurada ✓" : "ausente"}</li>
@@ -629,13 +637,32 @@ export default function SettingsPage() {
 							</div>
 						</div>
 					</div>
-				) : (
+				) : ytHealth.error ? (
+					// A rota não respondeu (falha de rede/HTTP na chamada à API externa
+					// — health/route.ts só seta `error` no catch, nunca num ok:false
+					// saudável). Aqui o diagnóstico de YOUTUBE_API_BASE_URL é pertinente.
 					<div className="space-y-1">
 						<p className="text-sm font-medium text-ios-red flex items-center gap-1.5">
 							<XCircle size={15} /> API externa inacessível
 						</p>
 						<p className="text-[12px] text-ios-text-secondary">
-							{ytHealth.error || "A API respondeu com erro — verifique YOUTUBE_API_BASE_URL."}
+							{ytHealth.error}
+						</p>
+					</div>
+				) : (
+					// API acessível mas degradada: respondeu ok:false (ex.: banco remoto
+					// fora). As envs estão certas — culpar a BASE_URL seria diagnóstico
+					// enganoso; o caminho é a saúde interna da API externa.
+					<div className="space-y-1.5">
+						<p className="text-sm font-medium text-ios-orange flex items-center gap-1.5">
+							<AlertTriangle size={15} /> API externa degradada
+						</p>
+						<p className="text-[12px] text-ios-text-secondary">
+							A API respondeu, mas sinaliza problemas internos
+							{ytHealth.db_connected === false
+								? " — banco remoto indisponível"
+								: " "}
+							. Verifique os logs da API externa (as variáveis do servidor estão configuradas).
 						</p>
 					</div>
 				)}

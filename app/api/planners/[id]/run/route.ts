@@ -38,8 +38,9 @@ export async function POST(
     const { id } = await params;
 
     try {
+        const userId = (session.user as { id?: string } | undefined)?.id;
         const planner = await prisma.planner.findFirst({
-            where: { id, user_id: (session.user as any).id },
+            where: { id, user_id: userId ?? "" },
             include: { channels: true },
         });
 

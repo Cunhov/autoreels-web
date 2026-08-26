@@ -16,12 +16,18 @@ export async function GET() {
 		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 	}
 
-	const baseUrl = process.env.YOUTUBE_API_BASE_URL || "";
-	const hasApiKey = Boolean(process.env.YOUTUBE_API_KEY);
-	// Mesmo critério do getYoutubeConfig(): só a KEY é obrigatória — o
-	// BASE_URL tem default (http://localhost:8000), então não exigimos env
-	// explícita para reportar "configurada" (estado mentiroso na UI).
-	const configured = hasApiKey;
+	// Mesma normalização do getYoutubeConfig() (lib/youtube.ts): corta a barra
+	// final E faz trim de espaços do env bruto antes do Boolean. Em
+	// YOUTUBE_API_BASE_URL="/" o env cru é truthy mas a base normalizada é
+	// vazia; em YOUTUBE_API_BASE_URL="  " o trim(z) também zera — sem isto a
+	// health reportaria configured:true e o getHealth() lançaria logo em
+	// seguida, divergindo da Settings (que fala com getYoutubeConfig).
+	const baseUrl = (process.env.YOUTUBE_API_BASE_URL || "").trim().replace(/\/$/, "");
+	const hasApiKey = Boolean((process.env.YOUTUBE_API_KEY || "").trim());
+	// Mesmo critério do getYoutubeConfig(): AS DUAS envs são obrigatórias —
+	// sem BASE_URL o app tentaria localhost:8000 dentro do container, então
+	// reportar "configurada" só com a KEY seria estado mentiroso na UI.
+	const configured = Boolean(baseUrl) && hasApiKey;
 
 	if (!configured) {
 		return NextResponse.json({

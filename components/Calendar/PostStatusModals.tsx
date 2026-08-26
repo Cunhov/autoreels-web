@@ -100,10 +100,14 @@ export function SuccessModal({ post, onClose }: SuccessModalProps) {
         ? `https://www.instagram.com/p/${post.instagram_media_id}/`
         : null;
 
-    // Deep link do Short publicado (youtube_video_id é salvo pelo publisher).
+    // Deep link do conteúdo publicado no YouTube: Short → youtu.be/<video_id>;
+    // post da Comunidade → youtube.com/post/<remote_post_id> (youtube_post_id
+    // é salvo pelo publisher em ambos os caminhos de publicação).
     const youtubeUrl = post.youtube_video_id
         ? `https://youtu.be/${post.youtube_video_id}`
-        : null;
+        : post.youtube_post_id
+          ? `https://www.youtube.com/post/${post.youtube_post_id}`
+          : null;
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">

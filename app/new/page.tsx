@@ -31,6 +31,9 @@ export default function NewPost() {
 	// Falha ao carregar canais: estado distinto de vazio (DoD #5) — sem isso o
 	// usuário vê só "Default Account" e não sabe por que o canal YouTube some.
 	const [channelsError, setChannelsError] = useState("");
+	// Vazio distinto de "carregando": sem este flag o aviso de "nenhum canal"
+	// piscaria durante o fetch inicial (channels ainda = []).
+	const [channelsLoaded, setChannelsLoaded] = useState(false);
 
 	// ── YouTube ──
 	const isYoutubeChannel =
@@ -39,7 +42,7 @@ export default function NewPost() {
 	// Opções do Short (salvas em Post.youtube_options)
 	const [ytTitle, setYtTitle] = useState("");
 	const [ytDescription, setYtDescription] = useState("");
-	const [ytPrivacy, setYtPrivacy] = useState<"PUBLIC" | "UNLISTED" | "PRIVATE">("PRIVATE");
+	const [ytPrivacy, setYtPrivacy] = useState<"PUBLIC" | "UNLISTED" | "PRIVATE">("PUBLIC");
 	const [ytMadeForKids, setYtMadeForKids] = useState(false);
 	const [ytMonetize, setYtMonetize] = useState(false);
 	const [ytPinnedComment, setYtPinnedComment] = useState("");
@@ -90,6 +93,7 @@ export default function NewPost() {
 
 	async function fetchChannels() {
 		setChannelsError("");
+		setChannelsLoaded(false);
 		try {
 			const res = await fetch("/api/channels");
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -99,6 +103,8 @@ export default function NewPost() {
 			console.error("Failed to load channels:", err);
 			setChannels([]);
 			setChannelsError("Não foi possível carregar os canais. Verifique sua conexão e tente novamente.");
+		} finally {
+			setChannelsLoaded(true);
 		}
 	}
 
@@ -140,16 +146,37 @@ export default function NewPost() {
 		setCommunityImages((prev) => prev.filter((_, i) => i !== index));
 	};
 
+	/** Libera os object URLs de todas as imagens da Comunidade selecionadas. */
+	const clearCommunityImages = () => {
+		if (communityImagesRef.current.length === 0) return;
+		for (const img of communityImagesRef.current) {
+			URL.revokeObjectURL(img.url);
+		}
+		setCommunityImages([]);
+		setImagesDropped(0);
+	};
+
+	/**
+	 * Troca Short/Comunidade. Sair do modo Comunidade descarta as imagens já
+	 * selecionadas e revoga os object URLs na hora (sem acumular blobs vivos
+	 * na sessão até o unmount), além de zerar o aviso de descarte.
+	 */
+	const switchYoutubeType = (next: YoutubeType) => {
+		if (next !== "community") clearCommunityImages();
+		setYoutubeType(next);
+	};
+
 	const titleExceeds = ytTitle.length > MAX_TITLE_LENGTH;
 	const canSubmit = useMemo(() => {
 		if (isYoutubeChannel) {
 			if (youtubeType === "short") {
 				return Boolean(file) && ytTitle.trim().length > 0 && !titleExceeds;
 			}
-			return communityImages.length > 0 && caption.trim().length > 0;
+			// Comunidade do YouTube aceita 0..10 imagens — texto é o único obrigatório.
+			return caption.trim().length > 0;
 		}
 		return Boolean(file);
-	}, [isYoutubeChannel, youtubeType, file, ytTitle, titleExceeds, communityImages.length, caption]);
+	}, [isYoutubeChannel, youtubeType, file, ytTitle, titleExceeds, caption]);
 
 	// Upload the file via the global upload queue (chunked, resumable).
 	// uploadAndWait enqueues the file and resolves when the task finishes.
@@ -169,21 +196,24 @@ export default function NewPost() {
 			let childrenUrls: string | null = null;
 
 			if (isYoutubeChannel && youtubeType === "community") {
-				// Comunidade: sobe as imagens (1..10) e guarda em children_urls —
+				// Comunidade: sobe as imagens (0..10) e guarda em children_urls —
 				// é exatamente o campo que o publisher lê para montar o multipart.
-				const results = await uploadAndWait(
-					communityImages.map((img) => img.file),
-					{ folderId: null },
-				);
-				const urls: string[] = [];
-				for (const r of results) {
-					if (r.error || !r.item?.url) {
-						throw new Error(r.error || "Falha ao enviar uma das imagens");
+				// Sem imagens, o post é SÓ texto (o publisher usa POST /api/post JSON).
+				if (communityImages.length > 0) {
+					const results = await uploadAndWait(
+						communityImages.map((img) => img.file),
+						{ folderId: null },
+					);
+					const urls: string[] = [];
+					for (const r of results) {
+						if (r.error || !r.item?.url) {
+							throw new Error(r.error || "Falha ao enviar uma das imagens");
+						}
+						urls.push(r.item.url as string);
 					}
-					urls.push(r.item.url as string);
+					imageUrl = urls[0];
+					childrenUrls = JSON.stringify(urls.map((url) => ({ url, type: "image" })));
 				}
-				imageUrl = urls[0];
-				childrenUrls = JSON.stringify(urls.map((url) => ({ url, type: "image" })));
 			} else if (file) {
 				// 1. Upload the file through the global upload queue (root folder)
 				const results = await uploadAndWait([file], { folderId: null });
@@ -211,7 +241,12 @@ export default function NewPost() {
 			if (childrenUrls) body.children_urls = childrenUrls;
 
 			if (isYoutubeChannel) {
-				body.media_type = youtubeType === "community" ? "IMAGE" : "VIDEO";
+				// Post na Comunidade SÓ de texto (0 imagens) não é mídia: omite
+				// media_type (nullable no schema) para o calendário/analytics não
+				// o rotularem/agruparem como "IMAGE".
+				if (!(youtubeType === "community" && communityImages.length === 0)) {
+					body.media_type = youtubeType === "community" ? "IMAGE" : "VIDEO";
+				}
 				body.youtube_type = youtubeType;
 				if (youtubeType === "short") {
 					body.youtube_options = JSON.stringify({
@@ -269,7 +304,15 @@ export default function NewPost() {
 						<select
 							title="Canal"
 							value={selectedChannel}
-							onChange={(e) => setSelectedChannel(e.target.value)}
+							onChange={(e) => {
+								const next = e.target.value;
+								setSelectedChannel(next);
+								// Trocar de canal: saindo de YouTube a seleção de imagens
+								// da Comunidade é descartada (revogando os object URLs).
+								const nextIsYoutube =
+									channels.find((c) => c.id === next)?.platform === "youtube";
+								if (!nextIsYoutube) clearCommunityImages();
+							}}
 							className="bg-transparent text-[17px] text-ios-blue text-right focus:outline-none max-w-[60%]"
 						>
 							<option value="">Default Account</option>
@@ -298,6 +341,13 @@ export default function NewPost() {
 				</div>
 
 				{/* ── Escolha do tipo de conteúdo YouTube ─────────────────────── */}
+				{channelsLoaded && channelsError === "" && channels.length === 0 && (
+					<div className="mx-4 p-3 rounded-xl bg-ios-orange/10 text-ios-orange text-sm">
+						Nenhum canal conectado — adicione um canal YouTube ou Instagram
+						em <span className="font-semibold">Canais</span> antes de agendar
+						um post.
+					</div>
+				)}
 				{channelsError && (
 					<div className="mx-4 p-3 rounded-xl bg-ios-red/10 text-ios-red text-sm flex items-center justify-between gap-3">
 						<span>{channelsError}</span>
@@ -316,14 +366,14 @@ export default function NewPost() {
 						<div className="grid grid-cols-2 gap-2 p-1 bg-ios-separator/50 rounded-xl">
 							<button
 								type="button"
-								onClick={() => setYoutubeType("short")}
+								onClick={() => switchYoutubeType("short")}
 								className={`py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-1.5 ${youtubeType === "short" ? "bg-ios-card text-ios-red shadow-sm" : "text-ios-secondary"}`}
 							>
 								<Film size={15} /> Short
 							</button>
 							<button
 								type="button"
-								onClick={() => setYoutubeType("community")}
+								onClick={() => switchYoutubeType("community")}
 								className={`py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-1.5 ${youtubeType === "community" ? "bg-ios-card text-ios-red shadow-sm" : "text-ios-secondary"}`}
 							>
 								<MessageSquare size={15} /> Comunidade
@@ -394,7 +444,7 @@ export default function NewPost() {
 						>
 							<div className="w-full flex flex-col items-center justify-center text-ios-text-secondary gap-2">
 								<ImagePlus size={28} />
-								<span className="text-sm font-medium">Adicionar imagens</span>
+								<span className="text-sm font-medium">Adicionar imagens (opcional)</span>
 								<span className="text-[10px]">JPEG, PNG, GIF ou WebP · até {MAX_COMMUNITY_IMAGES}</span>
 							</div>
 							<input
@@ -450,7 +500,7 @@ export default function NewPost() {
 								type="text"
 								value={ytTitle}
 								onChange={(e) => setYtTitle(e.target.value)}
-								maxLength={MAX_TITLE_LENGTH + 20}
+								maxLength={MAX_TITLE_LENGTH}
 								placeholder="Título do Short (obrigatório)"
 								className="w-full bg-transparent text-[16px] text-ios-text placeholder:text-ios-text-secondary focus:outline-none"
 							/>

@@ -20,6 +20,16 @@ interface Channel {
 	name: string;
 	account_id: string;
 	platform?: string;
+	status?: string;
+}
+
+/** Dados de edição de um planner existente (carregados do GET /api/planners). */
+interface PlannerWizardInitial {
+	id?: string;
+	name?: string | null;
+	config?: unknown; // objeto ou JSON string — parse defensivo abaixo
+	channels?: { id?: string }[];
+	channel_ids?: string[];
 }
 
 /**
@@ -49,7 +59,7 @@ interface PlannerWizardProps {
 	isOpen: boolean;
 	onClose: () => void;
 	onSuccess: () => void;
-	initialData?: any;
+	initialData?: PlannerWizardInitial;
 }
 
 const STEPS = [
@@ -69,6 +79,52 @@ function toLocalDateTimeInput(iso: string | null | undefined): string {
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/**
+ * Estima o texto FINAL da legenda como o runtime fará (applyCaptionTemplate):
+ * rotação ativa com templates → substitui cada template; senão → substitui a
+ * caption base. Variáveis conhecidas resolvem dos fallbacks/valores que o
+ * wizard conhece; {date} e {channel_name} sempre resolvem não-vazios.
+ * Placeholders desconhecidos ({hashtags}, {qualquer_coisa}) resolvem "" —
+ * conservador: não dá para garantir tags no wizard, e um título/texto que
+ * possa resolver vazio falha permanentemente no publish.
+ */
+function resolveCaptionTextForWizard(opts: {
+	caption: string;
+	captionTemplates: string;
+	captionRotation: string;
+	captionFallback: string;
+	titleFallback: string;
+}): string {
+	const {
+		caption,
+		captionTemplates,
+		captionRotation,
+		captionFallback,
+		titleFallback,
+	} = opts;
+	const templates = captionTemplates
+		.split("\n")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	const source =
+		templates.length > 0 && captionRotation !== "off"
+			? templates.join("\n")
+			: caption;
+	return source.replace(/\{[a-zA-Z0-9_]+\}/g, (m: string) => {
+		switch (m) {
+			case "{post_caption}":
+				return captionFallback;
+			case "{post_title}":
+				return titleFallback;
+			case "{date}":
+			case "{channel_name}":
+				return "1"; // sempre resolvem não-vazio
+			default:
+				return ""; // {hashtags} e desconhecidos → ""
+		}
+	});
+}
+
 // Shape of an entry in planner config.content (library items, legacy uploads, carousels).
 interface ContentEntry {
 	type?: string;
@@ -77,6 +133,20 @@ interface ContentEntry {
 	url?: string;
 	children_urls?: Array<{ url?: string; id?: string; type?: string }>;
 	media_type?: string;
+	[key: string]: unknown;
+}
+
+// Shape do config de um planner (objeto parseado; `config` chega como JSON
+// string do GET /api/planners e é parseado defensivamente no carregamento).
+interface PlannerConfigJson {
+	frequency?: { value?: number; unit?: string };
+	timezone?: string;
+	start_time?: string;
+	sort_order?: string;
+	sleep_schedule?: { start?: string; end?: string } | null;
+	content?: ContentEntry[];
+	caption_templates?: string[];
+	caption_rotation?: string;
 	[key: string]: unknown;
 }
 
@@ -137,7 +207,7 @@ export default function PlannerWizard({
 	// rebuild the original order (no flattening, no legacy loss, no reordering).
 	const [originalContent, setOriginalContent] = useState<ContentEntry[]>([]);
 	const [originalItemSettings, setOriginalItemSettings] = useState<
-		Record<string, any>
+		Record<string, ContentEntry>
 	>({});
 	// Becomes true the moment the user edits any post setting. While false, each
 	// existing item keeps its OWN original settings instead of being flattened to
@@ -254,21 +324,23 @@ export default function PlannerWizard({
 				// The API may expose channels as `channels` (objects) or `channel_ids`;
 				// prefer the former so an edit never deselects every channel.
 				setSelectedChannels(
-					initialData.channels?.map((c: any) => c.id) ||
+					initialData.channels
+						?.map((c) => c.id)
+						.filter((id): id is string => Boolean(id)) ||
 						initialData.channel_ids ||
 						[],
 				);
-
 				// Defensive parse: config may arrive as a (double) JSON string from the API.
-				let config = initialData.config || {};
-				if (typeof config === "string") {
+				let rawConfig: unknown = initialData.config || {};
+				if (typeof rawConfig === "string") {
 					try {
-						config = JSON.parse(config);
-						if (typeof config === "string") config = JSON.parse(config);
+						rawConfig = JSON.parse(rawConfig);
+						if (typeof rawConfig === "string") rawConfig = JSON.parse(rawConfig);
 					} catch {
-						config = {};
+						rawConfig = {};
 					}
 				}
+				const config = rawConfig as PlannerConfigJson;
 				setFrequencyValue(config.frequency?.value || 1);
 				setFrequencyUnit(config.frequency?.unit || "hours");
 				setTimezone(config.timezone || "America/Sao_Paulo");
@@ -294,7 +366,8 @@ export default function PlannerWizard({
 					let legacyCount = 0;
 					for (const c of content) {
 						if (c.type === "library_item" || c.folder_id) {
-							libIds.push(c.id || c.folder_id);
+							const libId = c.id || c.folder_id;
+							if (libId) libIds.push(libId);
 						} else {
 							legacyCount++;
 						}
@@ -308,7 +381,7 @@ export default function PlannerWizard({
 					// later save can rebuild the original order and preserve each
 					// item's own settings (heterogeneous planners are never flattened).
 					setOriginalContent(Array.isArray(content) ? content : []);
-					const settingsMap: Record<string, any> = {};
+					const settingsMap: Record<string, ContentEntry> = {};
 					for (const c of content) {
 						const key = c.id || c.folder_id || null;
 						if (!key) continue;
@@ -327,19 +400,23 @@ export default function PlannerWizard({
 					setOriginalItemSettings(settingsMap);
 					setSettingsTouched(false);
 
-					if (content[0]?.media_type === "CAROUSEL") {
+					const firstItem = content[0];
+					if (firstItem?.media_type === "CAROUSEL") {
 						setIsCarousel(true);
 						setMediaType("CAROUSEL");
 						setShareToFeed(true);
 					} else {
 						setIsCarousel(false);
-						setMediaType(content[0]?.media_type || "REELS");
-						setShareToFeed(content[0]?.share_to_feed !== false);
+						setMediaType(
+							(firstItem?.media_type as "REELS" | "STORIES" | "IMAGE" | "CAROUSEL") ||
+								"REELS",
+						);
+						setShareToFeed(firstItem?.share_to_feed !== false);
 					}
-					setCaption(content[0]?.caption || "");
-					setCaptionFallback(content[0]?.caption_fallback || "");
-					setTitleFallback(content[0]?.title_fallback || "");
-					setLocation(content[0]?.location_id || "");
+					setCaption((firstItem?.caption as string | undefined) || "");
+					setCaptionFallback((firstItem?.caption_fallback as string | undefined) || "");
+					setTitleFallback((firstItem?.title_fallback as string | undefined) || "");
+					setLocation((firstItem?.location_id as string | undefined) || "");
 					// Caption templates (one per line) + rotation mode
 					setCaptionTemplates(
 						Array.isArray(config.caption_templates)
@@ -353,19 +430,23 @@ export default function PlannerWizard({
 							: "off",
 					);
 					// collaborators/user_tags may be stored as arrays (comma input => array of usernames)
-					const storedCollabs = content[0]?.collaborators;
+					const storedCollabs = firstItem?.collaborators;
 					setCollaborators(
 						Array.isArray(storedCollabs)
-							? storedCollabs.join(", ")
-							: storedCollabs || "",
+							? (storedCollabs as string[]).join(", ")
+							: String(storedCollabs || ""),
 					);
-					const storedTags = content[0]?.user_tags;
+					const storedTags = firstItem?.user_tags;
 					setUserTags(
 						Array.isArray(storedTags)
-							? storedTags.join(", ")
-							: storedTags || "",
+							? (storedTags as string[]).join(", ")
+							: String(storedTags || ""),
 					);
-					const audioConfig = content[0]?.audio_configuration || {};
+					const audioConfig = (firstItem?.audio_configuration || {}) as {
+						audio_id?: string;
+						audio_volume?: number;
+						video_volume?: number;
+					};
 					setAudioId(audioConfig.audio_id || "");
 					setAudioVolume(
 						audioConfig.audio_volume !== undefined
@@ -454,8 +535,9 @@ export default function PlannerWizard({
 			setChannels(
 				Array.isArray(data)
 					? data.filter(
-							(c: any) =>
-								["instagram", "youtube"].includes(c.platform) &&
+							(c: Channel) =>
+								(c.platform ?? "") !== "" &&
+								["instagram", "youtube"].includes(c.platform as string) &&
 								c.status === "active",
 						)
 					: [],
@@ -522,6 +604,38 @@ export default function PlannerWizard({
 		return uploadedItems;
 	};
 
+	/**
+	 * O item de biblioteca tem nome/título que o buildPostData usaria como
+	 * fallback de título do Short (cadeia: título do item → title_fallback →
+	 * caption → nome do arquivo)? Consulta a biblioteca do usuário (mesma
+	 * fonte do runtime) e responde se TODOS os itens selecionados têm um.
+	 * Em falha de rede responde `false` — conservador: bloqueia o save em vez
+	 * de arriscar um Short sem título na publicação.
+	 */
+	const selectedLibraryItemsHaveTitles = async (): Promise<boolean> => {
+		if (selectedContentIds.length === 0) return false;
+		try {
+			const params = new URLSearchParams({ limit: "500" });
+			const res = await fetch(`/api/content-items?${params.toString()}`);
+			if (!res.ok) return false;
+			const payload = await res.json();
+			const items: { id?: string; name?: string | null; title?: string | null }[] =
+				Array.isArray(payload) ? payload : payload.items || [];
+			const hasTitle = new Map<string, boolean>();
+			for (const it of items) {
+				hasTitle.set(
+					String(it.id || ""),
+					Boolean(
+						String(it.name || "").trim() || String(it.title || "").trim(),
+					),
+				);
+			}
+			return selectedContentIds.every((id) => hasTitle.get(String(id)));
+		} catch {
+			return false;
+		}
+	};
+
 	const handleSubmit = async () => {
 		setFormError("");
 
@@ -538,31 +652,56 @@ export default function PlannerWizard({
 				: 10;
 
 		// Short do YouTube exige título: com planner só-YouTube e mídia em vídeo,
-		// exige caption (ou Título reserva) preenchidos — sem isso o post falharia
-		// permanentemente na publicação.
+		// exige que a legenda resolvida tenha texto (ou Título reserva). Usa o
+		// valor RESOLVIDO (após templates) — uma caption exclusivamente-template
+		// (ex.: "{post_caption}" de item de biblioteca sem caption) resolve vazia
+		// na publicação e o Short falharia permanentemente no publisher.
+		// Alinhado à cadeia de 4 fallbacks do buildPostData (título do item de
+		// biblioteca → title_fallback → caption → nome do arquivo): só bloqueia
+		// quando NENHUM item selecionado pode suprir título — o wizard não
+		// conhece o nome/título do item de biblioteca, então consulta a
+		// biblioteca como o runtime faz (ex.: caption "{post_title}" com item
+		// cujo ContentItem.title está preenchido publica bem via runtime).
 		if (
 			youtubeSelected &&
 			!isCarousel &&
 			mediaType === "REELS" &&
-			!caption.trim() &&
+			!resolveCaptionTextForWizard({
+				caption,
+				captionTemplates,
+				captionRotation,
+				captionFallback,
+				titleFallback,
+			}).trim() &&
 			!titleFallback.trim()
 		) {
-			setFormError(
-				"Shorts do YouTube exigem um título — informe a legenda ou o Título reserva.",
-			);
-			return;
+			const libraryTitlesAvailable = await selectedLibraryItemsHaveTitles();
+			if (!libraryTitlesAvailable) {
+				setFormError(
+					"Shorts do YouTube exigem um título — informe uma legenda com texto literal, o Título reserva, ou um template com conteúdo fixo.",
+				);
+				return;
+			}
 		}
 
 		// Post na Comunidade exige texto: sem isso o publisher falharia
-		// permanentemente (mesma validação do servidor, aplicada cedo aqui).
+		// permanentemente (mesma validação do servidor, aplicada cedo aqui). O
+		// texto precisa existir na legenda RESOLVIDA: captionFallback só ajuda
+		// quando referenciada via {post_caption} — caption vazia com fallback
+		// preenchido ainda resolveria vazio na publicação.
 		if (
 			youtubeSelected &&
 			(isCarousel || mediaType === "IMAGE") &&
-			!caption.trim() &&
-			!captionFallback.trim()
+			!resolveCaptionTextForWizard({
+				caption,
+				captionTemplates,
+				captionRotation,
+				captionFallback,
+				titleFallback,
+			}).trim()
 		) {
 			setFormError(
-				"Posts na Comunidade do YouTube exigem um texto — informe a legenda ou a Legenda reserva.",
+				"Posts na Comunidade do YouTube exigem um texto — informe uma legenda com texto literal, a Legenda reserva (via {post_caption}), ou um template com conteúdo fixo.",
 			);
 			return;
 		}
@@ -646,13 +785,32 @@ export default function PlannerWizard({
 			// 2. Build the UI-generated content entries
 			let generated: ContentEntry[] = [];
 
+			// Itens PRESERVADOS podem conter media_type "STORIES" gravado antes de
+			// o planner ter canal YouTube — o auto-fix do seletor (useEffect
+			// STORIES→REELS) não alcança os itens preservados quando
+			// settingsTouched=false (eles seriam gravados com a config original e
+			// o runtime classificaria o post YT como Short sem vídeo → falha
+			// definitiva no publisher). Normaliza aqui no save, espelhando o
+			// auto-fix: STORIES → REELS (nunca publica Story em canal YT).
+			const normalizePreservedMediaType = (
+				v: string | undefined,
+			): string | undefined => {
+				if (!youtubeSelected) return v;
+				return v === "STORIES" ? "REELS" : v;
+			};
+
 			if (isCarousel && selectedContentIds.length > 0) {
 				// Carousel from folders: each folder becomes its own carousel post
 				for (const folderId of selectedContentIds) {
 					const orig = originalItemSettings[folderId];
 					generated.push(
 						orig && !settingsTouched
-							? { type: "library_item", id: folderId, ...orig }
+							? {
+									type: "library_item",
+									id: folderId,
+									...orig,
+									media_type: normalizePreservedMediaType(orig.media_type),
+								}
 							: { type: "library_item", id: folderId, ...globalSettings },
 					);
 				}
@@ -682,7 +840,12 @@ export default function PlannerWizard({
 					...selectedContentIds.map((id) => {
 						const orig = originalItemSettings[id];
 						return orig && !settingsTouched
-							? { type: "library_item", id, ...orig }
+							? {
+									type: "library_item",
+									id,
+									...orig,
+									media_type: normalizePreservedMediaType(orig.media_type),
+								}
 							: { type: "library_item", id, ...globalSettings };
 					}),
 				];
@@ -968,6 +1131,14 @@ export default function PlannerWizard({
 											<div className="bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 text-xs p-2 border-b border-blue-100 dark:border-blue-900/30">
 												📂 Select folders to post as carousels. Each folder
 												becomes one carousel post.
+											</div>
+										)}
+										{isCarousel && youtubeMode !== "none" && (
+											<div className="bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 text-xs p-2 border-b border-amber-100 dark:border-amber-900/30">
+												⚠️ Pastas de carrossel com SÓ vídeos não podem ser
+												publicadas na Comunidade do YouTube (ela não suporta
+												vídeos) — o post falharia na publicação. Certifique-se de
+												que cada pasta tenha ao menos uma imagem.
 											</div>
 										)}
 										<ContentLibrary

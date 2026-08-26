@@ -18,8 +18,8 @@
 ## 2. Configuração (.env)
 
 ```
-YOUTUBE_API_BASE_URL=https://yt-api.seudominio.com   # default: http://localhost:8000
-YOUTUBE_API_KEY=<master key>
+YOUTUBE_API_BASE_URL=https://yt-api.seudominio.com   # OBRIGATÓRIA, SEM default localhost
+YOUTUBE_API_KEY=<master key>                        # OBRIGATÓRIA
 ```
 
 - Criar `lib/youtube.ts` centralizando TODO acesso à API:
@@ -55,8 +55,12 @@ Auth: header `Authorization: <api_key>` ou `X-API-Key: <api_key>`. Health não e
 `POST /api/shorts` (**multipart**, exatamente um de `video`(file) ou `video_url`):
 
 - `session_id` (obrigatório), `title` (obrigatório), `description` ("")
-- `privacy`: PRIVATE (default) \| PUBLIC \| UNLISTED
-- `made_for_kids` bool, `category_id` int (17 default), `monetize_with_ads` bool
+- `privacy`: PUBLIC (default do app) \| UNLISTED \| PRIVATE — o app sempre envia PUBLIC
+  quando o usuário não escolhe outra (default de Short público por padrão; a API externa
+  usa PRIVATE como default próprio, mas o autoreels-web a sobrepõe)
+- `made_for_kids` bool, `category_id` int (22 default no app — People & Blogs, neutro;
+  17 "Sports" era o default da API externa e foi abandonado por ser questionável para
+  conteúdo genérico), `monetize_with_ads` bool
 - `products` string JSON `'[]'`
 - `pinned_comment_text` string opcional (comentário fixado automático)
 → 201 `ShortResponse`: `{id, session_id, channel_id, video_id, title, privacy, status, error_message, watch_url, created_at, updated_at}`

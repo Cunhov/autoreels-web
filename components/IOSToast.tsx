@@ -14,15 +14,21 @@ interface IOSToastProps {
 export default function IOSToast({ message, type = 'success', isVisible, onClose, duration = 3000 }: IOSToastProps) {
     const [show, setShow] = useState(isVisible);
 
+    // Sincroniza o estado de animação SEM setState síncrono no corpo do efeito
+    // (regra react-hooks/set-state-in-effect): agendamos via requestAnimationFrame
+    // + timers, que preservam o comportamento de re-apresentação do toast e o
+    // atraso de saída para a animação de fade-out.
     useEffect(() => {
-        setShow(isVisible);
-        if (isVisible) {
-            const timer = setTimeout(() => {
-                setShow(false);
-                setTimeout(onClose, 300); // Wait for animation
-            }, duration);
-            return () => clearTimeout(timer);
-        }
+        if (!isVisible) return;
+        const raf = requestAnimationFrame(() => setShow(true));
+        const timer = setTimeout(() => {
+            setShow(false);
+            setTimeout(onClose, 300); // Wait for animation
+        }, duration);
+        return () => {
+            cancelAnimationFrame(raf);
+            clearTimeout(timer);
+        };
     }, [isVisible, duration, onClose]);
 
     if (!isVisible && !show) return null;

@@ -29,6 +29,7 @@ import {
 	parsePlannerConfig,
 	parsePlannerState,
 	validatePlannerConfig,
+	type PlannerJson,
 } from "./planner-config";
 
 // Compat: parsePlannerConfig vive em planner-config; reexportado para não quebrar imports.
@@ -58,7 +59,11 @@ type PlannerContentItem = {
 	user_tags?: string | string[] | null;
 };
 
-type PlannerConfig = Record<string, any>;
+type PlannerConfig = PlannerJson;
+
+type PlannerLike = Planner & {
+	channels?: (ChannelLike & { settings?: string | null })[] | null;
+};
 
 type ChannelLike = {
 	id: string;
@@ -92,15 +97,15 @@ type PrismaLike = {
 };
 
 function cloneState(
-	state: Record<string, any> | undefined,
-): Record<string, any> {
+	state: Record<string, unknown> | undefined,
+): Record<string, unknown> {
 	return state ? JSON.parse(JSON.stringify(state)) : {};
 }
 
 function selectContentIndex(
 	contentList: PlannerContentItem[],
 	sortOrder: string,
-	state: Record<string, any>,
+	state: Record<string, unknown>,
 ) {
 	if (contentList.length === 0) {
 		return { selectedIndex: -1, nextState: state };
@@ -239,7 +244,7 @@ export async function resolveCaptionTemplateVars(
 	prisma: PrismaLike,
 	selectedContent: PlannerContentItem | null | undefined,
 	planner: { user_id: string },
-	config: Record<string, any>,
+	config: Record<string, unknown>,
 	channelName: string,
 	now: Date,
 ): Promise<Record<string, string>> {
@@ -414,14 +419,30 @@ export async function buildPostData(opts: {
 
 	// Short de planner SEM youtube_options falhava no publisher ("exige título")
 	// quando a caption resolvia vazia. Grava o título explícito usando a mesma
-	// cadeia de fallbacks (título do item → title_fallback → caption resolvida).
+	// cadeia de fallbacks (título do item → title_fallback → caption resolvida)
+	// e, por fim, o NOME do arquivo do item de biblioteca — uma caption
+	// exclusivamente-template (ex.: "{post_caption}" de item sem caption)
+	// resolveria vazio e o Short nunca mais publicaria. Com o nome como último
+	// recurso o título nunca fica vazio para itens da biblioteca.
 	let youtubeOptions: string | null = null;
 	if (ytTypeForPost === "short") {
 		const selected = runtime.selectedContent as PlannerContentItem | null | undefined;
+		let itemName = "";
+		const libId = selected?.id || selected?.folder_id;
+		if (libId) {
+			const libItem = await opts.prisma.contentItem.findFirst({
+				where: { id: libId, user_id: opts.planner.user_id },
+				select: { name: true },
+			});
+			itemName = libItem?.name
+				? String(libItem.name).replace(/\.[A-Za-z0-9]+$/, "")
+				: "";
+		}
 		const titleCandidate = [
 			selected?.title || "",
 			selected?.title_fallback || "",
 			caption || "",
+			itemName,
 		]
 			.map((t) => t.trim())
 			.find(Boolean);
@@ -470,15 +491,15 @@ export async function buildPostData(opts: {
 
 export async function resolvePlannerRuntime(
 	prisma: PrismaLike,
-	planner: any,
+	planner: PlannerLike | null,
 	now = new Date(),
 ) {
-	const config = parsePlannerConfig(planner.config);
+	const config = parsePlannerConfig(planner?.config);
 	const contentList: PlannerContentItem[] = Array.isArray(config.content)
-		? config.content
+		? (config.content as PlannerContentItem[])
 		: [];
-	const sortOrder = config.sort_order || "random_loop";
-	const state = parsePlannerState(planner.state);
+	const sortOrder = String(config.sort_order || "random_loop");
+	const state = parsePlannerState(planner?.state);
 	const { selectedIndex, nextState } = selectContentIndex(
 		contentList,
 		sortOrder,
@@ -487,6 +508,16 @@ export async function resolvePlannerRuntime(
 	const selectedContent = contentList[selectedIndex];
 
 	const warnings: string[] = [];
+
+	if (!planner) {
+		return {
+			ok: false,
+			errors: ["Planner not found"],
+			warnings,
+			selectedIndex,
+			nextState,
+		};
+	}
 
 	if (!selectedContent) {
 		return {
@@ -504,7 +535,7 @@ export async function resolvePlannerRuntime(
 	const locationId = selectedContent.location_id || null;
 	const shareToFeed = selectedContent.share_to_feed !== false;
 	let thumbnailUrl = selectedContent.thumbnail_url || null;
-	let children: { url: string; type: string; thumbnail_url?: string }[] =
+	let children: { url: string; type: string; thumbnail_url?: string | null }[] =
 		selectedContent.children_urls || selectedContent.carousel_items || [];
 	const collaborators = selectedContent.collaborators || null;
 	const audioConfiguration = selectedContent.audio_configuration || null;
@@ -549,7 +580,7 @@ export async function resolvePlannerRuntime(
 					}),
 				);
 				children = sortedSubItems
-					.map((c: any) => {
+					.map((c) => {
 						const urlStr = c.url || "";
 						const isVideo =
 							c.type === "video" || (urlStr && /\.(mp4|mov)(\?.*)?$/i.test(urlStr));
@@ -664,7 +695,7 @@ export async function resolvePlannerRuntime(
  */
 export async function runPlannerOnce(
 	prisma: PrismaLike,
-	planner: any,
+	planner: PlannerLike | null,
 	now = new Date(),
 	opts?: { force?: boolean },
 ): Promise<{
@@ -674,6 +705,13 @@ export async function runPlannerOnce(
 	error?: string;
 	warnings?: string[];
 }> {
+	if (!planner) {
+		return {
+			ok: false,
+			skipped: "not_found",
+			error: "Planner not found",
+		};
+	}
 	const config = parsePlannerConfig(planner.config);
 
 	const validation = validatePlannerConfig(config);
@@ -730,7 +768,7 @@ export async function runPlannerOnce(
 	}
 
 	const publishableChannels = channels.filter(
-		(channel: any) => describeChannelHealth(channel, now).ok,
+		(channel) => describeChannelHealth(channel, now).ok,
 	);
 	const blocked = channels.length - publishableChannels.length;
 	if (publishableChannels.length === 0) {
@@ -805,12 +843,14 @@ export async function runPlannerOnce(
 		...(useTemplates ? { template_index: templateIndex + postDatas.length } : {}),
 	};
 
-	const ops: any[] = postDatas.map((d) => prisma.post.create({ data: d }));
+	const ops = postDatas.map(
+		(d) => prisma.post.create({ data: d }) as Prisma.PrismaPromise<unknown>,
+	);
 	ops.push(
 		prisma.planner.update({
 			where: { id: planner.id },
 			data: { state: JSON.stringify(nextState) },
-		}),
+		}) as Prisma.PrismaPromise<unknown>,
 	);
 
 	try {
@@ -819,7 +859,7 @@ export async function runPlannerOnce(
 		} else {
 			await Promise.all(ops);
 		}
-	} catch (err: any) {
+	} catch (err: unknown) {
 		// A criação falhou depois do claim: reverta o claim para não "comer" o
 		// próximo tick e não perder o due (posts parciais não são criados).
 		await prisma.planner
@@ -828,7 +868,10 @@ export async function runPlannerOnce(
 				data: { last_run: planner.last_run },
 			})
 			.catch(() => {});
-		return { ok: false, error: err.message || "Post creation failed" };
+		return {
+			ok: false,
+			error: err instanceof Error ? err.message : "Post creation failed",
+		};
 	}
 
 	return {

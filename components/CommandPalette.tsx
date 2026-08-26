@@ -12,6 +12,23 @@ interface SearchResult {
     icon: React.ElementType;
 }
 
+/** Shape mínimo dos itens buscáveis vindos das APIs (só os campos usados). */
+interface PlannerHit {
+    id: string;
+    name?: string | null;
+    status?: string | null;
+}
+interface ChannelHit {
+    id: string;
+    name?: string | null;
+}
+interface PostHit {
+    id: string;
+    caption?: string | null;
+    status?: string | null;
+    scheduled_at?: string | null;
+}
+
 const STATIC_PAGES: SearchResult[] = [
     { id: 'page-calendar', type: 'page', label: 'Calendário', sublabel: 'Ver posts agendados', href: '/', icon: Calendar },
     { id: 'page-analytics', type: 'page', label: 'Analytics', sublabel: 'Estatísticas e métricas', href: '/analytics', icon: BarChart2 },
@@ -67,40 +84,40 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
             STATIC_PAGES.filter(p => p.label.toLowerCase().includes(lower)).forEach(p => found.push(p));
 
             // Planners
-            (Array.isArray(planners) ? planners : [])
-                .filter((pl: any) => pl.name?.toLowerCase().includes(lower))
+            (Array.isArray(planners) ? (planners as PlannerHit[]) : [])
+                .filter((pl) => pl.name?.toLowerCase().includes(lower))
                 .slice(0, 3)
-                .forEach((pl: any) => found.push({
+                .forEach((pl) => found.push({
                     id: `planner-${pl.id}`,
                     type: 'planner',
-                    label: pl.name,
-                    sublabel: `Planner · ${pl.status}`,
+                    label: pl.name || 'Planner',
+                    sublabel: `Planner · ${pl.status ?? ''}`,
                     href: '/planners',
                     icon: Sliders,
                 }));
 
             // Channels
-            (Array.isArray(channels) ? channels : [])
-                .filter((ch: any) => ch.name?.toLowerCase().includes(lower))
+            (Array.isArray(channels) ? (channels as ChannelHit[]) : [])
+                .filter((ch) => ch.name?.toLowerCase().includes(lower))
                 .slice(0, 3)
-                .forEach((ch: any) => found.push({
+                .forEach((ch) => found.push({
                     id: `channel-${ch.id}`,
                     type: 'channel',
-                    label: ch.name,
-                    sublabel: 'Instagram Channel',
+                    label: ch.name || 'Canal',
+                    sublabel: 'Canal conectado',
                     href: '/channels',
                     icon: Radio,
                 }));
 
             // Posts (by caption)
-            (Array.isArray(posts) ? posts : [])
-                .filter((p: any) => p.caption?.toLowerCase().includes(lower))
+            (Array.isArray(posts) ? (posts as PostHit[]) : [])
+                .filter((p) => p.caption?.toLowerCase().includes(lower))
                 .slice(0, 4)
-                .forEach((p: any) => found.push({
+                .forEach((p) => found.push({
                     id: `post-${p.id}`,
                     type: 'post',
-                    label: p.caption?.slice(0, 60) || 'Untitled post',
-                    sublabel: `Post · ${p.status} · ${new Date(p.scheduled_at).toLocaleDateString()}`,
+                    label: p.caption?.slice(0, 60) || 'Post sem legenda',
+                    sublabel: `Post · ${p.status ?? ''} · ${p.scheduled_at ? new Date(p.scheduled_at).toLocaleDateString() : ''}`,
                     href: '/',
                     icon: Clock,
                 }));
@@ -177,7 +194,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 {/* Results */}
                 <div className="max-h-80 overflow-y-auto custom-scrollbar py-1">
                     {results.length === 0 && (
-                        <p className="text-center text-ios-secondary text-sm py-8">No results for "{query}"</p>
+                        <p className="text-center text-ios-secondary text-sm py-8">No results for “{query}”</p>
                     )}
                     {results.map((r, i) => (
                         <button

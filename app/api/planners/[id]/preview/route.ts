@@ -134,8 +134,9 @@ export async function GET(
     }
 
     // ── Gating + next_run_at (best-effort estimation, mirrors cron Phase 0) ────
-    const freqVal = Number(config.frequency?.value) || 10;
-    const freqUnit = config.frequency?.unit || "minutes";
+    const freqObj = plannerConfig.frequency as Record<string, unknown> | undefined;
+    const freqVal = Number(freqObj?.value) || 10;
+    const freqUnit = String(freqObj?.unit || "minutes");
     let intervalMs = freqVal * 60 * 1000;
     if (freqUnit === "hours") intervalMs = freqVal * 60 * 60 * 1000;
     else if (freqUnit === "days") intervalMs = freqVal * 24 * 60 * 60 * 1000;
@@ -158,22 +159,27 @@ export async function GET(
             );
         }
 
-        if (config.start_time) {
-            const start = new Date(config.start_time);
+        if (plannerConfig.start_time) {
+            const start = new Date(String(plannerConfig.start_time));
             if (start.getTime() > now.getTime()) {
                 gated = "start_time";
                 nextRunAt = start;
             }
         }
 
-        const sleep = config.sleep_schedule;
-        if (sleep?.start && sleep?.end) {
-            const tz = config.timezone || "America/Sao_Paulo";
+        const sleep = plannerConfig.sleep_schedule as Record<string, unknown> | undefined;
+        const sleepStart = typeof sleep?.start === "string" ? sleep.start : "";
+        const sleepEnd = typeof sleep?.end === "string" ? sleep.end : "";
+        if (sleepStart && sleepEnd) {
+            const tz =
+                typeof plannerConfig.timezone === "string"
+                    ? plannerConfig.timezone
+                    : "America/Sao_Paulo";
             const hhmm = `${getTimeInTimeZone(now, tz).hh}:${getTimeInTimeZone(now, tz).mm}`;
-            if (isInSleep(hhmm, sleep.start, sleep.end)) {
+            if (isInSleep(hhmm, sleepStart, sleepEnd)) {
                 gated = "sleep";
                 // Estimate: end of the sleep window (same day unless it crosses midnight).
-                const [eh, em] = sleep.end.split(":").map(Number);
+                const [eh, em] = sleepEnd.split(":").map(Number);
                 const next = new Date(now);
                 next.setHours(eh, em, 0, 0);
                 if (next.getTime() <= now.getTime())

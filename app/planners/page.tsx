@@ -27,9 +27,9 @@ import PlannerWizard from "@/components/PlannerWizard";
 interface Planner {
 	id: string;
 	name: string;
-	config: any;
+	config: unknown; // string do banco OU objeto já parseado (depende da origem)
 	status: string;
-	channels: any[];
+	channels: { platform?: string; name?: string | null; id?: string }[];
 	channel_ids?: string[];
 	last_run?: string;
 	created_at: string;
@@ -51,21 +51,42 @@ interface LogsResponse {
 	total?: number;
 }
 
-function frequencyText(config: any): string {
-	const freq = config?.frequency;
-	if (!freq) return "On demand";
+/** Shape do preview carregado de GET /api/planners/[id]/preview (só o usado). */
+interface PlannerPreviewData {
+	error?: string;
+	channels?: {
+		id?: string;
+		name?: string | null;
+		platform?: string | null;
+		account_id?: string | null;
+		health?: { ok?: boolean; warnings?: string[] };
+	}[];
+	runtime?: {
+		warnings?: string[];
+		selectedContent?: { id?: string } | null;
+		mediaType?: string;
+		mediaUrl?: string | null;
+		caption?: string | null;
+	};
+	gating?: { gated?: string | null; next_run_at?: string | null };
+}
+
+function frequencyText(config: unknown): string {
+	const freq = (config as Record<string, unknown> | null | undefined)
+		?.frequency as { value?: unknown; unit?: unknown } | undefined;
+	if (!freq) return "Sem frequência (manual)";
 	const v = freq.value;
 	const u = freq.unit;
 	if (v === 1) {
 		const s: Record<string, string> = {
-			minutes: "Every minute",
-			hours: "Every hour",
-			days: "Every day",
-			weeks: "Every week",
+			minutes: "A cada minuto",
+			hours: "A cada hora",
+			days: "A cada dia",
+			weeks: "A cada semana",
 		};
-		return s[u] ?? `Every ${v} ${u}`;
+		return s[String(u)] ?? `A cada ${v} ${String(u)}`;
 	}
-	return `Every ${v} ${u}`;
+	return `A cada ${v} ${String(u)}`;
 }
 
 function relativeTime(dateStr?: string): string {
@@ -85,9 +106,9 @@ function relativeTime(dateStr?: string): string {
  * The cron stores it as a JSON string; older versions may have stored objects.
  * Returns pretty-printed JSON when parseable, otherwise the raw value.
  */
-function formatLogDetails(details: any): string {
+function formatLogDetails(details: unknown): string {
 	if (details === null || details === undefined) return "";
-	let parsed: any = details;
+	let parsed: unknown = details;
 	if (typeof details === "string") {
 		try {
 			parsed = JSON.parse(details);
@@ -106,26 +127,32 @@ function formatLogDetails(details: any): string {
 
 // Config is persisted as a JSON string (possibly double-stringified by legacy
 // versions). Parse it once, defensively, so callers always get an object.
-function parsePlannerConfig(config: any): any {
+function parsePlannerConfig(config: unknown): Record<string, unknown> {
 	if (config === null || config === undefined) return {};
-	if (typeof config !== "string") return config;
+	if (typeof config !== "string") return config as Record<string, unknown>;
 	try {
-		const parsed = JSON.parse(config);
-		return typeof parsed === "string" ? parsePlannerConfig(parsed) : parsed;
+		const parsed = JSON.parse(config) as unknown;
+		return typeof parsed === "string"
+			? parsePlannerConfig(parsed)
+			: (parsed as Record<string, unknown>);
 	} catch {
 		return {};
 	}
 }
 
 // ── Next-run helpers ──────────────────────────────────────────────────────────
-function isInSleepWindow(config: any, now: Date): boolean {
-	const sleep = config?.sleep_schedule;
+function isInSleepWindow(config: unknown, now: Date): boolean {
+	const cfg = config as Record<string, unknown> | null | undefined;
+	const sleep = cfg?.sleep_schedule as
+		| { start?: unknown; end?: unknown }
+		| undefined;
 	if (!sleep?.start || !sleep?.end) return false;
-	const tz = config.timezone || "America/Sao_Paulo";
+	const tz =
+		typeof cfg?.timezone === "string" ? cfg.timezone : "America/Sao_Paulo";
 	const local = new Date(now.toLocaleString("en-US", { timeZone: tz }));
 	const hhmm = `${String(local.getHours()).padStart(2, "0")}:${String(local.getMinutes()).padStart(2, "0")}`;
-	const s = sleep.start;
-	const e = sleep.end;
+	const s = String(sleep.start);
+	const e = String(sleep.end);
 	if (s <= e) return hhmm >= s && hhmm < e;
 	return hhmm >= s || hhmm < e;
 }
@@ -148,15 +175,15 @@ function formatNextRun(d: Date): string {
 /** Local estimate of the next run. The backend preview returns the authoritative value. */
 function computeNextRun(planner: Planner): { label: string; due: boolean } {
 	if (planner.status === "paused") return { label: "Pausado", due: false };
-	const cfg = planner.config;
-	const freq = cfg?.frequency;
+	const cfg = planner.config as Record<string, unknown> | undefined;
+	const freq = cfg?.frequency as { value?: unknown; unit?: unknown } | undefined;
 	const val = Number(freq?.value);
 	if (!freq || !Number.isFinite(val) || val <= 0)
-		return { label: "Manual (on demand)", due: false };
+		return { label: "Manual (sob demanda)", due: false };
 	if (isInSleepWindow(cfg, new Date()))
 		return { label: "Em pausa (sleep)", due: false };
 	if (cfg?.start_time) {
-		const st = new Date(cfg.start_time);
+		const st = new Date(String(cfg.start_time));
 		if (!Number.isNaN(st.getTime()) && st.getTime() > Date.now())
 			return { label: formatNextRun(st), due: false };
 	}
@@ -200,7 +227,7 @@ export default function PlannersPage() {
 		setClearingLogs(false);
 	};
 	const [viewingPreview, setViewingPreview] = useState<Planner | null>(null);
-	const [previewData, setPreviewData] = useState<any>(null);
+	const [previewData, setPreviewData] = useState<PlannerPreviewData | null>(null);
 	const [loadingPreview, setLoadingPreview] = useState(false);
 	const [runningId, setRunningId] = useState<string | null>(null);
 	const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
@@ -229,7 +256,7 @@ export default function PlannersPage() {
 			const pr = await fetch("/api/planners");
 			if (pr.ok) setPlanners(await pr.json());
 			else showToast("Falha ao carregar planners", "err");
-		} catch (e: any) {
+		} catch (e: unknown) {
 			console.error("Error fetching planners:", e);
 			showToast("Falha ao carregar planners", "err");
 		} finally {
@@ -288,8 +315,11 @@ export default function PlannersPage() {
 			const n = data.created ?? data.posts_created ?? "N";
 			showToast(`${planner.name} — ${n} post(s) enfileirados ✓`);
 			fetchData();
-		} catch (e: any) {
-			showToast(`Falha ao executar: ${e.message}`, "err");
+		} catch (e: unknown) {
+			showToast(
+				`Falha ao executar: ${e instanceof Error ? e.message : String(e)}`,
+				"err",
+			);
 		} finally {
 			setRunningId(null);
 		}
@@ -343,7 +373,7 @@ export default function PlannersPage() {
 				setLogTotal(items.length);
 				setHasMoreLogs(false);
 			}
-		} catch (e: any) {
+		} catch (e: unknown) {
 			console.error("Error fetching logs:", e);
 			showToast("Falha ao carregar logs", "err");
 		} finally {
@@ -403,13 +433,13 @@ export default function PlannersPage() {
 		setLoadingPreview(true);
 		try {
 			const res = await fetch(`/api/planners/${plannerId}/preview`);
-			const data: { error?: string } = await res.json().catch(() => ({}));
+			const data: PlannerPreviewData = await res.json().catch(() => ({}));
 			setPreviewData(
-				res.ok ? data : { error: data.error || "Failed to load preview" },
+				res.ok ? data : { error: data.error || "Falha ao carregar preview" },
 			);
-		} catch (e: any) {
+		} catch (e: unknown) {
 			console.error("Error fetching preview:", e);
-			setPreviewData({ error: "Failed to load preview" });
+			setPreviewData({ error: "Falha ao carregar preview" });
 		} finally {
 			setLoadingPreview(false);
 		}
@@ -662,7 +692,7 @@ export default function PlannersPage() {
 					setEditingPlanner(null);
 				}}
 				onSuccess={fetchData}
-				initialData={editingPlanner}
+				initialData={editingPlanner ?? undefined}
 			/>
 
 			{/* Delete Confirmation Modal */}
@@ -857,13 +887,16 @@ export default function PlannersPage() {
 								</div>
 							) : (
 								<>
-									{previewData?.runtime?.warnings?.length > 0 && (
-										<div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm space-y-1">
-											{previewData.runtime.warnings.map((warning: string) => (
-												<div key={warning}>{warning}</div>
-											))}
-										</div>
-									)}
+									{(() => {
+										const warnings = previewData?.runtime?.warnings || [];
+										return warnings.length > 0 ? (
+											<div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm space-y-1">
+												{warnings.map((warning: string) => (
+													<div key={warning}>{warning}</div>
+												))}
+											</div>
+										) : null;
+									})()}
 									{previewData?.gating?.next_run_at && (
 										<div className="bg-ios-card border border-ios-separator rounded-xl p-4 flex items-center gap-2">
 											<Zap size={16} className="text-ios-blue" />
@@ -898,7 +931,7 @@ export default function PlannersPage() {
 												// Preview diferencia "Short do YouTube"/"Post na Comunidade".
 												// Em planners mistos IG+YT o conteúdo vai para as duas
 												// plataformas — rotula as duas em vez de sugerir só YouTube.
-												const channels: Array<{ platform?: string }> =
+												const channels: Array<{ platform?: string | null }> =
 													previewData?.channels || [];
 												const mediaType = String(
 													previewData?.runtime?.mediaType || "",
@@ -943,7 +976,8 @@ export default function PlannersPage() {
 												Canais
 											</div>
 											<div className="space-y-2">
-												{(previewData?.channels || []).map((channel: any) => (
+												{(previewData?.channels || []).map(
+												(channel: NonNullable<PlannerPreviewData["channels"]>[number]) => (
 													<div
 														key={channel.id}
 														className="flex items-start justify-between gap-4 text-sm"
@@ -968,7 +1002,7 @@ export default function PlannersPage() {
 															</div>
 															{(channel.health?.warnings || []).length > 0 && (
 																<div className="text-[11px] text-amber-700">
-																	{channel.health.warnings.join(", ")}
+																	{(channel.health?.warnings || []).join(", ")}
 																</div>
 															)}
 														</div>

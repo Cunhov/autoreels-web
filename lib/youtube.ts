@@ -14,8 +14,21 @@ import { fetchWithTimeout } from "@/lib/instagram";
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
 export function getYoutubeConfig(): { baseUrl: string; apiKey: string } {
-	const baseUrl = (process.env.YOUTUBE_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
-	const apiKey = process.env.YOUTUBE_API_KEY || "";
+	// AS DUAS envs são obrigatórias. Sem baseUrl explícita o app tentaria
+	// http://localhost:8000 (inútil dentro do container) e a Settings
+	// reportaria estado mentiroso — por isso NÃO há default localhost.
+	// `trim()` (além do corte de barra final): "   "/" " são truthy para
+	// Boolean() e uma env só-de-espaços quebraria o fetch com URL vazia e
+	// seria classificada como configuração VÁLIDA na health — estado
+	// mentiroso que queima os retries do publisher em vez de falhar
+	// definitivamente. O trim mantém o critério espelhado na health.
+	const baseUrl = (process.env.YOUTUBE_API_BASE_URL || "").trim().replace(/\/$/, "");
+	const apiKey = (process.env.YOUTUBE_API_KEY || "").trim();
+	if (!baseUrl) {
+		throw new Error(
+			"YOUTUBE_API_BASE_URL não configurada — defina-a no .env do servidor.",
+		);
+	}
 	if (!apiKey) {
 		throw new Error(
 			"YOUTUBE_API_KEY não configurada — defina-a no .env do servidor.",
@@ -237,6 +250,46 @@ export async function deleteSession(sessionId: string): Promise<void> {
 const COMMUNITY_UPLOAD_TIMEOUT_MS = 120_000;
 
 /**
+ * Normaliza a resposta de um post da Comunidade.
+ *
+ * Guard de status espelhando o `createShort`: um `remote_post_id` explícito é
+ * confirmação inquestionável de publicação (aceito sempre). Sem ele, um `id`
+ * numérico só é aceito quando `status === "published"` — caso contrário pode
+ * ser um registro de TENTATIVA `{id, status: "failed", error_message}` e
+ * persistir `published` com um id de tentativa esconderia a falha para sempre
+ * (sem retry, sem notificação). Falha com status ≠ published vira
+ * `YoutubeApiError` (4xx definitivo, 5xx transiente). Falha genérica (sem id
+ * algum, sem status) vira `YoutubeApiError` 4xx — DEFINITIVO no publisher,
+ * sem loop de retry.
+ */
+function normalizePostResponse(data: YoutubePostResponse): YoutubePostResponse {
+	if (data.remote_post_id) {
+		return { ...data, remote_post_id: data.remote_post_id };
+	}
+	// Sem id explícito: exige status "published" — mesma salvaguarda do Short.
+	// Registro de tentativa falhada não pode virar "published" no banco.
+	if (data.status && data.status !== "published") {
+		const reason =
+			data.error_message ||
+			`Publicação na Comunidade falhou (status=${data.status})`;
+		const transient = /botguard|tls|network|timeout|temporar|try again|5\d\d/i.test(
+			reason,
+		);
+		throw new YoutubeApiError(reason, transient ? 502 : 400);
+	}
+	const remotePostId =
+		typeof data.id === "number" && data.id > 0 ? String(data.id) : "";
+	if (!remotePostId) {
+		throw new YoutubeApiError(
+			data.error_message ||
+				"Publicação na Comunidade falhou (resposta sem id da API externa)",
+			400,
+		);
+	}
+	return { ...data, remote_post_id: remotePostId };
+}
+
+/**
  * POST /api/post/upload — multipart com até 10 imagens.
  * `images`: blobs já lidos do storage local, com nome/content-type.
  */
@@ -246,7 +299,13 @@ export async function uploadCommunityPost(input: {
 	images: { blob: Blob; filename: string; contentType: string }[];
 }): Promise<YoutubePostResponse> {
 	if (input.images.length < 1 || input.images.length > 10) {
-		throw new Error("A Comunidade do YouTube exige entre 1 e 10 imagens.");
+		// YoutubeApiError 4xx → o publisher classifica como DEFINITIVO (sem
+		// loop de retry). Error puro cairia em "transient" e queimaria os
+		// 5 ciclos de retry com mensagem enganosa.
+		throw new YoutubeApiError(
+			"A Comunidade do YouTube exige entre 1 e 10 imagens.",
+			400,
+		);
 	}
 	const form = new FormData();
 	form.append("session_id", input.sessionId);
@@ -259,10 +318,36 @@ export async function uploadCommunityPost(input: {
 		{ method: "POST", body: form },
 		COMMUNITY_UPLOAD_TIMEOUT_MS,
 	)) as YoutubePostResponse;
-	if (!data.remote_post_id) {
-		throw new Error(data.error_message || "Publicação na Comunidade falhou");
+	return normalizePostResponse(data);
+}
+
+/**
+ * POST /api/post — JSON ({session_id, message}).
+ * Caminho para post na Comunidade SÓ de texto. Roteamento do app: imagens
+ * (1..10) VÃO pelo multipart (/api/post/upload), nunca por esta função — e
+ * mesmo que a API externa aceitasse `image_urls` no JSON (como documenta a
+ * spec), o app nunca envia imagens por este caminho.
+ * Reutiliza o mesmo helper de fetch/normalização de erro (youtubeFetch →
+ * YoutubeApiError) e devolve o MESMO shape de uploadCommunityPost
+ * (remote_post_id).
+ */
+export async function createCommunityPostText(input: {
+	sessionId: string;
+	message: string;
+}): Promise<YoutubePostResponse> {
+	if (!input.message.trim()) {
+		// YoutubeApiError 4xx → definitivo no publisher (sem retry loop).
+		throw new YoutubeApiError("Post na Comunidade exige texto.", 400);
 	}
-	return data;
+	const data = (await youtubeFetch("/api/post", {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			session_id: input.sessionId,
+			message: input.message,
+		}),
+	})) as YoutubePostResponse;
+	return normalizePostResponse(data);
 }
 
 /** DELETE /api/post?session_id=&remote_post_id= */
@@ -299,9 +384,13 @@ export async function createShort(input: {
 	form.append("session_id", input.sessionId);
 	form.append("title", input.title);
 	form.append("description", input.description ?? "");
-	form.append("privacy", input.privacy ?? "PRIVATE");
+	form.append("privacy", input.privacy ?? "PUBLIC");
 	form.append("made_for_kids", String(input.madeForKids ?? false));
-	form.append("category_id", String(input.categoryId ?? 17));
+	// Categoria neutra (22 = People & Blogs, default do próprio upload do
+	// YouTube). 17 é "Sports" — default questionável para conteúdo genérico
+	// e não há campo de categoria na UI nem opção no planner, então todo Short
+	// sem categoria explícita ia para a seção de Esportes.
+	form.append("category_id", String(input.categoryId ?? 22));
 	form.append("monetize_with_ads", String(input.monetizeWithAds ?? false));
 	form.append("products", "[]");
 	if (input.pinnedCommentText) {

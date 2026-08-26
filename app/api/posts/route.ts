@@ -225,7 +225,8 @@ export async function POST(req: Request) {
                     );
                 }
                 // O título é obrigatório na API externa (POST /api/shorts) — sem
-                // essa checagem o post falharia tarde, no cron.
+                // essa checagem o post falharia tarde, no cron. Mesma resolução do
+                // PATCH e do publisher: options.title || caption.
                 let shortTitle = "";
                 if (payload.youtube_options) {
                     try {
@@ -237,16 +238,18 @@ export async function POST(req: Request) {
                         /* já normalizado acima — defensivo */
                     }
                 }
+                if (!shortTitle) shortTitle = String(payload.caption ?? "").trim();
                 if (!shortTitle) {
                     return NextResponse.json(
-                        { error: "Short do YouTube exige um título (youtube_options.title)" },
+                        { error: "Short do YouTube exige um título (youtube_options.title ou caption)" },
                         { status: 400 },
                     );
                 }
             }
             if (payload.youtube_type === "community") {
-                // O texto é obrigatório na API externa (POST /api/post/upload exige
-                // `message`) — sem essa checagem o post falharia tarde, no cron.
+                // O texto é obrigatório na API externa (POST /api/post e
+                // /api/post/upload exigem `message`) — sem essa checagem o post
+                // falharia tarde, no cron.
                 if (!String(payload.caption ?? "").trim()) {
                     return NextResponse.json(
                         { error: "Post na Comunidade exige texto (caption)" },
@@ -254,27 +257,41 @@ export async function POST(req: Request) {
                     );
                 }
                 let imageCount = 0;
+                let childCount = 0;
+                let allChildrenVideos = false;
                 if (payload.children_urls) {
                     try {
                         const children = JSON.parse(String(payload.children_urls)) as {
                             url?: string;
                             type?: string;
                         }[];
-                        imageCount = Array.isArray(children)
-                            ? children.filter((c) => c?.url && c.type !== "video").length
-                            : 0;
+                        if (Array.isArray(children)) {
+                            childCount = children.filter((c) => c?.url).length;
+                            allChildrenVideos =
+                                childCount > 0 &&
+                                children.every((c) => !c?.url || c.type === "video");
+                            imageCount = children.filter((c) => c?.url && c.type !== "video").length;
+                        }
                     } catch {
                         /* já validado acima — defensivo */
                     }
+                } else if (payload.image_url) {
+                    imageCount = 1;
                 }
-                if (!imageCount && payload.image_url) imageCount = 1;
-                if (imageCount < 1) {
+                // Carrossel só-de-vídeos para a Comunidade: a API externa não
+                // suporta vídeos e o publisher falharia DEFINITIVAMENTE a cada
+                // ciclo com "não suporta vídeos" (post criado mas nunca
+                // publicado) — a API é o guardião e deve rejeitar o estado na
+                // origem, como já faz com Short sem título/texto.
+                if (allChildrenVideos) {
                     return NextResponse.json(
-                        { error: "Post na Comunidade exige ao menos 1 imagem (children_urls ou image_url)" },
+                        { error: "Post na Comunidade do YouTube não suporta vídeos — o conteúdo selecionado contém apenas vídeos" },
                         { status: 400 },
                     );
                 }
-                // A API externa (POST /api/post/upload) aceita no máximo 10 imagens.
+                // Imagens são OPCIONAIS na Comunidade: sem elas o post é só texto
+                // (a API aceita via POST /api/post com image_urls opcional).
+                // A API externa aceita no máximo 10 imagens.
                 if (imageCount > 10) {
                     return NextResponse.json(
                         { error: "Post na Comunidade aceita no máximo 10 imagens" },

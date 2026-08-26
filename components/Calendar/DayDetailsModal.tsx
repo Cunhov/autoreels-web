@@ -222,9 +222,10 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
                 image_url: post.image_url || null,
                 thumbnail_url: post.thumbnail_url || null,
                 caption: post.caption || '',
-                media_type: (post as unknown as { media_type?: string }).media_type || 'REELS',
+                // media_type é definido abaixo: post de Comunidade só-texto é
+                // deliberadamente criado SEM media_type (espelhando o /new).
                 channel_id: post.channel_id || null,
-                // scheduled_at: null → the cron treats it as due on the next tick
+                // scheduled_at: null → o cron trata como devido no próximo tick
                 scheduled_at: null,
             };
             const children = (post as unknown as { children_urls?: string }).children_urls;
@@ -235,6 +236,22 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
             const ytOptions = (post as unknown as { youtube_options?: string | null }).youtube_options;
             if (ytType) payload.youtube_type = ytType;
             if (ytOptions) payload.youtube_options = ytOptions;
+
+            // Post de Comunidade só-texto: o /new cria deliberadamente sem
+            // media_type (para não rotular como IMAGE). Espelha essa lógica —
+            // sem o fallback o duplicado viraria media_type "REELS" e o
+            // analytics/CSV mostraria um post de texto como vídeo. Com mídia
+            // (children/vídeo/imagem) mantém o tipo legítimo do post original.
+            const hasMedia =
+                (post as unknown as { video_url?: string | null }).video_url ||
+                (post as unknown as { image_url?: string | null }).image_url ||
+                (post as unknown as { children_urls?: string | null }).children_urls;
+            if (ytType === 'community' && !hasMedia) {
+                delete payload.media_type;
+            } else {
+                payload.media_type =
+                    (post as unknown as { media_type?: string }).media_type || 'REELS';
+            }
 
             const res = await fetch('/api/posts', {
                 method: 'POST',
@@ -315,7 +332,7 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
                                                 ) : post.image_url || post.thumbnail_url ? (
                                                     <img src={post.image_url || post.thumbnail_url} className="w-full h-full object-cover" alt="Post preview" />
                                                 ) : (
-                                                    <div className="w-full h-full flex items-center justify-center text-[10px] text-ios-secondary text-center p-1">No Media</div>
+                                                    <div className="w-full h-full flex items-center justify-center text-[10px] text-ios-secondary text-center p-1">Sem mídia (post de texto)</div>
                                                 )}
 
                                                 {/* Play icon overlay for video/pending */}

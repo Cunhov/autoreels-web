@@ -9,7 +9,6 @@ import { unlink, mkdir } from "fs/promises";
 import { join, extname, basename } from "path";
 import { pipeline } from "stream/promises";
 import { Readable, PassThrough } from "stream";
-import { lookup } from "dns/promises";
 import { randomUUID } from "crypto";
 
 const MAX_SIZE = 300 * 1024 * 1024; // 300 MB
@@ -19,73 +18,21 @@ const DOWNLOAD_TIMEOUT_MS = 90_000;
 const VIDEO_EXTS = new Set([".mp4", ".mov", ".m4v", ".webm", ".avi", ".mkv", ".3gp", ".mpeg", ".mpg", ".m2ts", ".ts"]);
 const IMAGE_EXTS = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif", ".heic", ".heif"]);
 
-/**
- * SSRF guard — reject loopback / link-local / private / reserved addresses.
- * Returns true when the address is NOT reachable from outside (blocked).
- */
-function isBlockedAddress(ip: string): boolean {
-    const normalized = ip.toLowerCase().replace(/^\[|\]$/g, "").replace(/^::ffff:/, ""); // strip IPv4-mapped prefix
-    if (normalized === "" || normalized === "::" || normalized === "::1" || normalized === "0.0.0.0") return true;
-    // IPv6 link-local / unique-local / loopback / unspecified
-    if (normalized.includes(":")) {
-        if (normalized.startsWith("fe80:") || normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
-        return false; // other IPv6 — allow (public ranges)
-    }
-    // IPv4
-    const parts = normalized.split(".").map(Number);
-    if (parts.length !== 4 || parts.some(p => Number.isNaN(p) || p < 0 || p > 255)) return true;
-    const [a, b] = parts;
-    if (a === 10) return true;                       // 10.0.0.0/8
-    if (a === 127) return true;                      // 127.0.0.0/8 (loopback)
-    if (a === 0) return true;                        // 0.0.0.0/8
-    if (a === 169 && b === 254) return true;         // 169.254.0.0/16 (link-local)
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
-    if (a === 192 && b === 168) return true;         // 192.168.0.0/16
-    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 (CGNAT)
-    return false;
-}
-
-/** Reject private/loopback hostnames up-front (fast path, before DNS). */
-function isBlockedHostname(hostname: string): boolean {
-    const h = hostname.toLowerCase();
-    if (
-        h === "localhost" ||
-        h === "localhost.localdomain" ||
-        h.endsWith(".local") ||
-        h.endsWith(".internal") ||
-        h.endsWith(".home.arpa")
-    ) return true;
-    // IP-literal hostnames
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return isBlockedAddress(h);
-    if (h.includes(":")) return isBlockedAddress(h);
-    // Private ranges as bare hostnames (e.g. http://10.0.0.1/x)
-    if (
-        /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) ||
-        /^169\.254\./.test(h) || /^0\./.test(h) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h) ||
-        /^172\.(1[6-9]|2\d|3[01])\./.test(h)
-    ) return true;
-    return false;
-}
+import { isHostAllowed } from "@/lib/ssrf-guard";
 
 /**
- * Validate that a host is publicly reachable (SSRF guard).
- * - Rejects private/loopback hostnames and IP literals.
- * - Resolves DNS and rejects if ANY resolved address is private/loopback.
- * Returns false when the host must be blocked (or DNS fails).
+ * `isHostAllowed` LANÇA quando a resolução DNS falha (pane transitória do
+ * resolver) — erro de validação retentável, não um bloqueio. Aqui isso vira
+ * `null` para o import-url responder mensagem estável ("tente novamente")
+ * em vez de vazar a mensagem crua do resolver ou mascarar como "Invalid
+ * redirect target". `false` = host realmente privado/loopback (bloqueio);
+ * `true` = publicamente acessível.
  */
-async function isHostAllowed(hostname: string): Promise<boolean> {
-    if (isBlockedHostname(hostname)) return false;
-
-    const literal = hostname.replace(/^\[|\]$/g, "");
-    // Pure IP literal — validated above by isBlockedHostname; nothing more to resolve
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(literal) || literal.includes(":")) return true;
-
+async function hostAllowedOrStable(hostname: string): Promise<boolean | null> {
     try {
-        const addresses = await lookup(hostname, { all: true });
-        if (addresses.length === 0) return false;
-        return addresses.every(({ address }) => !isBlockedAddress(address));
+        return await isHostAllowed(hostname);
     } catch {
-        return false; // DNS failure → block
+        return null;
     }
 }
 
@@ -127,8 +74,15 @@ export async function POST(req: Request) {
         }
 
         // SSRF guard (before any network I/O)
-        if (!(await isHostAllowed(url.hostname))) {
+        const hostAllowed = await hostAllowedOrStable(url.hostname);
+        if (hostAllowed === false) {
             return NextResponse.json({ error: "URL host is not publicly reachable" }, { status: 400 });
+        }
+        if (hostAllowed === null) {
+            return NextResponse.json(
+                { error: "Não foi possível validar o host — tente novamente" },
+                { status: 400 },
+            );
         }
 
         // Parent folder ownership (prevent attaching to another user's folder)
@@ -168,8 +122,17 @@ export async function POST(req: Request) {
         // Re-validate the final URL after redirects (defense against redirect-to-private SSRF)
         try {
             const finalUrl = new URL(res.url);
-            if (finalUrl.hostname !== url.hostname && !(await isHostAllowed(finalUrl.hostname))) {
-                return NextResponse.json({ error: "Redirected to a blocked host" }, { status: 400 });
+            if (finalUrl.hostname !== url.hostname) {
+                const finalAllowed = await hostAllowedOrStable(finalUrl.hostname);
+                if (finalAllowed === false) {
+                    return NextResponse.json({ error: "Redirected to a blocked host" }, { status: 400 });
+                }
+                if (finalAllowed === null) {
+                    return NextResponse.json(
+                        { error: "Não foi possível validar o host de redirecionamento — tente novamente" },
+                        { status: 400 },
+                    );
+                }
             }
         } catch {
             return NextResponse.json({ error: "Invalid redirect target" }, { status: 400 });

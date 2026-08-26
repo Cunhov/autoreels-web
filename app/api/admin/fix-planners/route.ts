@@ -14,6 +14,22 @@ function parsePlannerState(planner: { state?: string | null }, configParsed: Rec
     return configParsed.state ?? null;
 }
 
+/** Shape mínimo do planner + canais usado no diagnóstico (campos exibidos). */
+interface PlannerDiag {
+	id: string;
+	name: string | null;
+	status: string;
+	last_run: Date | null;
+	config: string;
+	state?: string | null;
+	channels: {
+		id: string;
+		name: string | null;
+		account_id: string | null;
+		status: string;
+	}[];
+}
+
 /**
  * GET /api/admin/fix-planners
  * Header: x-admin-secret (or x-cron-auth) = CRON_SECRET
@@ -38,8 +54,8 @@ export async function GET(req: Request) {
 
     const now = new Date();
 
-    const diagnosis = await Promise.all(allPlanners.map(async (p: any) => {
-        let configParsed: any = {};
+    const diagnosis = await Promise.all(allPlanners.map(async (p: PlannerDiag) => {
+        let configParsed: Record<string, unknown> = {};
         let parseError = null;
         let isDoubleStringified = false;
 
@@ -48,15 +64,20 @@ export async function GET(req: Request) {
             // Check for double-stringification
             if (typeof firstParse === 'string') {
                 isDoubleStringified = true;
-                configParsed = JSON.parse(firstParse);
+                configParsed = JSON.parse(firstParse) as Record<string, unknown>;
             } else {
-                configParsed = firstParse;
+                configParsed = firstParse as Record<string, unknown>;
             }
-        } catch (e: any) { parseError = e.message; }
+        } catch (e: unknown) {
+            parseError = e instanceof Error ? e.message : String(e);
+        }
 
-        const contentList = configParsed.content || [];
-        const freqVal = configParsed.frequency?.value || 10;
-        const freqUnit = configParsed.frequency?.unit || 'minutes';
+        const contentList = Array.isArray(configParsed.content)
+            ? configParsed.content
+            : [];
+        const freqObj = configParsed.frequency as Record<string, unknown> | undefined;
+        const freqVal = Number(freqObj?.value) || 10;
+        const freqUnit = String(freqObj?.unit || 'minutes');
         let intervalMs = freqVal * 60 * 1000;
         if (freqUnit === 'hours') intervalMs = freqVal * 60 * 60 * 1000;
         else if (freqUnit === 'days') intervalMs = freqVal * 24 * 60 * 60 * 1000;
@@ -80,14 +101,14 @@ export async function GET(req: Request) {
             last_run: p.last_run,
             is_due_now: isDue,
             next_run_in_seconds: Math.ceil(nextRunMs / 1000),
-            channels: p.channels.map((c: any) => ({
+            channels: p.channels.map((c) => ({
                 name: c.name,
                 account_id: c.account_id,
                 has_token: true, // token exists but we don't expose it
                 status: c.status,
             })),
             content_count: contentList.length,
-            content_items: contentList.map((item: any) => ({
+            content_items: contentList.map((item) => ({
                 type: item.type,
                 id: item.id,
                 url: item.url,
@@ -113,9 +134,9 @@ export async function GET(req: Request) {
         fixed = result.count;
 
         // Also fix double-stringified configs and migrate state out of config into the column.
-        for (const p of allPlanners as any[]) {
+        for (const p of allPlanners as PlannerDiag[]) {
             try {
-                const firstParse = JSON.parse(p.config);
+                const firstParse = JSON.parse(p.config) as unknown;
                 if (typeof firstParse === 'string') {
                     // It's double-stringified — unwrap it
                     await prisma.planner.update({
@@ -155,9 +176,9 @@ export async function GET(req: Request) {
     return NextResponse.json({
         total: allPlanners.length,
         by_status: {
-            active: allPlanners.filter((p: any) => p.status === 'active').length,
-            paused: allPlanners.filter((p: any) => p.status === 'paused').length,
-            other: allPlanners.filter((p: any) => p.status !== 'active' && p.status !== 'paused').length,
+            active: allPlanners.filter((p) => p.status === 'active').length,
+            paused: allPlanners.filter((p) => p.status === 'paused').length,
+            other: allPlanners.filter((p) => p.status !== 'active' && p.status !== 'paused').length,
         },
         fixed_count: fix ? fixed : 'dry-run — pass &fix=true to apply',
         planners: diagnosis,
