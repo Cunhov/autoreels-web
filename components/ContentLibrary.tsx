@@ -2512,9 +2512,9 @@ export default function ContentLibrary({
 
 			{/* Bulk Rename Modal */}
 			{isBulkRenameOpen && (
-				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-					<div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl">
-						<h3 className="text-lg font-semibold text-ios-text mb-4">
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={()=>setIsBulkRenameOpen(false)}>
+					<div role="dialog" aria-modal="true" aria-labelledby="bulk-rename-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl max-h-[85dvh] overflow-y-auto">
+						<h3 id="bulk-rename-title" className="text-lg font-semibold text-ios-text mb-4">
 							Rename {selectAllServer ? totalCount : selectionOrder.length} Items in
 							Order
 						</h3>
@@ -2558,9 +2558,9 @@ export default function ContentLibrary({
 
 			{/* Create Folder Dialog (replaces window.prompt) */}
 			{isCreateFolderOpen && (
-				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-					<div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl">
-						<h3 className="text-lg font-semibold text-ios-text mb-4">Nova pasta</h3>
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={()=>setIsCreateFolderOpen(false)}>
+					<div role="dialog" aria-modal="true" aria-labelledby="create-folder-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl max-h-[85dvh] overflow-y-auto">
+						<h3 id="create-folder-title" className="text-lg font-semibold text-ios-text mb-4">Nova pasta</h3>
 						<input
 							type="text"
 							value={newFolderName}
@@ -2596,9 +2596,9 @@ export default function ContentLibrary({
 
 			{/* Bulk Move Dialog (Select-All destination picker) */}
 			{isBulkMoveOpen && (
-				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-					<div className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl flex flex-col max-h-[85vh]">
-						<h3 className="text-lg font-semibold text-ios-text mb-1">
+				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={()=>setIsBulkMoveOpen(false)}>
+					<div role="dialog" aria-modal="true" aria-labelledby="bulk-move-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto">
+						<h3 id="bulk-move-title" className="text-lg font-semibold text-ios-text mb-1">
 							Mover {totalCount} itens
 						</h3>
 						<p className="text-sm text-ios-secondary mb-4">

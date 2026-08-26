@@ -29,15 +29,15 @@ export default function CalendarHeader({
     const year = currentDate.getFullYear();
 
     return (
-        <header className="px-6 py-4 sticky top-0 z-20 bg-ios-background/90 backdrop-blur-xl border-b border-ios-separator/50 transition-all duration-300">
-            <div className="flex items-center justify-between mb-4">
-                <h1 className="text-[34px] font-bold text-ios-text tracking-tight">Calendário</h1>
-                <div className="flex gap-3">
+        <header className="px-4 sm:px-6 py-3 sm:py-4 sticky top-0 z-20 bg-ios-background/90 backdrop-blur-xl border-b border-ios-separator/50 transition-all duration-300">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-3 sm:mb-4">
+                <h1 className="text-[24px] sm:text-[34px] font-bold text-ios-text tracking-tight leading-tight">Calendário</h1>
+                <div className="flex flex-wrap gap-2 sm:gap-3">
                     <button
                         aria-label="Toggle filters"
                         title="Filter"
                         onClick={onFilterToggle}
-                        className={`p-2.5 rounded-xl shadow-sm transition-colors ${filterActive ? 'bg-ios-blue/15 ring-1 ring-ios-blue/30 text-ios-blue' : 'bg-ios-card/80 hover:bg-ios-card text-ios-blue'}`}
+                        className={`p-2 sm:p-2.5 rounded-xl shadow-sm transition-colors ${filterActive ? 'bg-ios-blue/15 ring-1 ring-ios-blue/30 text-ios-blue' : 'bg-ios-card/80 hover:bg-ios-card text-ios-blue'}`}
                     >
                         <Filter size={20} />
                     </button>
@@ -52,11 +52,11 @@ export default function CalendarHeader({
                 </div>
             </div>
 
-            <div className="flex items-center justify-between">
-                <div className="bg-ios-gray-5/50 p-1 rounded-lg flex gap-0.5 backdrop-blur-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 gap-y-3">
+                <div className="bg-ios-gray-5/50 p-1 rounded-lg flex gap-0.5 backdrop-blur-sm shrink-0">
                     <button
                         onClick={() => onViewChange('week')}
-                        className={`px-4 py-1.5 text-[13px] font-medium rounded-md transition-all duration-300 ${viewMode === 'week'
+                        className={`px-3 sm:px-4 py-1.5 text-[12px] sm:text-[13px] font-medium rounded-md transition-all duration-300 ${viewMode === 'week'
                             ? 'bg-ios-card text-ios-text shadow-sm'
                             : 'text-ios-text-secondary hover:text-ios-text'
                             }`}
@@ -65,7 +65,7 @@ export default function CalendarHeader({
                     </button>
                     <button
                         onClick={() => onViewChange('month')}
-                        className={`px-4 py-1.5 text-[13px] font-medium rounded-md transition-all duration-300 ${viewMode === 'month'
+                        className={`px-3 sm:px-4 py-1.5 text-[12px] sm:text-[13px] font-medium rounded-md transition-all duration-300 ${viewMode === 'month'
                             ? 'bg-ios-card text-ios-text shadow-sm'
                             : 'text-ios-text-secondary hover:text-ios-text'
                             }`}
@@ -74,7 +74,7 @@ export default function CalendarHeader({
                     </button>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                     {/* Explicit Today button (the month title also navigates home) */}
                     <button
                         onClick={onToday}
@@ -89,7 +89,7 @@ export default function CalendarHeader({
                         >
                             <ChevronLeft size={24} />
                         </button>
-                        <h2 className="text-xl font-semibold min-w-[160px] text-center tabular-nums cursor-pointer hover:opacity-70 transition-opacity" onClick={onToday}>
+                        <h2 className="text-base sm:text-xl font-semibold min-w-[120px] sm:min-w-[160px] text-center tabular-nums cursor-pointer hover:opacity-70 transition-opacity" onClick={onToday}>
                             {monthName} <span className="text-ios-text-secondary">{year}</span>
                         </h2>
                         <button

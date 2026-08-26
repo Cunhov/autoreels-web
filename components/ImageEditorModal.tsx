@@ -207,12 +207,19 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
         }
     }, [activeTool, currentImage, handleApplyCrop, onSave, onClose]);
 
+    useEffect(() => {
+        if (!isOpen) return;
+        const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', h);
+        return () => document.removeEventListener('keydown', h);
+    }, [isOpen, onClose]);
+
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 animate-in fade-in duration-200" role="presentation" onClick={onClose}>
             {/* Main Editor Area */}
-            <div className="relative w-full h-full flex flex-col">
+            <div role="dialog" aria-modal="true" aria-label="Editor de imagem" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="relative w-full h-full flex flex-col">
 
                 {/* Header */}
                 <div className="h-16 flex items-center justify-between px-4 bg-black/50 backdrop-blur-md border-b border-white/10 z-10">
@@ -237,7 +244,7 @@ export default function ImageEditorModal({ imageUrl, isOpen, onClose, onSave, in
                 {/* Workspace */}
                 <div className="flex-1 relative bg-[#0f0f0f] flex items-center justify-center overflow-hidden">
                     {activeTool === 'crop' ? (
-                        <div className="relative w-full h-full max-w-4xl max-h-[80vh]">
+                        <div className="relative w-full h-full max-w-4xl max-h-[85dvh]">
                             <Cropper
                                 image={currentImage}
                                 crop={crop}

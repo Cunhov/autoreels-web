@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { parseYoutubeOptions } from "@/lib/youtube-post-options";
+import { escapeHtml, safeJsonParse, CAPTION_MAX } from "@/lib/sanitize";
 import { Prisma } from "@prisma/client";
 
 /**
@@ -53,7 +54,7 @@ export async function PATCH(
         const body = await req.json();
         const status = body.status as string | undefined;
         const rawScheduledAt = body.scheduled_at as string | null | undefined;
-        const rawCaption = body.caption as string | undefined;
+        let rawCaption = body.caption as string | undefined;
         // undefined = não enviado; null = limpar as opções do YouTube
         const rawYoutubeOptions = body.youtube_options as
             | string
@@ -64,10 +65,18 @@ export async function PATCH(
         if (rawCaption !== undefined && typeof rawCaption !== "string") {
             return NextResponse.json({ error: "caption deve ser uma string" }, { status: 400 });
         }
+        if (rawCaption !== undefined) {
+            // BK-07 XSS sanitização + BK-14 maxLength 2200
+            let cap = String(rawCaption);
+            if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
+            if (cap.includes("<") || cap.includes(">")) rawCaption = escapeHtml(cap);
+            else rawCaption = cap;
+        }
         let youtubeOptions: string | null | undefined;
         if (rawYoutubeOptions !== undefined) {
             try {
-                youtubeOptions = parseYoutubeOptions(rawYoutubeOptions);
+                const parsed = parseYoutubeOptions(rawYoutubeOptions);
+                youtubeOptions = parsed; // BK-19 null padronizado (vazio vira null)
             } catch (err: unknown) {
                 const message = err instanceof Error ? err.message : "youtube_options inválido";
                 return NextResponse.json({ error: message }, { status: 400 });
@@ -117,7 +126,11 @@ export async function PATCH(
                         { status: 400 }
                     );
                 }
-                const d = new Date(raw);
+                const ts = Date.parse(raw);
+                if (Number.isNaN(ts)) {
+                    return NextResponse.json({ error: "Invalid scheduled_at" }, { status: 400 });
+                }
+                const d = new Date(ts);
                 if (Number.isNaN(d.getTime())) {
                     return NextResponse.json({ error: "Invalid scheduled_at" }, { status: 400 });
                 }
@@ -152,14 +165,7 @@ export async function PATCH(
                 rawYoutubeOptions !== undefined
                     ? rawYoutubeOptions
                     : post.youtube_options;
-            let opts: { title?: unknown } = {};
-            if (rawOptions) {
-                try {
-                    opts = JSON.parse(String(rawOptions)) as { title?: unknown };
-                } catch {
-                    /* já normalizado acima — defensivo */
-                }
-            }
+            const opts = safeJsonParse<{title?: unknown}>(String(rawOptions ?? ""), {} as any) as { title?: unknown };
             const optTitle = typeof opts.title === "string" ? opts.title.trim() : "";
             if (post.youtube_type === "short") {
                 // Mesma resolução do publisher: options.title || caption.

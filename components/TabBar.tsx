@@ -74,7 +74,7 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
 
             {/* Tab Bar */}
             <div className="md:hidden fixed bottom-0 left-0 right-0 ios-blur border-t border-ios-separator z-50">
-                <div className="flex justify-around items-center h-[60px] pb-safe">
+                <div className="flex items-center h-[60px] pb-safe overflow-x-auto scrollbar-hide gap-0.5 px-1 scroll-smooth" style={{WebkitOverflowScrolling:"touch" as any}}>
                     {navItems.map((item) => (
                         <Link
                             key={item.path}
@@ -83,14 +83,14 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
                                 }`}
                         >
                             <div className="relative">
-                                <item.icon size={22} strokeWidth={isActive(item.path) ? 2.5 : 2} />
+                                <item.icon size={20} strokeWidth={isActive(item.path) ? 2.5 : 2} />
                                 {item.badge > 0 && (
                                     <span className={`absolute -top-1.5 -right-1.5 text-white text-[9px] font-bold min-w-[14px] h-[14px] flex items-center justify-center rounded-full px-0.5 ${item.badgeColor}`}>
                                         {item.badge > 9 ? '9+' : item.badge}
                                     </span>
                                 )}
                             </div>
-                            <span className="text-[9px] font-medium max-w-full truncate px-0.5">{item.name}</span>
+                            <span className="text-[8px] font-medium max-w-full truncate px-0.5 whitespace-nowrap">{item.name}</span>
                         </Link>
                     ))}
 
@@ -98,13 +98,13 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
                     <button
                         onClick={() => setFabOpen(f => !f)}
                         aria-label="Quick actions"
-                        className={`flex flex-col items-center justify-center flex-1 h-full gap-0.5 transition-colors ${fabOpen ? 'text-ios-red' : 'text-ios-blue'}`}
+                        className={`flex flex-col items-center justify-center shrink-0 min-w-[56px] px-1 h-full gap-0.5 transition-colors ${fabOpen ? 'text-ios-red' : 'text-ios-blue'}`}
                     >
                         <div className={`w-9 h-9 rounded-full flex items-center justify-center transition-all ${fabOpen ? 'bg-ios-red text-white rotate-45' : 'bg-ios-blue text-white'
                             }`}>
                             {fabOpen ? <X size={18} /> : <Plus size={20} />}
                         </div>
-                        <span className="text-[9px] font-medium max-w-full truncate px-0.5">{fabOpen ? 'Fechar' : 'Novo'}</span>
+                        <span className="text-[8px] font-medium max-w-full truncate px-0.5 whitespace-nowrap">{fabOpen ? 'Fechar' : 'Novo'}</span>
                     </button>
                 </div>
             </div>

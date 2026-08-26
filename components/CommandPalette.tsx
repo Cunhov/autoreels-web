@@ -161,15 +161,21 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
         page: 'bg-ios-blue/10 text-ios-blue',
         planner: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
         channel: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400',
-        post: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+        post: 'bg-gray-100 text-gray-900 dark:bg-gray-800 dark:text-gray-100',
     };
 
     return (
         <div
+            role="presentation"
             className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] px-4 bg-black/60 backdrop-blur-sm fade-in"
             onClick={onClose}
+            onKeyDown={(e)=>{ if(e.key==="Escape") onClose(); }}
         >
             <div
+                role="dialog"
+                aria-modal="true"
+                aria-label="Paleta de comandos"
+                tabIndex={-1}
                 className="bg-ios-card w-full max-w-lg rounded-2xl shadow-2xl border border-ios-separator overflow-hidden zoom-in-95"
                 onClick={e => e.stopPropagation()}
                 onKeyDown={handleKeyDown}
@@ -179,6 +185,11 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
                     <Search size={18} className="text-ios-secondary shrink-0" />
                     <input
                         ref={inputRef}
+                        role="combobox"
+                        aria-autocomplete="list"
+                        aria-expanded="true"
+                        aria-controls="command-listbox"
+                        aria-activedescendant={results[selected] ? `option-${results[selected].id}` : undefined}
                         value={query}
                         onChange={e => setQuery(e.target.value)}
                         placeholder="Search posts, planners, channels…"
@@ -192,15 +203,18 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 </div>
 
                 {/* Results */}
-                <div className="max-h-80 overflow-y-auto custom-scrollbar py-1">
+                <div id="command-listbox" role="listbox" aria-label="Resultados da busca" className="max-h-80 overflow-y-auto custom-scrollbar py-1">
                     {results.length === 0 && (
                         <p className="text-center text-ios-secondary text-sm py-8">No results for “{query}”</p>
                     )}
                     {results.map((r, i) => (
                         <button
                             key={r.id}
+                            role="option"
+                            aria-selected={i === selected}
+                            id={`option-${r.id}`}
                             onClick={() => navigate(r)}
-                            className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${i === selected ? 'bg-ios-blue/10' : 'hover:bg-ios-gray-6/50'
+                            className={`w-full flex items-center gap-3 px-4 py-3 text-left transition-colors ${i === selected ? 'bg-ios-blue text-white' : 'hover:bg-ios-gray-6/50'
                                 }`}
                         >
                             <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${typeColor[r.type]}`}>

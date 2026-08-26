@@ -41,7 +41,7 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
     const getPostsForDay = (date: Date) => {
         return posts.filter(p => {
             if (!p.scheduled_at) return false;
-            const d = new Date(p.scheduled_at);
+            const d = new Date(p.scheduled_at ?? '');
             return d.getFullYear() === date.getFullYear() &&
                 d.getMonth() === date.getMonth() &&
                 d.getDate() === date.getDate();
@@ -60,7 +60,7 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
 
     return (
         <div className="flex flex-col h-full animate-in fade-in zoom-in-95 duration-300">
-            <div className="grid grid-cols-7 mb-3 px-1">
+            <div className="grid grid-cols-7 mb-3 px-1" style={{gridTemplateColumns:"repeat(7, minmax(0, 1fr))"}}>
                 {weekDays.map(d => (
                     <div key={d} className="text-center text-[11px] font-bold text-ios-secondary uppercase tracking-widest opacity-80">
                         {d}
@@ -68,7 +68,7 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                 ))}
             </div>
 
-            <div className="grid grid-cols-7 gap-px bg-ios-separator/50 border border-ios-separator/50 rounded-2xl overflow-hidden shadow-sm ring-1 ring-black/5">
+            <div className="grid grid-cols-7 gap-px bg-ios-separator/50 border border-ios-separator/50 rounded-2xl overflow-hidden shadow-sm ring-1 ring-black/5" style={{gridTemplateColumns:"repeat(7, minmax(0, 1fr))"}}>
                 {days.map((item, i) => {
                     const dayPosts = item.date ? getPostsForDay(item.date) : [];
                     // NOTE: `new Date()` in render is safe here — MonthView is only
@@ -81,7 +81,7 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                         <div
                             key={i}
                             onClick={() => item.date && onDayClick(item.date)}
-                            className={`min-h-[140px] p-2 flex flex-col gap-2 transition-colors relative group cursor-pointer
+                            className={`min-h-[90px] md:min-h-[140px] min-w-0 p-1.5 md:p-2 flex flex-col gap-2 transition-colors relative group cursor-pointer
                 ${item.current ? 'bg-ios-card hover:bg-ios-gray-6/50' : 'bg-ios-background/60 hover:bg-ios-background/80'}
               `}
                         >
@@ -106,7 +106,7 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                     <div
                                         key={p.id}
                                         onClick={(e) => { e.stopPropagation(); onPostClick(p); }}
-                                        className={`group/item relative aspect-[4/5] rounded-lg overflow-hidden border shadow-sm cursor-pointer hover:scale-[1.02] hover:z-20 bg-black/5 transition-all
+                                        className={`group/item relative aspect-square rounded-lg overflow-hidden border shadow-sm cursor-pointer hover:scale-[1.02] hover:z-20 bg-black/5 transition-all min-w-0
                                             ${getBorderClass(p.status)}
                                         `}
                                     >
@@ -119,7 +119,7 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                                 decoding="async"
                                             />
                                         ) : (
-                                            <div className="w-full h-full bg-ios-gray-5 flex items-center justify-center text-[10px] text-ios-secondary">
+                                            <div className="w-full h-full aspect-square bg-ios-gray-5 flex items-center justify-center text-[10px] text-ios-secondary">
                                                 {p.video_url ? 'Video' : 'No Media'}
                                             </div>
                                         )}
@@ -129,7 +129,7 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                         </div>
                                         <div className="absolute bottom-0 inset-x-0 p-1 bg-black/30 backdrop-blur-md">
                                             <p className="text-[9px] text-white font-medium truncate text-center">
-                                                {new Date(p.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {new Date(p.scheduled_at ?? '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                             </p>
                                         </div>
                                     </div>

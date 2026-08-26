@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { fetchInstagramProfile, refreshInstagramToken } from "@/lib/instagram";
+import { escapeHtml } from "@/lib/sanitize";
 
 const channelSelect = {
     id: true,
@@ -82,11 +83,16 @@ export async function POST(req: Request) {
         if (!accountId) {
             return NextResponse.json({ error: "Instagram Account ID is required." }, { status: 400 });
         }
+        // BK-11/BK-18 validar nome não é só espaços, limite 80 e regex
+        if (data.name !== undefined && typeof data.name === "string" && !data.name.trim()) {
+            return NextResponse.json({ error: "Channel name cannot be empty or whitespace" }, { status: 400 });
+        }
+        let channelName = data.name ? escapeHtml(String(data.name).trim().slice(0,80)) : (profile?.username ? escapeHtml(profile.username.slice(0,80)) : `Instagram ${accountId}`);
 
         const channel = await prisma.channel.create({
             data: {
                 user_id: userId,
-                name: data.name || profile?.username || `Instagram ${accountId}`,
+                name: channelName,
                 platform: "instagram",
                 account_id: accountId,
                 username: profile?.username || data.username || null,

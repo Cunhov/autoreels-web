@@ -38,6 +38,9 @@ export default function IOSToast({ message, type = 'success', isVisible, onClose
 
     return (
         <div
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
             className={`fixed top-6 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-4 py-3 rounded-full shadow-lg transition-all duration-300 ${show ? 'translate-y-0 opacity-100' : '-translate-y-8 opacity-0'} backdrop-blur-md bg-white/90 dark:bg-zinc-800/90 border border-black/5 dark:border-white/10`}
         >
             <div className={`${bgColor} rounded-full p-1`}>

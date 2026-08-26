@@ -161,6 +161,9 @@ export default function PlannerWizard({
 	const [step, setStep] = useState(0);
 	const [loading, setLoading] = useState(false);
 	const { data: session } = useSession();
+	// BK-05: debounce 800ms + idempotency planner
+	const lastPlannerSubmitRef = useRef<number>(0);
+	const plannerIdempotencyRef = useRef<string | null>(null);
 	const [uploading, setUploading] = useState(false);
 	const [channels, setChannels] = useState<Channel[]>([]);
 
@@ -637,6 +640,12 @@ export default function PlannerWizard({
 	};
 
 	const handleSubmit = async () => {
+		if (loading) return;
+		// BK-05: debounce 800ms (duplo clique)
+		const nowMs = Date.now();
+		if (nowMs - lastPlannerSubmitRef.current < 800) return;
+		lastPlannerSubmitRef.current = nowMs;
+		if (!plannerIdempotencyRef.current) plannerIdempotencyRef.current = (typeof crypto !== 'undefined' && 'randomUUID' in crypto) ? crypto.randomUUID() : String(Date.now()) + Math.random();
 		setFormError("");
 
 		// Validate sleep schedule: a zero-length window silently disables the timer.
@@ -933,7 +942,7 @@ export default function PlannerWizard({
 				plannerId ? `/api/planners/${plannerId}` : "/api/planners",
 				{
 					method: plannerId ? "PATCH" : "POST",
-					headers: { "Content-Type": "application/json" },
+					headers: { "Content-Type": "application/json", "x-idempotency-key": plannerIdempotencyRef.current || "" },
 					body: JSON.stringify({
 						name,
 						channel_ids: selectedChannels,
@@ -941,6 +950,7 @@ export default function PlannerWizard({
 						...(plannerId
 							? { reset_state: contentChanged }
 							: { status: "active" }),
+						_idempotencyKey: plannerIdempotencyRef.current,
 					}),
 				},
 			);
@@ -956,6 +966,7 @@ export default function PlannerWizard({
 				throw new Error(message);
 			}
 
+			plannerIdempotencyRef.current = null;
 			onSuccess();
 			onClose();
 		} catch (error) {
@@ -969,15 +980,22 @@ export default function PlannerWizard({
 		}
 	};
 
+    useEffect(() => {
+        if (!isOpen) return;
+        const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', h);
+        return () => document.removeEventListener('keydown', h);
+    }, [isOpen, onClose]);
+
 	if (!isOpen) return null;
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-			<div className="bg-ios-card w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[95vh]">
+		<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={onClose}>
+			<div role="dialog" aria-modal="true" aria-labelledby="planner-wizard-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85dvh]">
 				{/* Header */}
 				<div className="px-6 py-4 border-b border-ios-separator flex items-center justify-between bg-ios-background">
 					<div>
-						<h2 className="text-[17px] font-semibold text-ios-text">
+						<h2 id="planner-wizard-title" className="text-[17px] font-semibold text-ios-text">
 							New Planner
 						</h2>
 						<div className="flex items-center gap-2 text-xs text-ios-secondary mt-1">

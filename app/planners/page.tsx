@@ -23,12 +23,14 @@ import {
 import IOSButton from "@/components/IOSButton";
 import IOSCard from "@/components/IOSComponents";
 import PlannerWizard from "@/components/PlannerWizard";
+import type { PlannerStatus } from "@/lib/planner-status";
+import { formatDateTime, formatRelativeTime } from "@/lib/format";
 
 interface Planner {
 	id: string;
 	name: string;
 	config: unknown; // string do banco OU objeto já parseado (depende da origem)
-	status: string;
+	status: PlannerStatus;
 	channels: { platform?: string; name?: string | null; id?: string }[];
 	channel_ids?: string[];
 	last_run?: string;
@@ -232,6 +234,11 @@ export default function PlannersPage() {
 	const [runningId, setRunningId] = useState<string | null>(null);
 	const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 	const [deletingId, setDeletingId] = useState<string | null>(null);
+	useEffect(() => {
+		const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { setDeletingId(null); setViewingLogs(null); setViewingPreview(null); } };
+		document.addEventListener('keydown', h);
+		return () => document.removeEventListener('keydown', h);
+	}, []);
 	const [toast, setToast] = useState<{
 		msg: string;
 		type: "ok" | "err";
@@ -697,13 +704,13 @@ export default function PlannersPage() {
 
 			{/* Delete Confirmation Modal */}
 			{deletingId && (
-				<div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm fade-in">
-					<div className="bg-ios-card w-80 rounded-2xl shadow-2xl overflow-hidden zoom-in-95">
+				<div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm fade-in" role="presentation" onClick={()=>setDeletingId(null)}>
+					<div role="dialog" aria-modal="true" aria-labelledby="delete-planner-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-80 rounded-2xl shadow-2xl overflow-hidden zoom-in-95">
 						<div className="p-6 text-center">
 							<div className="w-12 h-12 rounded-full bg-ios-red/15 flex items-center justify-center mx-auto mb-4">
 								<Trash2 size={22} className="text-ios-red" />
 							</div>
-							<h3 className="text-[17px] font-bold text-ios-text mb-1">
+							<h3 id="delete-planner-title" className="text-[17px] font-bold text-ios-text mb-1">
 								Excluir planner?
 							</h3>
 							<p className="text-[14px] text-ios-text-secondary">
@@ -730,11 +737,11 @@ export default function PlannersPage() {
 
 			{/* Logs Modal */}
 			{viewingLogs && (
-				<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm fade-in">
-					<div className="bg-ios-card w-full max-w-2xl max-h-[80vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden zoom-in-95">
+				<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm fade-in" role="presentation" onClick={()=>setViewingLogs(null)}>
+					<div role="dialog" aria-modal="true" aria-labelledby="logs-modal-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-2xl max-h-[85dvh] rounded-3xl shadow-2xl flex flex-col overflow-hidden zoom-in-95">
 						<div className="p-5 border-b border-ios-separator flex items-center justify-between">
 							<div>
-								<h2 className="text-[17px] font-bold text-ios-text">
+								<h2 id="logs-modal-title" className="text-[17px] font-bold text-ios-text">
 									Logs: {viewingLogs.name}
 								</h2>
 								<p className="text-[12px] text-ios-text-secondary">
@@ -845,11 +852,11 @@ export default function PlannersPage() {
 
 			{/* Preview Modal */}
 			{viewingPreview && (
-				<div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm fade-in">
-					<div className="bg-ios-card w-full max-w-2xl max-h-[85vh] rounded-3xl shadow-2xl flex flex-col overflow-hidden zoom-in-95">
+				<div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm fade-in" role="presentation" onClick={()=>setViewingPreview(null)}>
+					<div role="dialog" aria-modal="true" aria-labelledby="preview-modal-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-2xl max-h-[85dvh] rounded-3xl shadow-2xl flex flex-col overflow-hidden zoom-in-95">
 						<div className="p-5 border-b border-ios-separator flex items-center justify-between">
 							<div>
-								<h2 className="text-[17px] font-bold text-ios-text">
+								<h2 id="preview-modal-title" className="text-[17px] font-bold text-ios-text">
 									Preview: {viewingPreview.name}
 								</h2>
 								<p className="text-[12px] text-ios-text-secondary">

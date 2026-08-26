@@ -39,7 +39,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <Sidebar onSearchOpen={openPalette} />
 
             {/* Main content */}
-            <div className="flex-1 min-w-0 flex flex-col min-h-screen pb-[83px] md:pb-0">
+            <div className="flex-1 min-w-0 flex flex-col min-h-screen pb-[calc(83px+env(safe-area-inset-bottom))] md:pb-0">
                 <main className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full">
                     {children}
                 </main>

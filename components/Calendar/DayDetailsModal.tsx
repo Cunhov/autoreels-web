@@ -56,14 +56,19 @@ function RescheduleModal({
     error: string | null;
 }) {
     const [value, setValue] = useState(post.scheduled_at ? toLocalInputValue(post.scheduled_at) : '');
+    useEffect(() => {
+        const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', h);
+        return () => document.removeEventListener('keydown', h);
+    }, [onClose]);
 
     return (
-        <div className="fixed inset-0 z-[55] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-ios-card w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-ios-separator">
+        <div className="fixed inset-0 z-[55] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" role="presentation" onClick={onClose}>
+            <div role="dialog" aria-modal="true" aria-labelledby="reschedule-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-ios-separator">
                 <div className="px-5 py-4 border-b border-ios-separator flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <CalendarClock size={18} className="text-ios-blue" />
-                        <h3 className="text-[17px] font-semibold text-ios-text">Reagendar post</h3>
+                        <h3 id="reschedule-title" className="text-[17px] font-semibold text-ios-text">Reagendar post</h3>
                     </div>
                     <button onClick={onClose} className="p-1.5 rounded-full hover:bg-black/5 text-ios-secondary transition-colors">
                         <X size={18} />
@@ -108,6 +113,11 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
     const [feedback, setFeedback] = useState<Feedback>(null);
     const feedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, [onClose]);
     const showFeedback = (type: 'success' | 'error', message: string) => {
         if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
         setFeedback({ type, message });
@@ -273,8 +283,8 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
 
     return (
         <>
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-                <div className="bg-ios-card w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200 border border-ios-separator">
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" role="presentation" onClick={onClose}>
+                <div role="dialog" aria-modal="true" aria-labelledby="day-details-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-lg rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto animate-in zoom-in-95 duration-200 border border-ios-separator">
                     {/* Header */}
                     <div className="px-6 py-4 border-b border-ios-separator flex items-center justify-between bg-ios-background/80 backdrop-blur-md">
                         <div className="flex items-center gap-3">
@@ -282,7 +292,7 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
                                 <CalendarIcon size={20} />
                             </div>
                             <div>
-                                <h2 className="text-[17px] font-semibold text-ios-text">
+                                <h2 id="day-details-title" className="text-[17px] font-semibold text-ios-text">
                                     {date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
                                 </h2>
                                 <p className="text-xs text-ios-secondary">
@@ -353,7 +363,7 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
                                                 <div className="flex items-center justify-between mb-1">
                                                     <div className="flex items-center gap-1.5 text-xs font-medium text-ios-secondary">
                                                         <Clock size={12} />
-                                                        {new Date(post.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                        {new Date(post.scheduled_at ?? '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                     </div>
                                                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide
                                                         ${post.status === 'published' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :

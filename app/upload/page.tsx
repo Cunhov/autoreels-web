@@ -59,9 +59,11 @@ export default function UploadPage() {
 		globalTotal > 0 ? Math.round((globalSent / globalTotal) * 100) : 0;
 
 	const addTag = useCallback(() => {
-		const trimmed = tagInput.trim().toLowerCase();
-		if (trimmed && !tags.includes(trimmed)) {
-			setTags((prev) => [...prev, trimmed]);
+		const parts = tagInput.split(",").map(t=>t.trim().toLowerCase()).filter(Boolean);
+		for (const trimmed of parts) {
+			if (trimmed && !tags.includes(trimmed)) {
+				setTags((prev) => [...prev, trimmed]);
+			}
 		}
 		setTagInput("");
 	}, [tagInput, tags]);

@@ -3,7 +3,7 @@ export interface Post {
     video_url: string;
     caption: string;
     status: 'published' | 'failed' | 'cancelled' | 'scheduled' | 'processing' | 'processing_upload' | 'processing_children' | 'pending';
-    scheduled_at: string;
+    scheduled_at: string | null;
     error_message?: string;
     failed_reason?: string;
     instagram_media_id?: string;
@@ -32,7 +32,7 @@ export interface Post {
     /** ID remoto do post na Comunidade. Preenchido pelo publisher. */
     youtube_post_id?: string | null;
     /** JSON com as opções do Short (ver YoutubeShortOptions). */
-    youtube_options?: string | null;
+    youtube_options: string | null;
 }
 
 /** Tipo de conteúdo YouTube suportado na v1. */

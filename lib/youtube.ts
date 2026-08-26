@@ -10,6 +10,7 @@
  */
 
 import { fetchWithTimeout } from "@/lib/instagram";
+import { safeJsonParse } from "./sanitize";
 
 // ─── Configuração ─────────────────────────────────────────────────────────────
 
@@ -161,7 +162,7 @@ export interface YoutubeShortOptions {
 export function getYoutubeSessionId(settings: string | null | undefined): string {
 	if (!settings) return "";
 	try {
-		const parsed = JSON.parse(settings) as { sessionId?: unknown };
+		const parsed = safeJsonParse<{ sessionId?: unknown }>(settings, { } as any) as { sessionId?: unknown };
 		return typeof parsed?.sessionId === "string" ? parsed.sessionId : "";
 	} catch {
 		return "";
@@ -176,7 +177,7 @@ export function withYoutubeSessionId(
 	let current: Record<string, unknown> = {};
 	if (settings) {
 		try {
-			current = JSON.parse(settings) as Record<string, unknown>;
+			current = safeJsonParse<Record<string, unknown>>(settings, {} as Record<string, unknown>);
 		} catch {
 			current = {};
 		}

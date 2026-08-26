@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Instagram, Link as LinkIcon, ShieldCheck, Youtube, ClipboardPaste, Download, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import { useSession } from 'next-auth/react';
@@ -73,6 +73,8 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
     const [ytTab, setYtTab] = useState<'cookies' | 'import'>('cookies');
     const [ytLabel, setYtLabel] = useState('');
     const [cookies, setCookies] = useState<Record<string, string>>({});
+    const [showCookie, setShowCookie] = useState<Record<string, boolean>>({});
+    const [ytSubmitted, setYtSubmitted] = useState(false);
     const [sessions, setSessions] = useState<RemoteSession[]>([]);
     const [sessionsLoading, setSessionsLoading] = useState(false);
     const [sessionsError, setSessionsError] = useState('');
@@ -98,6 +100,8 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
             setYtTab('cookies');
             setYtLabel('');
             setCookies({});
+            setShowCookie({});
+            setYtSubmitted(false);
         }
         setError('');
         setSessionsError('');
@@ -136,7 +140,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
             if (!session) throw new Error('You must be logged in.');
 
             const channelData = {
-                name: name,
+                name: name.trim().slice(0,80),
                 platform: 'instagram',
                 account_id: accountId,
                 ...(accessToken ? { access_token: accessToken } : {}),
@@ -195,6 +199,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
     /** Aba "Colar cookies": valida os 4 campos e chama POST /api/youtube/connect. */
     const handleYoutubeConnect = async (e: React.FormEvent) => {
         e.preventDefault();
+        setYtSubmitted(true);
         setError('');
         if (!session) {
             setError('Você precisa estar conectado.');
@@ -251,10 +256,10 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-ios-card w-full max-w-md rounded-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={onClose} onKeyDown={(e)=>{ if(e.key==="Escape") onClose(); }}>
+            <div role="dialog" aria-modal="true" aria-labelledby="channel-modal-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-h-[85dvh] flex flex-col">
                 <div className="px-6 py-4 border-b border-ios-separator flex items-center justify-between bg-ios-background">
-                    <h2 className="text-[17px] font-semibold text-ios-text">
+                    <h2 id="channel-modal-title" className="text-[17px] font-semibold text-ios-text">
                         {!channel
                             ? 'Adicionar canal'
                             : platform === 'youtube'
@@ -295,7 +300,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                         <div className="grid grid-cols-2 gap-2 p-1 bg-ios-separator/50 rounded-xl">
                             <button
                                 type="button"
-                                onClick={() => { setYtTab('cookies'); setError(''); }}
+                                onClick={() => { setYtTab('cookies'); setError(''); setYtSubmitted(false); }}
                                 className={`py-2 rounded-lg text-[13px] font-semibold flex items-center justify-center gap-1.5 ${ytTab === 'cookies' ? 'bg-ios-card text-ios-blue shadow-sm' : 'text-ios-secondary'}`}
                             >
                                 <ClipboardPaste size={14} /> Colar cookies
@@ -326,21 +331,38 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                                         className="w-full bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue transition-all"
                                     />
                                 </div>
-                                {COOKIE_FIELDS.map((field) => (
+                                {COOKIE_FIELDS.map((field) => {
+                                    const isEmpty = !(cookies[field.key] || '').trim();
+                                    const show = (cookies as Record<string, string> & { _show?: Record<string,boolean> })._show?.[field.key];
+                                    // Use local state via cookiesShow map
+                                    return (
                                     <div key={field.key}>
-                                        <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
+                                        <label htmlFor={`cookie-${field.key}`} className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
                                             {field.label}
                                         </label>
+                                        <div className="relative">
                                         <input
-                                            type="text"
+                                            id={`cookie-${field.key}`}
+                                            type={showCookie[field.key] ? "text" : "password"}
                                             value={cookies[field.key] || ''}
                                             onChange={(e) => setCookies((prev) => ({ ...prev, [field.key]: e.target.value }))}
                                             placeholder="Valor do cookie"
-                                            className="w-full bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue transition-all"
+                                            aria-invalid={ytSubmitted && isEmpty ? true : undefined}
+                                            aria-describedby={`cookie-${field.key}-help`}
+                                            className="w-full bg-ios-card border border-ios-separator rounded-xl px-4 py-3 pr-20 text-[14px] font-mono focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue transition-all aria-[invalid=true]:border-ios-red"
                                             autoComplete="off"
                                         />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowCookie(s => ({ ...s, [field.key]: !s[field.key]}))}
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 text-xs font-medium text-ios-blue hover:bg-ios-blue/10 rounded-lg"
+                                            aria-label={showCookie[field.key] ? `Ocultar ${field.label}` : `Mostrar ${field.label}`}
+                                        >
+                                            {showCookie[field.key] ? 'Ocultar' : 'Mostrar'}
+                                        </button>
+                                        </div>
                                     </div>
-                                ))}
+                                )})}
                             </>
                         )}
 

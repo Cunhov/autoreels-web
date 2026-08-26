@@ -169,7 +169,7 @@ model Post {
   caption                String?
   media_type             String?   // REELS, IMAGE, CAROUSEL, STORIES, VIDEO
   children_urls          String?   // JSON: array of {url, type} for carousels
-  share_to_feed          Boolean   @default(true)
+  share_to_feed          Boolean?  @default(true)
   location_id            String?
   collaborators          String?   // JSON or comma-separated list of collaborators
   audio_configuration    String?   // JSON object for Reels audio
@@ -220,6 +220,17 @@ model YoutubeSession {
   created_at         DateTime @default(now())
 
   @@map("youtube_sessions")
+}
+
+
+// Distributed lock for multi-pod publisher (BK-01). Uses DB row as mutex.
+model CronLock {
+  key        String   @id
+  locked_at  DateTime @default(now())
+  expires_at DateTime
+  owner      String?
+
+  @@map("cron_locks")
 }
 
 model PostMetric {

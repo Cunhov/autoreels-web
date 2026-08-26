@@ -1,4 +1,5 @@
 "use client";
+import { useEffect } from "react";
 import { X, Clock, CalendarClock } from "lucide-react";
 import { Post } from "@/app/types";
 
@@ -14,8 +15,13 @@ export default function LocalPreviewModal({
 	post: Post;
 	onClose: () => void;
 }) {
+	useEffect(() => {
+		const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+		document.addEventListener('keydown', h);
+		return () => document.removeEventListener('keydown', h);
+	}, [onClose]);
 	return (
-		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-200">
+		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-200" role="presentation" onClick={onClose}>
 			<button
 				onClick={onClose}
 				className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors z-10"
@@ -24,7 +30,7 @@ export default function LocalPreviewModal({
 				<X size={22} />
 			</button>
 
-			<div className="w-full max-w-md flex flex-col items-center gap-4 p-4">
+			<div role="dialog" aria-modal="true" aria-label="Prévia do post" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="w-full max-w-md flex flex-col items-center gap-4 p-4 max-h-[85dvh] overflow-y-auto">
 				{/* Media */}
 				<div className="w-full aspect-[9/16] max-h-[70vh] bg-black rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center">
 					{post.video_url ? (

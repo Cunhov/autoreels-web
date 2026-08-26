@@ -6,6 +6,7 @@ import { Prisma } from "@prisma/client";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { cleanPathSegment } from "@/lib/upload-path";
 import { normalizeTags } from "./shared";
+import { escapeHtml, CAPTION_MAX } from "@/lib/sanitize";
 
 // Fields a client may set when creating a content item. Server-owned fields
 // (id, user_id, created_at, path) are excluded to prevent mass assignment.
@@ -182,13 +183,31 @@ export async function POST(req: Request) {
             if (data[field] !== undefined) payload[field] = data[field];
         }
 
-        // Sanitize name (must not contain path separators / traversal)
+        // BK-11 trim check antes de salvar — rejeita só espaços
         if (payload.name !== undefined) {
-            const cleanName = cleanPathSegment(String(payload.name));
+            const rawName = String(payload.name);
+            if (!rawName.trim()) {
+                return NextResponse.json({ error: "Invalid name" }, { status: 400 });
+            }
+            const cleanName = cleanPathSegment(rawName.trim());
             if (cleanName === null || cleanName.includes("/") || cleanName === "." || cleanName === "") {
                 return NextResponse.json({ error: "Invalid name" }, { status: 400 });
             }
-            payload.name = cleanName;
+            payload.name = escapeHtml(cleanName).slice(0, 200);
+        }
+        // BK-07/BK-14 caption sanitização + limite 2200
+        if (payload.caption !== undefined && payload.caption !== null) {
+            let cap = String(payload.caption);
+            if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
+            if (cap.includes("<") || cap.includes(">")) cap = escapeHtml(cap);
+            payload.caption = cap;
+        }
+        if (payload.title !== undefined && payload.title !== null) {
+            let t = String(payload.title).trim();
+            if (!t) return NextResponse.json({ error: "Invalid title" }, { status: 400 });
+            if (t.length > 200) t = t.slice(0, 200);
+            if (t.includes("<") || t.includes(">")) t = escapeHtml(t);
+            payload.title = t;
         }
 
         // Sanitize URLs (must be our own /api/file/ path or http(s))

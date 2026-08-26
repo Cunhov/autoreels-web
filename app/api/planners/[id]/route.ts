@@ -3,10 +3,12 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
+import { escapeHtml } from "@/lib/sanitize";
 // Contract with fix3-core: lib/planner-config.ts is created by that worktree.
 import { parsePlannerConfig, validatePlannerConfig } from "@/lib/planner-config";
 
-const VALID_PLANNER_STATUS = ["active", "paused"];
+import { PLANNER_STATUSES, isPlannerStatus } from "@/lib/planner-status";
+const VALID_PLANNER_STATUS = [...PLANNER_STATUSES] as const;
 
 function isNotFound(error: unknown): boolean {
     if (error && typeof error === 'object' && (error as { code?: string }).code === 'P2025') {
@@ -40,7 +42,7 @@ export async function PATCH(
             safeRest.name = rest.name;
         }
         if (rest.status !== undefined) {
-            if (!VALID_PLANNER_STATUS.includes(rest.status)) {
+            if (!isPlannerStatus(rest.status)) {
                 return NextResponse.json({ error: "Invalid planner status" }, { status: 400 });
             }
             safeRest.status = rest.status;

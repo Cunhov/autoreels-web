@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { Prisma } from "@prisma/client";
 import { parseYoutubeOptions, VALID_YOUTUBE_TYPES } from "@/lib/youtube-post-options";
+import { escapeHtml, safeJsonParse, CAPTION_MAX, DESCRIPTION_MAX, PINNED_MAX, YT_TITLE_MAX } from "@/lib/sanitize";
 
 const VALID_MEDIA_TYPES = ["REELS", "IMAGE", "CAROUSEL", "STORIES", "VIDEO"];
 
@@ -136,20 +137,19 @@ export async function POST(req: Request) {
             }
         }
 
-        // Validate children_urls is well-formed JSON when provided
+        // BK-16 safeJsonParse + BK-07 sanitização children_urls
         if (payload.children_urls !== undefined && payload.children_urls !== null) {
             const raw = String(payload.children_urls);
-            try {
-                const parsed = JSON.parse(raw);
-                if (!Array.isArray(parsed)) {
-                    return NextResponse.json({ error: "children_urls must be a JSON array" }, { status: 400 });
-                }
-            } catch {
+            const parsed = safeJsonParse<unknown>(raw, null as unknown);
+            if (parsed === null) {
                 return NextResponse.json({ error: "children_urls must be valid JSON" }, { status: 400 });
+            }
+            if (!Array.isArray(parsed)) {
+                return NextResponse.json({ error: "children_urls must be a JSON array" }, { status: 400 });
             }
         }
 
-        // Validate scheduled_at (optional date, ISO with explicit offset)
+        // BK-10 validar scheduled_at com Date.parse + isNaN + min=agora
         if (payload.scheduled_at !== undefined && payload.scheduled_at !== null) {
             const raw = String(payload.scheduled_at);
             if (!/(Z|[+-]\d{2}:\d{2})$/.test(raw)) {
@@ -158,9 +158,16 @@ export async function POST(req: Request) {
                     { status: 400 }
                 );
             }
-            const d = new Date(raw);
+            const ts = Date.parse(raw);
+            if (Number.isNaN(ts)) {
+                return NextResponse.json({ error: "Invalid scheduled_at" }, { status: 400 });
+            }
+            const d = new Date(ts);
             if (Number.isNaN(d.getTime())) {
                 return NextResponse.json({ error: "Invalid scheduled_at" }, { status: 400 });
+            }
+            if (d.getTime() < Date.now() - 60_000) {
+                return NextResponse.json({ error: "scheduled_at must be in the future" }, { status: 400 });
             }
             payload.scheduled_at = d;
         }
@@ -175,13 +182,24 @@ export async function POST(req: Request) {
         } else if (payload.youtube_type === null) {
             payload.youtube_type = null;
         }
+        // BK-19 padronizar youtube_options para null
         if (payload.youtube_options !== undefined) {
             try {
-                payload.youtube_options = parseYoutubeOptions(payload.youtube_options);
+                const normalized = parseYoutubeOptions(payload.youtube_options);
+                payload.youtube_options = normalized; // null se vazio
             } catch (err: unknown) {
                 const message = err instanceof Error ? err.message : "youtube_options inválido";
                 return NextResponse.json({ error: message }, { status: 400 });
             }
+        } else {
+            payload.youtube_options = null;
+        }
+        // BK-07/BK-14 sanitizar caption/title/tags com maxLength e escape HTML
+        if (payload.caption !== undefined && payload.caption !== null) {
+            let cap = String(payload.caption);
+            if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
+            if (cap.includes("<") || cap.includes(">")) cap = escapeHtml(cap);
+            payload.caption = cap;
         }
 
         // Validate channel ownership (prevents posting on another user's channel)
@@ -229,14 +247,8 @@ export async function POST(req: Request) {
                 // PATCH e do publisher: options.title || caption.
                 let shortTitle = "";
                 if (payload.youtube_options) {
-                    try {
-                        const opts = JSON.parse(String(payload.youtube_options)) as {
-                            title?: unknown;
-                        };
-                        shortTitle = typeof opts.title === "string" ? opts.title.trim() : "";
-                    } catch {
-                        /* já normalizado acima — defensivo */
-                    }
+                    const opts = safeJsonParse<{title?: unknown}>(String(payload.youtube_options), {} as any);
+                    shortTitle = typeof (opts as any).title === "string" ? (opts as any).title.trim() : "";
                 }
                 if (!shortTitle) shortTitle = String(payload.caption ?? "").trim();
                 if (!shortTitle) {
@@ -260,20 +272,13 @@ export async function POST(req: Request) {
                 let childCount = 0;
                 let allChildrenVideos = false;
                 if (payload.children_urls) {
-                    try {
-                        const children = JSON.parse(String(payload.children_urls)) as {
-                            url?: string;
-                            type?: string;
-                        }[];
-                        if (Array.isArray(children)) {
-                            childCount = children.filter((c) => c?.url).length;
-                            allChildrenVideos =
-                                childCount > 0 &&
-                                children.every((c) => !c?.url || c.type === "video");
-                            imageCount = children.filter((c) => c?.url && c.type !== "video").length;
-                        }
-                    } catch {
-                        /* já validado acima — defensivo */
+                    const children = safeJsonParse<{url?: string; type?: string}[]>(String(payload.children_urls), []) as any;
+                    if (Array.isArray(children)) {
+                        childCount = (children as any).filter((c: any) => c?.url).length;
+                        allChildrenVideos =
+                            childCount > 0 &&
+                            (children as any).every((c: any) => !c?.url || c.type === "video");
+                        imageCount = (children as any).filter((c: any) => c?.url && c.type !== "video").length;
                     }
                 } else if (payload.image_url) {
                     imageCount = 1;
@@ -300,6 +305,62 @@ export async function POST(req: Request) {
                 }
             }
         }
+
+        // BK-05: Idempotency — evita duplicacao por duplo clique / retry
+        // Chave vem de header X-Idempotency-Key ou body idempotencyKey/_idempotencyKey
+        const idempotencyKey = (req.headers.get("x-idempotency-key") || (data as Record<string,unknown>)["idempotencyKey"] || (data as Record<string,unknown>)["_idempotencyKey"]) as string | undefined;
+        if (idempotencyKey) {
+            const appKey = `idempotency:${userId}:${String(idempotencyKey).slice(0,128)}`;
+            try {
+                const existingMapping = await prisma.appConfig.findUnique({ where: { key: appKey } });
+                if (existingMapping?.value) {
+                    try {
+                        const mappedId = JSON.parse(existingMapping.value) as { postId?: string; expiresAt?: number };
+                        if (mappedId?.postId && (!mappedId.expiresAt || mappedId.expiresAt > Date.now())) {
+                            const existingPost = await prisma.post.findFirst({ where: { id: mappedId.postId, user_id: userId } });
+                            if (existingPost) return NextResponse.json(existingPost);
+                        }
+                    } catch {}
+                }
+            } catch {}
+            const post = await prisma.post.create({
+                data: {
+                    ...payload,
+                    // Server-owned fields — never trust the client
+                    user_id: userId,
+                    status: "pending",
+                } as Prisma.PostUncheckedCreateInput,
+            });
+            // guarda mapping 24h (debounce 800ms + retry)
+            try {
+                await prisma.appConfig.upsert({
+                    where: { key: appKey },
+                    create: { key: appKey, value: JSON.stringify({ postId: post.id, expiresAt: Date.now() + 24*60*60*1000 }) },
+                    update: { value: JSON.stringify({ postId: post.id, expiresAt: Date.now() + 24*60*60*1000 }) },
+                });
+            } catch {}
+            return NextResponse.json(post);
+        }
+
+        // Fallback dedup: mesmo usuario/canal/caption/video_url nos ultimos 10s → retorna existente
+        try {
+            const dedupWhere: Record<string, unknown> = { user_id: userId, created_at: { gte: new Date(Date.now() - 10_000) } };
+            if (payload.channel_id) dedupWhere.channel_id = payload.channel_id;
+            if (payload.caption) dedupWhere.caption = payload.caption;
+            // video/image children como sinal fraco — so aplica se existir midia
+            const mediaSignal = (payload.video_url || payload.image_url || payload.children_urls || null) as string | null;
+            // se tem midia, inclui no filtro dedup; se nao, dedup so por canal+caption ja evita duplo clique de post texto
+            const existingRecent = await prisma.post.findFirst({
+                where: dedupWhere as never,
+                orderBy: { created_at: "desc" },
+            });
+            if (existingRecent) {
+                const existingMedia = (existingRecent.video_url || existingRecent.image_url || existingRecent.children_urls || null) as string | null;
+                if (mediaSignal === existingMedia) {
+                    return NextResponse.json(existingRecent);
+                }
+            }
+        } catch {}
 
         const post = await prisma.post.create({
             data: {

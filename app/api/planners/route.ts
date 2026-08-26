@@ -5,8 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 // Contract with fix3-core: lib/planner-config.ts is created by that worktree.
 import { parsePlannerConfig, validatePlannerConfig } from "@/lib/planner-config";
+import { escapeHtml } from "@/lib/sanitize";
 
-const VALID_PLANNER_STATUS = ["active", "paused"];
+import { PLANNER_STATUSES, isPlannerStatus } from "@/lib/planner-status";
+const VALID_PLANNER_STATUS = [...PLANNER_STATUSES] as const;
 
 const publicChannelSelect = {
     id: true,
@@ -123,9 +125,10 @@ export async function POST(req: Request) {
         if (!name || typeof name !== "string" || name.trim().length === 0) {
             return NextResponse.json({ error: "Planner name is required" }, { status: 400 });
         }
+        const safeName = escapeHtml(name.trim()).slice(0,80);
 
         // Restrict status to known values (default: active)
-        const safeStatus = VALID_PLANNER_STATUS.includes(status) ? status : "active";
+        const safeStatus = isPlannerStatus(status) ? status : "active";
 
         // Validate config (frequency, sort_order, content, sleep, templates, ...)
         const configCheck = await validateConfigPayload(config);
@@ -139,9 +142,38 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: channelCheck.error }, { status: 400 });
         }
 
+        // BK-05: idempotency header (debounce 800ms do wizard)
+        const plannerIdempotencyKey = req.headers.get("x-idempotency-key");
+        if (plannerIdempotencyKey) {
+            const appKey = `idempotency:planner:${userId}:${String(plannerIdempotencyKey).slice(0,128)}`;
+            try {
+                const existingMapping = await prisma.appConfig.findUnique({ where: { key: appKey } });
+                if (existingMapping?.value) {
+                    try {
+                        const mapped = JSON.parse(existingMapping.value) as { plannerId?: string; expiresAt?: number };
+                        if (mapped?.plannerId && (!mapped.expiresAt || mapped.expiresAt > Date.now())) {
+                            const existingPlanner = await prisma.planner.findFirst({ where: { id: mapped.plannerId, user_id: userId } });
+                            if (existingPlanner) return NextResponse.json(existingPlanner);
+                        }
+                    } catch {}
+                }
+            } catch {}
+            const planner = await prisma.planner.create({
+                data: {
+                    name,
+                    status: safeStatus,
+                    config: configCheck.json,
+                    state: null,
+                    user_id: userId,
+                    channels: { connect: channelCheck.ids.map(channelId => ({ id: channelId })) },
+                },
+            });
+            try { await prisma.appConfig.upsert({ where: { key: appKey }, create: { key: appKey, value: JSON.stringify({ plannerId: planner.id, expiresAt: Date.now() + 24*60*60*1000 }) }, update: { value: JSON.stringify({ plannerId: planner.id, expiresAt: Date.now() + 24*60*60*1000 }) } }); } catch {}
+            return NextResponse.json(planner);
+        }
         const planner = await prisma.planner.create({
             data: {
-                name,
+                name: safeName,
                 status: safeStatus,
                 config: configCheck.json,
                 state: null,

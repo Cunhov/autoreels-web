@@ -94,11 +94,11 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
     const targetFolderName = currentPath.length > 0 ? currentPath[currentPath.length - 1].name : 'Biblioteca (raiz)';
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200" role="presentation" onClick={onClose}>
+            <div role="dialog" aria-modal="true" aria-labelledby="import-url-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-2xl shadow-2xl flex flex-col max-h-[85dvh] overflow-hidden">
                 {/* Header */}
                 <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                    <h3 className="font-semibold text-lg flex items-center gap-2">
+                    <h3 id="import-url-title" className="font-semibold text-lg flex items-center gap-2">
                         <Globe size={18} className="text-blue-500" />
                         Importar de URL
                     </h3>

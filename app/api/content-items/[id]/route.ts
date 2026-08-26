@@ -6,6 +6,7 @@ import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { deleteFileFromDisk, collectItemFiles } from "@/lib/deleteFiles";
 import { cleanPathSegment } from "@/lib/upload-path";
 import { normalizeTags } from "../shared";
+import { escapeHtml, CAPTION_MAX } from "@/lib/sanitize";
 
 // Fields a client may update. Server-owned fields (id, user_id, created_at,
 // path) are excluded to prevent mass assignment / arbitrary file deletion.
@@ -124,13 +125,31 @@ export async function PATCH(
             return NextResponse.json({ error: "No fields to update" }, { status: 400 });
         }
 
-        // Sanitize name (must not contain path separators / traversal)
+        // BK-11 trim check antes de salvar — rejeita só espaços
         if (payload.name !== undefined) {
-            const cleanName = cleanPathSegment(String(payload.name));
+            const rawName = String(payload.name);
+            if (!rawName.trim()) {
+                return NextResponse.json({ error: "Invalid name" }, { status: 400 });
+            }
+            const cleanName = cleanPathSegment(rawName.trim());
             if (cleanName === null || cleanName.includes("/") || cleanName === "." || cleanName === "") {
                 return NextResponse.json({ error: "Invalid name" }, { status: 400 });
             }
-            payload.name = cleanName;
+            payload.name = escapeHtml(cleanName).slice(0, 200);
+        }
+        // BK-07/BK-14 sanitização caption/title com limite
+        if (payload.caption !== undefined && payload.caption !== null) {
+            let cap = String(payload.caption);
+            if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
+            if (cap.includes("<") || cap.includes(">")) cap = escapeHtml(cap);
+            payload.caption = cap;
+        }
+        if (payload.title !== undefined && payload.title !== null) {
+            let t = String(payload.title).trim();
+            if (!t) return NextResponse.json({ error: "Invalid title" }, { status: 400 });
+            if (t.length > 200) t = t.slice(0, 200);
+            if (t.includes("<") || t.includes(">")) t = escapeHtml(t);
+            payload.title = t;
         }
 
         // Validate url (used by "replace original" from the image editor): must

@@ -372,14 +372,14 @@ async function getChannelIntervalMs(
 	return 0;
 }
 
-/** True when the channel published within the last `minIntervalMs` ms. */
+/** True when the channel published within the last `minIntervalMs` ms. BK-03: inclui processing no burst. */
 async function isChannelThrottled(
 	channel: { id?: string } | null | undefined,
 	now: Date,
 	minIntervalMs: number,
 ): Promise<boolean> {
 	if (minIntervalMs <= 0 || !channel?.id) return false;
-	const last = await prisma.post.findFirst({
+	const lastPublished = await prisma.post.findFirst({
 		where: {
 			channel_id: channel.id,
 			status: "published",
@@ -388,8 +388,19 @@ async function isChannelThrottled(
 		orderBy: { published_at: "desc" },
 		select: { published_at: true },
 	});
-	if (!last?.published_at) return false;
-	return now.getTime() - last.published_at.getTime() < minIntervalMs;
+	if (lastPublished?.published_at && now.getTime() - lastPublished.published_at.getTime() < minIntervalMs) return true;
+	// BK-03: burst inclui posts em processing/ready (ainda nao publicados mas ja contam no intervalo)
+	const recentProcessing = await prisma.post.count({
+		where: {
+			channel_id: channel.id,
+			status: { in: ["processing", "processing_upload", "processing_children", "ready_to_publish"] },
+			created_at: { gte: new Date(now.getTime() - minIntervalMs) },
+		},
+	});
+	if (recentProcessing > 0) return true;
+	// also consider last published fallback if no published found
+	if (!lastPublished?.published_at) return false;
+	return now.getTime() - lastPublished.published_at.getTime() < minIntervalMs;
 }
 
 /** Insert a planner log entry. */
@@ -1253,10 +1264,35 @@ async function publishYoutubePost(opts: {
 
 // ─── Route Handler ────────────────────────────────────────────────────────────
 
-// Simple in-process lock: the Next.js server is a single process, so this
-// prevents overlapping runs (worker tick + manual trigger) from double-publishing.
-// Limitation: does not protect across multiple replicas (not used in the monolith).
+// BK-01: Distributed lock via DB (cron_locks) + in-process fallback para multi-pod.
+// Lock TTL = 60s (max exec 45s + margem). Atomic via AppConfig/CronLock row.
 let publisherRunning = false;
+const PUBLISHER_LOCK_KEY = "publisher";
+const PUBLISHER_LOCK_TTL_MS = 60_000;
+
+async function tryAcquireDistributedLock(): Promise<boolean> {
+	const now = new Date();
+	const expiresAt = new Date(now.getTime() + PUBLISHER_LOCK_TTL_MS);
+	try {
+		const existing = await prisma.cronLock.findUnique({ where: { key: PUBLISHER_LOCK_KEY } });
+		if (!existing) {
+			await prisma.cronLock.create({ data: { key: PUBLISHER_LOCK_KEY, locked_at: now, expires_at: expiresAt, owner: "publisher" } });
+			return true;
+		}
+		if (existing.expires_at.getTime() < now.getTime()) {
+			const res = await prisma.cronLock.updateMany({ where: { key: PUBLISHER_LOCK_KEY, expires_at: existing.expires_at }, data: { locked_at: now, expires_at: expiresAt, owner: "publisher" } });
+			return res.count === 1;
+		}
+		return false;
+	} catch {
+		// race on create -> another pod won
+		return false;
+	}
+}
+
+async function releaseDistributedLock(): Promise<void> {
+	try { await prisma.cronLock.deleteMany({ where: { key: PUBLISHER_LOCK_KEY } }); } catch {}
+}
 
 export async function GET(request: Request) {
 	return handler(request);
@@ -1277,11 +1313,18 @@ async function handler(request: Request) {
 			return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 		}
 
-		// In-process lock — reject overlapping runs instead of duplicating work
+		// BK-01: distributed lock + in-process guard
 		if (publisherRunning) {
 			return NextResponse.json({
 				skipped: true,
 				reason: "Another run is still in progress",
+			});
+		}
+		const distributedAcquired = await tryAcquireDistributedLock();
+		if (!distributedAcquired) {
+			return NextResponse.json({
+				skipped: true,
+				reason: "Another run is still in progress (distributed lock)",
 			});
 		}
 		publisherRunning = true;
@@ -1447,35 +1490,35 @@ async function handler(request: Request) {
 			// PHASE 1: Pending → Processing (create IG media containers)
 			// ═══════════════════════════════════════════════════════════════════════
 
-			// Posts with scheduled_at = NULL (manual posts without a date) must be included
-			const pendingPosts = await prisma.post.findMany({
-				where: {
-					status: "pending",
-					OR: [{ scheduled_at: { lte: now } }, { scheduled_at: null }],
-				},
-				include: { channel: true },
-				orderBy: { scheduled_at: "asc" }, // oldest first — avoids starvation
-				take: 5,
-			});
-
-			// Atomic claim: pending → processing. Only posts we win the claim for are processed.
-			if (pendingPosts.length > 0) {
-				await prisma.post.updateMany({
+			// BK-02: Claim atomico via transacao + verificacao de retorno (multi-pod)
+			let claimedPosts: any[] = [];
+			{
+				const pendingPosts = await prisma.post.findMany({
 					where: {
-						id: { in: pendingPosts.map((p) => p.id) },
 						status: "pending",
+						OR: [{ scheduled_at: { lte: now } }, { scheduled_at: null }],
 					},
-					data: { status: "processing" },
+					include: { channel: true },
+					orderBy: { scheduled_at: "asc" },
+					take: 5,
 				});
+				if (pendingPosts.length > 0) {
+					const ids = pendingPosts.map((p) => p.id);
+					await prisma.$transaction(async (tx) => {
+						await tx.post.updateMany({
+							where: { id: { in: ids }, status: "pending" },
+							data: { status: "processing" },
+						});
+					});
+					claimedPosts = await prisma.post.findMany({
+						where: { id: { in: ids }, status: "processing" },
+						include: { channel: true },
+					});
+				} else {
+					claimedPosts = [];
+				}
+				results.claimed = claimedPosts.length;
 			}
-			const claimedPosts = await prisma.post.findMany({
-				where: {
-					id: { in: pendingPosts.map((p) => p.id) },
-					status: "processing",
-				},
-				include: { channel: true },
-			});
-			results.claimed = claimedPosts.length;
 
 			const globalPublishIntervalMs = await getGlobalPublishIntervalMs();
 
@@ -2527,6 +2570,7 @@ async function handler(request: Request) {
 			return NextResponse.json(results);
 		} finally {
 			publisherRunning = false;
+			await releaseDistributedLock();
 		}
 	} catch (err: unknown) {
 		const errMsg =

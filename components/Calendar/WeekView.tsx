@@ -31,7 +31,7 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
     const getPostsForDay = (date: Date) => {
         return posts.filter(p => {
             if (!p.scheduled_at) return false;
-            const d = new Date(p.scheduled_at);
+            const d = new Date(p.scheduled_at ?? '');
             return d.getFullYear() === date.getFullYear() &&
                 d.getMonth() === date.getMonth() &&
                 d.getDate() === date.getDate();
@@ -50,7 +50,7 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
 
     return (
         <div className="flex flex-col h-full animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="grid grid-cols-7 mb-3 px-1">
+            <div className="grid grid-cols-7 mb-3 px-1" style={{gridTemplateColumns:"repeat(7, minmax(0, 1fr))"}}>
                 {days.map((d, i) => {
                     const isToday = d.toDateString() === new Date().toDateString();
                     return (
@@ -68,7 +68,7 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
             </div>
 
             <div className="flex-1 overflow-y-auto">
-                <div className="grid grid-cols-7 gap-px bg-ios-separator/50 border border-ios-separator/50 rounded-2xl overflow-hidden shadow-sm h-full min-h-[600px] ring-1 ring-black/5">
+                <div className="grid grid-cols-7 gap-px bg-ios-separator/50 border border-ios-separator/50 rounded-2xl overflow-hidden shadow-sm h-full min-h-[480px] md:min-h-[600px] ring-1 ring-black/5" style={{gridTemplateColumns:"repeat(7, minmax(0, 1fr))"}}>
                     {days.map((date, i) => {
                         const dayPosts = getPostsForDay(date);
                         // NOTE: `new Date()` in render is safe here — WeekView renders
@@ -77,7 +77,7 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
                         const isToday = date.toDateString() === new Date().toDateString();
 
                         return (
-                            <div key={i} className={`h-full flex flex-col p-2 gap-3
+                            <div key={i} className={`h-full flex flex-col p-1.5 md:p-2 gap-2 md:gap-3 min-w-0
                         ${isToday ? 'bg-ios-card' : 'bg-ios-background/40'} 
                         hover:bg-ios-card/80 transition-colors
                     `}>
@@ -85,7 +85,7 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
                                     <div
                                         key={p.id}
                                         onClick={(e) => { e.stopPropagation(); onPostClick(p); }}
-                                        className={`group relative aspect-[9/16] w-full rounded-xl overflow-hidden border shadow-sm cursor-pointer hover:scale-[1.02] hover:shadow-md bg-black/5 transition-all
+                                        className={`group relative aspect-square w-full rounded-xl overflow-hidden border shadow-sm cursor-pointer hover:scale-[1.02] hover:shadow-md bg-black/5 transition-all min-w-0
                                              ${getBorderClass(p.status)}
                                         `}
                                     >
@@ -101,7 +101,7 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
                                                 decoding="async"
                                             />
                                         ) : (
-                                            <div className="w-full h-full bg-gray-900 flex items-center justify-center">
+                                            <div className="w-full h-full aspect-square bg-gray-900 flex items-center justify-center">
                                                 <div className="text-[9px] text-white/40 font-medium text-center">
                                                     {p.video_url ? 'Video' : 'No Media'}
                                                 </div>
@@ -112,7 +112,7 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
                                         </div>
                                         <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 via-black/40 to-transparent backdrop-blur-[2px]">
                                             <p className="text-[10px] text-white/90 font-medium truncate text-center">
-                                                {new Date(p.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {new Date(p.scheduled_at ?? '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                             </p>
                                         </div>
                                     </div>

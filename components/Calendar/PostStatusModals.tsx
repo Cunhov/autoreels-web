@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { X, AlertCircle, RotateCcw } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import { Post } from '@/app/types';
@@ -14,6 +14,7 @@ interface ErrorModalProps {
 export function ErrorModal({ post, onClose, onPostsChanged }: ErrorModalProps) {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    useEffect(() => { const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
 
     const handleRetry = async () => {
         setBusy(true);
@@ -38,14 +39,14 @@ export function ErrorModal({ post, onClose, onPostsChanged }: ErrorModalProps) {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-2xl overflow-hidden shadow-2xl scale-100 animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200" role="presentation" onClick={onClose}>
+            <div role="dialog" aria-modal="true" aria-labelledby="error-modal-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-2xl overflow-hidden shadow-2xl scale-100 animate-in zoom-in-95 duration-200 max-h-[85dvh] overflow-y-auto">
                 <div className="p-6">
                     <div className="flex items-center gap-3 mb-4 text-red-500">
                         <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
                             <AlertCircle size={24} />
                         </div>
-                        <h3 className="text-xl font-semibold">Falha na publicação</h3>
+                        <h3 id="error-modal-title" className="text-xl font-semibold">Falha na publicação</h3>
                     </div>
 
                     <div className="space-y-4">
@@ -93,6 +94,7 @@ interface SuccessModalProps {
 }
 
 export function SuccessModal({ post, onClose }: SuccessModalProps) {
+    useEffect(() => { const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; document.addEventListener('keydown', h); return () => document.removeEventListener('keydown', h); }, [onClose]);
     // The IG oEmbed/Insights endpoints require an access token and don't allow
     // browser CORS. Fetching them client-side is broken AND leaks the token.
     // Preview is replaced with a deep link to the published post.
@@ -110,8 +112,8 @@ export function SuccessModal({ post, onClose }: SuccessModalProps) {
           : null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-zinc-900 w-full max-w-4xl max-h-[90vh] rounded-2xl overflow-hidden shadow-2xl flex flex-col md:flex-row">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200" role="presentation" onClick={onClose}>
+            <div role="dialog" aria-modal="true" aria-labelledby="success-modal-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-white dark:bg-zinc-900 w-full max-w-4xl max-h-[85dvh] rounded-2xl overflow-hidden shadow-2xl flex flex-col md:flex-row">
 
                 {/* Close Button Mobile */}
                 <button onClick={onClose} className="absolute top-4 right-4 z-50 p-2 bg-black/50 rounded-full text-white md:hidden">
@@ -141,7 +143,7 @@ export function SuccessModal({ post, onClose }: SuccessModalProps) {
                 {/* Right: Insights */}
                 <div className="w-full md:w-1/2 p-6 flex flex-col bg-ios-background">
                     <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-2xl font-bold text-ios-text">Detalhes da publicação</h3>
+                        <h3 id="success-modal-title" className="text-2xl font-bold text-ios-text">Detalhes da publicação</h3>
                         <button onClick={onClose} className="hidden md:block p-2 hover:bg-black/5 rounded-full transition-colors text-ios-secondary">
                             <X size={24} />
                         </button>
@@ -157,7 +159,7 @@ export function SuccessModal({ post, onClose }: SuccessModalProps) {
 
                     <div className="mt-6 pt-4 border-t border-ios-separator">
                         <p className="text-xs text-center text-gray-400">
-                            Publicado em {new Date(post.scheduled_at).toLocaleDateString()} às {new Date(post.scheduled_at).toLocaleTimeString()}
+                            Publicado em {new Date(post.scheduled_at ?? '').toLocaleDateString()} às {new Date(post.scheduled_at ?? '').toLocaleTimeString()}
                         </p>
                     </div>
                 </div>

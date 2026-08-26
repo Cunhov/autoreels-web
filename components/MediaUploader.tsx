@@ -39,7 +39,18 @@ export default function MediaUploader({
 
 	const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 		if (e.target.files && e.target.files.length > 0) {
-			addFiles(Array.from(e.target.files));
+			const incoming = Array.from(e.target.files);
+			// BK-15 validar MIME e tamanho
+			const allowedPrefixes = (accept ?? "video/*,image/*").split(",").map(a=>a.trim()).filter(Boolean);
+			const filtered = incoming.filter(f=>{
+				if (f.size > 100*1024*1024) return false;
+				if (!f.type) return true;
+				return allowedPrefixes.some(p=> f.type.startsWith(p.replace("*","")));
+			});
+			if (filtered.length !== incoming.length) {
+				setLimitMessage(`${incoming.length - filtered.length} arquivo(s) ignorado(s): tipo/tamanho inválido`);
+			}
+			addFiles(filtered);
 		}
 		// Reset so selecting the same file again re-triggers onChange
 		e.target.value = "";
@@ -78,7 +89,16 @@ export default function MediaUploader({
 	return (
 		<div className="space-y-4">
 			<div
-				className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center transition-all cursor-pointer ${
+				tabIndex={0}
+				role="button"
+				aria-label="Área para enviar mídia — arraste arquivos ou pressione Enter para selecionar"
+				onKeyDown={(e) => {
+					if (e.key === "Enter" || e.key === " ") {
+						e.preventDefault();
+						fileInputRef.current?.click();
+					}
+				}}
+				className={`border-2 border-dashed rounded-2xl p-8 flex flex-col items-center justify-center text-center transition-all cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-ios-blue focus-visible:ring-offset-2 ${
 					isDragging
 						? "border-ios-blue bg-ios-blue/5"
 						: "border-ios-separator hover:border-ios-blue/50 hover:bg-ios-card"

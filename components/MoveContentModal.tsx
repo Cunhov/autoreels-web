@@ -109,14 +109,21 @@ export default function MoveContentModal({ isOpen, onClose, itemsToMove, onMoveC
         }
     };
 
+    useEffect(() => {
+        if (!isOpen) return;
+        const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, [isOpen, onClose]);
+
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-2xl shadow-2xl flex flex-col max-h-[80vh] overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200" role="presentation" onClick={onClose}>
+            <div role="dialog" aria-modal="true" aria-labelledby="move-content-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-2xl shadow-2xl flex flex-col max-h-[85dvh] overflow-hidden">
                 {/* Header */}
                 <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
-                    <h3 className="font-semibold text-lg">Move {itemsToMove.length} Item{itemsToMove.length !== 1 ? 's' : ''}</h3>
+                    <h3 id="move-content-title" className="font-semibold text-lg">Move {itemsToMove.length} Item{itemsToMove.length !== 1 ? 's' : ''}</h3>
                     <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
                         <X size={20} className="text-gray-500" />
                     </button>

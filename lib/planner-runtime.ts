@@ -46,7 +46,7 @@ type PlannerContentItem = {
 	title_fallback?: string;
 	title?: string; // legacy — metadados de upload direto (sem row no banco)
 	location_id?: string | null;
-	share_to_feed?: boolean;
+	share_to_feed?: boolean | null;
 	thumbnail_url?: string;
 	children_urls?: { url: string; type: string; thumbnail_url?: string }[];
 	carousel_items?: { url: string; type: string; thumbnail_url?: string }[];
@@ -447,7 +447,78 @@ export async function buildPostData(opts: {
 			.map((t) => t.trim())
 			.find(Boolean);
 		if (titleCandidate) {
-			youtubeOptions = JSON.stringify({ title: titleCandidate.slice(0, 100) });
+			// BK-22 FIX: expandir para salvar youtube_options COMPLETO (privacy/made_for_kids/monetize/description)
+			// antes só salvava {title}. Agora preserva youtube_options quando houver herança de config/conteúdo.
+			const cfg = config as Record<string, unknown>;
+			const selAny = selected as unknown as Record<string, unknown> | null | undefined;
+			// helper strict boolean (BK-21)
+			const toStrictBool = (v: unknown): boolean => {
+				if (typeof v === "boolean") return v;
+				if (typeof v === "string") return v.toLowerCase() === "true";
+				if (typeof v === "number") return v === 1;
+				if (v == null) return false;
+				return String(v).toLowerCase() === "true";
+			};
+			// privacy: config.youtube_privacy > item.privacy > item.youtube_options.privacy > PUBLIC
+			let youtubePrivacy: string = "PUBLIC";
+			const cfgPrivacy = cfg["youtube_privacy"];
+			const selPrivacy = selAny?.["privacy"];
+			if (typeof cfgPrivacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(cfgPrivacy).toUpperCase())) {
+				youtubePrivacy = String(cfgPrivacy).toUpperCase();
+			} else if (typeof selPrivacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(selPrivacy).toUpperCase())) {
+				youtubePrivacy = String(selPrivacy).toUpperCase();
+			} else {
+				// tenta extrair de youtube_options do item se existir
+				const rawYtOpt = selAny?.["youtube_options"];
+				if (rawYtOpt != null) {
+					try {
+						const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
+						if (typeof parsed.privacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(parsed.privacy).toUpperCase())) {
+							youtubePrivacy = String(parsed.privacy).toUpperCase();
+						}
+					} catch {}
+				}
+			}
+			let madeForKids: boolean | null = null;
+			if (cfg["youtube_made_for_kids"] !== undefined) madeForKids = toStrictBool(cfg["youtube_made_for_kids"]);
+			else if (selAny?.["made_for_kids"] !== undefined) madeForKids = toStrictBool(selAny?.["made_for_kids"]);
+			else {
+				const rawYtOpt = selAny?.["youtube_options"];
+				if (rawYtOpt != null) {
+					try {
+						const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
+						if (parsed.made_for_kids !== undefined) madeForKids = toStrictBool(parsed.made_for_kids);
+					} catch {}
+				}
+			}
+			let monetizeWithAds: boolean | null = null;
+			if (cfg["youtube_monetize_with_ads"] !== undefined) monetizeWithAds = toStrictBool(cfg["youtube_monetize_with_ads"]);
+			else if (selAny?.["monetize_with_ads"] !== undefined) monetizeWithAds = toStrictBool(selAny?.["monetize_with_ads"]);
+			else {
+				const rawYtOpt = selAny?.["youtube_options"];
+				if (rawYtOpt != null) {
+					try {
+						const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
+						if (parsed.monetize_with_ads !== undefined) monetizeWithAds = toStrictBool(parsed.monetize_with_ads);
+					} catch {}
+				}
+			}
+			// categoria e descricao: usar config quando houver, senão defaults
+			const descriptionVal = (typeof cfg["youtube_description"] === "string" ? String(cfg["youtube_description"]) : (caption || "")) as string;
+			const categoryIdRaw = cfg["youtube_category_id"];
+			const categoryId = categoryIdRaw !== undefined ? Number(categoryIdRaw) : undefined;
+			const pinnedRaw = cfg["youtube_pinned_comment_text"] ?? selAny?.["pinned_comment_text"];
+
+			const ytObj: Record<string, unknown> = {
+				title: titleCandidate.slice(0, 100),
+				privacy: youtubePrivacy,
+				...(madeForKids !== null ? { made_for_kids: madeForKids } : {}),
+				...(monetizeWithAds !== null ? { monetize_with_ads: monetizeWithAds } : {}),
+			};
+			if (descriptionVal) ytObj.description = String(descriptionVal).slice(0, 5000);
+			if (categoryId !== undefined && Number.isInteger(categoryId)) ytObj.category_id = categoryId;
+			if (typeof pinnedRaw === "string" && pinnedRaw.trim()) ytObj.pinned_comment_text = pinnedRaw.trim().slice(0, 10000);
+			youtubeOptions = JSON.stringify(ytObj);
 		}
 	}
 
@@ -533,7 +604,9 @@ export async function resolvePlannerRuntime(
 	let mediaType = selectedContent.media_type || "REELS";
 	let caption = selectedContent.caption || "";
 	const locationId = selectedContent.location_id || null;
-	const shareToFeed = selectedContent.share_to_feed !== false;
+	// BK-23 FIX: share_to_feed deveria ser null (herdar) nao false quando nao explicitado
+	const rawShareToFeed = selectedContent.share_to_feed;
+	const shareToFeed: boolean | null = typeof rawShareToFeed === "boolean" ? rawShareToFeed : null;
 	let thumbnailUrl = selectedContent.thumbnail_url || null;
 	let children: { url: string; type: string; thumbnail_url?: string | null }[] =
 		selectedContent.children_urls || selectedContent.carousel_items || [];
@@ -846,25 +919,24 @@ export async function runPlannerOnce(
 	const ops = postDatas.map(
 		(d) => prisma.post.create({ data: d }) as Prisma.PrismaPromise<unknown>,
 	);
+	// BK-04: state update com where last_run esperado evita clobber em edicao concorrente
+	const expectedLastRun = now;
 	ops.push(
-		prisma.planner.update({
-			where: { id: planner.id },
+		prisma.planner.updateMany({
+			where: { id: planner.id, last_run: expectedLastRun },
 			data: { state: JSON.stringify(nextState) },
-		}) as Prisma.PrismaPromise<unknown>,
+		}) as unknown as Prisma.PrismaPromise<unknown>,
 	);
 
 	try {
-		if (typeof prisma.$transaction === "function") {
-			await prisma.$transaction(ops);
-		} else {
-			await Promise.all(ops);
-		}
+		// BK-06: sempre transacionado; fallback tambem usa transaction
+		await (prisma as unknown as { $transaction: (ops: unknown[]) => Promise<unknown[]> }).$transaction(ops.filter(Boolean) as never);
 	} catch (err: unknown) {
-		// A criação falhou depois do claim: reverta o claim para não "comer" o
-		// próximo tick e não perder o due (posts parciais não são criados).
+		// A criação falhou depois do claim: reverta o claim (condicional) para não "comer" o
+		// próximo tick e não perder o due (posts parciais não são criados via rollback).
 		await prisma.planner
-			.update({
-				where: { id: planner.id },
+			.updateMany({
+				where: { id: planner.id, last_run: expectedLastRun },
 				data: { last_run: planner.last_run },
 			})
 			.catch(() => {});

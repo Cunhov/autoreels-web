@@ -7,6 +7,7 @@ import {
 	Video as VideoIcon,
 } from "lucide-react";
 import IOSButton from "./IOSButton";
+import { escapeHtml, CAPTION_MAX } from "@/lib/sanitize";
 
 interface ContentItem {
 	id: string;
@@ -114,12 +115,35 @@ export default function EditContentModal({
 	const handleAddTag = (e: React.KeyboardEvent) => {
 		if (e.key === "Enter" || e.key === ",") {
 			e.preventDefault();
-			const newTag = tagInput.trim();
-			if (newTag && !tags.includes(newTag)) {
-				setTags([...tags, newTag]);
+			// BK-12 split por vírgula e trim cada tag
+			const parts = tagInput.split(",").map(t=>t.trim()).filter(Boolean);
+			const next = [...tags];
+			for (const p of parts) {
+				const clean = escapeHtml(p).slice(0,50);
+				if (clean && !next.includes(clean)) next.push(clean);
 			}
+			setTags(next);
 			setTagInput("");
 		}
+	};
+
+	// BK-12 onPaste: cria múltiplas tags em vez de tag única
+	const handleTagPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+		e.preventDefault();
+		const pasted = e.clipboardData.getData("text");
+		const parts = pasted.split(",").map(t=>t.trim()).filter(Boolean);
+		if (parts.length <=1) {
+			const single = escapeHtml(pasted.trim()).slice(0,50);
+			if (single && !tags.includes(single)) setTags([...tags, single]);
+		} else {
+			const next = [...tags];
+			for (const p of parts) {
+				const clean = escapeHtml(p).slice(0,50);
+				if (clean && !next.includes(clean)) next.push(clean);
+			}
+			setTags(next);
+		}
+		setTagInput("");
 	};
 
 	const removeTag = (tagToRemove: string) => {
@@ -138,14 +162,22 @@ export default function EditContentModal({
 			const updates: Record<string, unknown> = {};
 
 			if (isBulk) {
-				if (title) updates.title = title;
-				if (caption) updates.caption = caption;
-				if (tags.length > 0) updates.tags = tags;
+				if (title.trim()) updates.title = escapeHtml(title.trim()).slice(0,200);
+				if (caption.trim()) {
+					let cap = caption.trim();
+					if (cap.length> CAPTION_MAX) cap = cap.slice(0,CAPTION_MAX);
+					updates.caption = escapeHtml(cap);
+				}
+				if (tags.length > 0) updates.tags = tags.map(t=> escapeHtml(t.trim()).slice(0,50)).filter(Boolean);
 			} else {
-				updates.name = name;
-				updates.title = title;
-				updates.caption = caption;
-				updates.tags = tags;
+				updates.name = escapeHtml(name.trim()).slice(0,200);
+				let singleTitle = title.trim();
+				if (singleTitle) singleTitle = escapeHtml(singleTitle).slice(0,200);
+				updates.title = singleTitle;
+				let cap = caption.trim();
+				if (cap.length> CAPTION_MAX) cap = cap.slice(0,CAPTION_MAX);
+				updates.caption = escapeHtml(cap);
+				updates.tags = tags.map(t=> escapeHtml(t.trim()).slice(0,50)).filter(Boolean);
 			}
 
 			if (Object.keys(updates).length === 0) {
@@ -237,8 +269,13 @@ export default function EditContentModal({
 	/** Trim the video and create a NEW content item in the library. */
 	const handleTrim = async () => {
 		if (!videoPath || videoBusy) return;
+		// BK-13 validar Number.isFinite e >=0 antes FFmpeg
 		if (!Number.isFinite(trimStart) || !Number.isFinite(trimEnd)) {
 			setVideoMessage("Informe valores válidos de início e fim", "error");
+			return;
+		}
+		if (trimStart < 0 || trimEnd < 0) {
+			setVideoMessage("Valores de corte devem ser >= 0", "error");
 			return;
 		}
 		if (trimEnd <= trimStart) {
@@ -283,15 +320,22 @@ export default function EditContentModal({
 		}
 	};
 
+    useEffect(() => {
+        if (!isOpen) return;
+        const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', h);
+        return () => document.removeEventListener('keydown', h);
+    }, [isOpen, onClose]);
+
 	if (!isOpen) return null;
 
 	return (
-		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-			<div className="bg-white dark:bg-[#1C1C1E] w-full max-w-md rounded-2xl overflow-hidden shadow-2xl flex flex-col scale-100 animate-in zoom-in-95 duration-200">
+		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200" role="presentation" onClick={onClose}>
+			<div role="dialog" aria-modal="true" aria-labelledby="edit-content-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-white dark:bg-[#1C1C1E] w-full max-w-md rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto scale-100 animate-in zoom-in-95 duration-200">
 				{/* Header */}
 				<div className="px-5 py-4 border-b border-gray-100 dark:border-white/10 flex items-center justify-between bg-white/50 dark:bg-white/5 backdrop-blur-md">
 					<div>
-						<h2 className="text-[17px] font-semibold text-gray-900 dark:text-white">
+						<h2 id="edit-content-title" className="text-[17px] font-semibold text-gray-900 dark:text-white">
 							{isBulk ? `Editar ${itemsToEdit.length} itens` : "Editar item"}
 						</h2>
 					</div>
@@ -331,11 +375,13 @@ export default function EditContentModal({
 							type="text"
 							value={title}
 							onChange={(e) => setTitle(e.target.value)}
+							maxLength={200}
 							className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
 							placeholder={
 								isBulk ? "Deixe vazio para manter o atual" : "Título do post"
 							}
 						/>
+						<div className={`text-right text-[11px] tabular-nums ${title.length>200 ? "text-red-500" : "text-gray-400"}`}>{title.length}/200</div>
 					</div>
 
 					<div>
@@ -348,12 +394,14 @@ export default function EditContentModal({
 						<textarea
 							value={caption}
 							onChange={(e) => setCaption(e.target.value)}
+							maxLength={CAPTION_MAX}
 							rows={4}
 							className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none transition-all"
 							placeholder={
 								isBulk ? "Deixe vazio para manter a atual" : "Escreva uma legenda..."
 							}
 						/>
+						<div className={`text-right text-[11px] tabular-nums ${caption.length> CAPTION_MAX ? "text-red-500" : "text-gray-400"}`}>{caption.length}/{CAPTION_MAX}</div>
 					</div>
 
 					<div>
@@ -380,6 +428,7 @@ export default function EditContentModal({
 								value={tagInput}
 								onChange={(e) => setTagInput(e.target.value)}
 								onKeyDown={handleAddTag}
+								onPaste={handleTagPaste}
 								className="bg-transparent border-none outline-none flex-1 min-w-[100px] text-[15px] text-gray-900 dark:text-white placeholder-gray-400"
 								placeholder={
 									tags.length === 0 ? "Adicionar tags (pressione Enter)..." : ""
