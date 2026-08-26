@@ -8,6 +8,7 @@ import {
 	Clock,
 	Instagram,
 	Check,
+	Youtube,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
 import MediaUploader from "./MediaUploader";
@@ -18,6 +19,30 @@ interface Channel {
 	id: string;
 	name: string;
 	account_id: string;
+	platform?: string;
+}
+
+/**
+ * Rótulo de mídia do preview por plataforma: planners só-YouTube mostram
+ * "Short do YouTube"/"Post na Comunidade"; planners mistos IG+YT mostram os
+ * dois destinos (o conteúdo vai para ambas as plataformas).
+ */
+function plannerMediaLabel(
+	mediaType: string,
+	isCarousel: boolean,
+	youtubeMode: "only" | "mixed" | "none",
+): string {
+	const igLabel = isCarousel
+		? "Carrossel"
+		: mediaType === "REELS"
+			? "Reels"
+			: mediaType === "STORIES"
+				? "Story"
+				: "Imagem";
+	if (youtubeMode === "none") return igLabel;
+	const ytLabel =
+		isCarousel || mediaType === "IMAGE" ? "Post na Comunidade" : "Short do YouTube";
+	return youtubeMode === "only" ? ytLabel : `${igLabel} · ${ytLabel}`;
 }
 
 interface PlannerWizardProps {
@@ -124,6 +149,44 @@ export default function PlannerWizard({
 			.map((id) => channels.find((channel) => channel.id === id)?.name)
 			.filter(Boolean) as string[];
 	}, [channels, selectedChannels]);
+
+	// Algum canal selecionado é do YouTube? (muda o rótulo de mídia no preview)
+	const youtubeSelected = useMemo(() => {
+		return selectedChannels.some(
+			(id) => channels.find((c) => c.id === id)?.platform === "youtube",
+		);
+	}, [channels, selectedChannels]);
+
+	// TODOS os canais selecionados são YouTube? Oculta campos exclusivos do
+	// Instagram (Location/Collabs/Tags/Audio/Share to Feed) e restringe o tipo
+	// de mídia (vídeo → Short, imagem/carrossel → Comunidade).
+	const onlyYoutubeSelected = useMemo(() => {
+		return (
+			youtubeSelected &&
+			selectedChannels.length > 0 &&
+			selectedChannels.every(
+				(id) => channels.find((c) => c.id === id)?.platform === "youtube",
+			)
+		);
+	}, [youtubeSelected, channels, selectedChannels]);
+
+	// Planners com canal YouTube não têm "Story": em planners mistos IG+YT o
+	// post do canal YT seria classificado como Short sem vídeo (falha permanente
+	// no publisher, ciclo após ciclo). Corrige automaticamente para Short.
+	// NÃO marca settingsTouched: o auto-fix roda durante o load da edição e
+	// marcar aqui faria um save sem edições reais reconstruir todas as entradas
+	// com globalSettings, achatando as configurações por-item preservadas.
+	useEffect(() => {
+		if (youtubeSelected && mediaType === "STORIES") {
+			setMediaType("REELS");
+		}
+	}, [youtubeSelected, mediaType]);
+
+	// Modo YouTube do rótulo de mídia: só-YouTube / misto IG+YT / nenhum.
+	const youtubeMode = useMemo<"only" | "mixed" | "none">(() => {
+		if (!youtubeSelected) return "none";
+		return onlyYoutubeSelected ? "only" : "mixed";
+	}, [youtubeSelected, onlyYoutubeSelected]);
 
 	const scheduleSummary = useMemo(() => {
 		const frequency = `${frequencyValue} ${frequencyUnit}`;
@@ -391,7 +454,9 @@ export default function PlannerWizard({
 			setChannels(
 				Array.isArray(data)
 					? data.filter(
-							(c: any) => c.platform === "instagram" && c.status === "active",
+							(c: any) =>
+								["instagram", "youtube"].includes(c.platform) &&
+								c.status === "active",
 						)
 					: [],
 			);
@@ -399,7 +464,7 @@ export default function PlannerWizard({
 			console.error("Failed to fetch channels:", err);
 			setChannels([]);
 			setFormError(
-				"Could not load channels. Check your connection and try again.",
+				"Não foi possível carregar os canais. Verifique sua conexão e tente novamente.",
 			);
 		}
 	}
@@ -462,7 +527,7 @@ export default function PlannerWizard({
 
 		// Validate sleep schedule: a zero-length window silently disables the timer.
 		if (sleepEnabled && sleepStart === sleepEnd) {
-			setFormError("Sleep start and end must be different times.");
+			setFormError("O início e o fim do descanso devem ser horários diferentes.");
 			return;
 		}
 
@@ -471,6 +536,36 @@ export default function PlannerWizard({
 			Number.isFinite(frequencyValue) && frequencyValue >= 1
 				? frequencyValue
 				: 10;
+
+		// Short do YouTube exige título: com planner só-YouTube e mídia em vídeo,
+		// exige caption (ou Título reserva) preenchidos — sem isso o post falharia
+		// permanentemente na publicação.
+		if (
+			youtubeSelected &&
+			!isCarousel &&
+			mediaType === "REELS" &&
+			!caption.trim() &&
+			!titleFallback.trim()
+		) {
+			setFormError(
+				"Shorts do YouTube exigem um título — informe a legenda ou o Título reserva.",
+			);
+			return;
+		}
+
+		// Post na Comunidade exige texto: sem isso o publisher falharia
+		// permanentemente (mesma validação do servidor, aplicada cedo aqui).
+		if (
+			youtubeSelected &&
+			(isCarousel || mediaType === "IMAGE") &&
+			!caption.trim() &&
+			!captionFallback.trim()
+		) {
+			setFormError(
+				"Posts na Comunidade do YouTube exigem um texto — informe a legenda ou a Legenda reserva.",
+			);
+			return;
+		}
 
 		// Carousel posts are built from FOLDERS only (the cron resolves each
 		// folder's children). Reject non-folder selections early with a clear error.
@@ -492,7 +587,7 @@ export default function PlannerWizard({
 					const invalid = selectedContentIds.filter((id) => !folderIds.has(id));
 					if (invalid.length > 0) {
 						setFormError(
-							`Carousel requires folders — ${invalid.length} selected item(s) are not folders. Remove them and try again.`,
+							`Carrossel exige pastas — ${invalid.length} item(ns) selecionado(s) não são pastas. Remova-os e tente novamente.`,
 						);
 						return;
 					}
@@ -806,11 +901,17 @@ export default function PlannerWizard({
 												<Check size={14} />
 											)}
 										</div>
-										<div className="w-10 h-10 rounded-full bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 p-[2px]">
-											<div className="w-full h-full rounded-full bg-white flex items-center justify-center">
-												<Instagram size={20} className="text-black" />
+										{channel.platform === "youtube" ? (
+											<div className="w-10 h-10 rounded-full bg-ios-red/10 flex items-center justify-center">
+												<Youtube size={20} className="text-ios-red" />
 											</div>
-										</div>
+										) : (
+											<div className="w-10 h-10 rounded-full bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 p-[2px]">
+												<div className="w-full h-full rounded-full bg-white flex items-center justify-center">
+													<Instagram size={20} className="text-black" />
+												</div>
+											</div>
+										)}
 										<div>
 											<h4 className="font-semibold text-ios-text">
 												{channel.name}
@@ -823,7 +924,7 @@ export default function PlannerWizard({
 								))}
 								{channels.length === 0 && (
 									<div className="text-center py-10 text-ios-secondary">
-										No Instagram channels found. Please add a channel first.
+										Nenhum canal conectado — adicione uma conta do Instagram ou YouTube em Canais.
 									</div>
 								)}
 							</div>
@@ -942,13 +1043,19 @@ export default function PlannerWizard({
 											}}
 											className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
 										>
-											<option value="REELS">Reels</option>
-											<option value="IMAGE">Post / Image</option>
+											<option value="REELS">
+												{onlyYoutubeSelected ? "Short do YouTube" : "Reels"}
+											</option>
+											<option value="IMAGE">
+												{onlyYoutubeSelected ? "Post na Comunidade" : "Post / Image"}
+											</option>
 											<option value="CAROUSEL">Carousel</option>
-											<option value="STORIES">Story</option>
+											{!youtubeSelected && (
+												<option value="STORIES">Story</option>
+											)}
 										</select>
 									</div>
-									{mediaType === "REELS" && !isCarousel && (
+									{mediaType === "REELS" && !isCarousel && !onlyYoutubeSelected && (
 										<div className="flex flex-col justify-center">
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
 												Options
@@ -1124,6 +1231,7 @@ export default function PlannerWizard({
 								</div>
 
 								<div className="space-y-4">
+								{!onlyYoutubeSelected && (
 									<div>
 										<label className="text-xs font-medium text-ios-text mb-1.5 block">
 											Location ID (Optional)
@@ -1138,8 +1246,9 @@ export default function PlannerWizard({
 											placeholder="Instagram Location ID"
 										/>
 									</div>
+								)}
 
-									{mediaType !== "STORIES" && (
+									{mediaType !== "STORIES" && !onlyYoutubeSelected && (
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
 												Collaborators (Optional)
@@ -1160,7 +1269,7 @@ export default function PlannerWizard({
 										</div>
 									)}
 
-									{(mediaType === "IMAGE" || mediaType === "CAROUSEL") && (
+									{(mediaType === "IMAGE" || mediaType === "CAROUSEL") && !onlyYoutubeSelected && (
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
 												User Tags (Optional)
@@ -1180,7 +1289,7 @@ export default function PlannerWizard({
 										</div>
 									)}
 
-									{mediaType === "REELS" && (
+									{mediaType === "REELS" && !onlyYoutubeSelected && (
 										<div className="space-y-3 p-3 bg-ios-gray-6 rounded-xl border border-ios-separator">
 											<span className="text-xs font-semibold text-ios-text block">
 												Meta Audio Settings (Optional)
@@ -1340,7 +1449,7 @@ export default function PlannerWizard({
 										</div>
 										{sleepEnabled && sleepStart === sleepEnd && (
 											<p className="col-span-2 text-xs text-ios-red">
-												Sleep start and end must be different times.
+												O início e o fim do descanso devem ser horários diferentes.
 											</p>
 										)}
 									</div>
@@ -1441,15 +1550,9 @@ export default function PlannerWizard({
 									<div className="flex items-center justify-between gap-4">
 										<span className="text-ios-secondary">Media</span>
 										<span className="font-medium text-right">
-											{isCarousel
-												? "Carousel"
-												: mediaType === "REELS"
-													? "Reels"
-													: mediaType === "STORIES"
-														? "Story"
-														: "Image"}
-											{mediaType === "REELS" && !shareToFeed
-												? " - feed off"
+											{plannerMediaLabel(mediaType, isCarousel, youtubeMode)}
+											{youtubeMode !== "only" && mediaType === "REELS" && !shareToFeed
+												? " · sem feed"
 												: ""}
 										</span>
 									</div>

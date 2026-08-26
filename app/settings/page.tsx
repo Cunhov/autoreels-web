@@ -11,6 +11,7 @@ import {
 	CheckCircle2,
 	Trash2,
 	RotateCcw,
+	Youtube,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
 import IOSCard from "@/components/IOSComponents";
@@ -37,6 +38,18 @@ interface BackupInfo {
 	mtime: string;
 }
 
+/** Resposta de GET /api/youtube/health (status da integração YouTube). */
+interface YoutubeHealthResponse {
+	configured: boolean;
+	base_url_configured?: boolean;
+	api_key_configured?: boolean;
+	ok?: boolean;
+	sessions_active?: number;
+	db_connected?: boolean;
+	version?: string;
+	error?: string;
+}
+
 type ToastState = { msg: string; type: "ok" | "err" } | null;
 
 function formatBytes(bytes: number): string {
@@ -48,6 +61,15 @@ function formatBytes(bytes: number): string {
 
 function errMsg(e: unknown, fallback: string): string {
 	return e instanceof Error && e.message ? e.message : fallback;
+}
+
+/** Traduz erros conhecidos do servidor (validações chegam em inglês cru). */
+function translateSettingsError(message: string): string {
+	return message
+		.replace(/([A-Z_]+) must be a non-negative number/gi, (_m, key) => `${key} deve ser um número não negativo`)
+		.replace(/([A-Z_]+) must be a string/gi, (_m, key) => `${key} deve ser um texto`)
+		.replace(/Invalid payload/i, "Dados inválidos")
+		.replace(/Internal server error/i, "Erro interno do servidor");
 }
 
 function Field({
@@ -117,6 +139,10 @@ export default function SettingsPage() {
 	const [creatingBackup, setCreatingBackup] = useState(false);
 	const [restoringName, setRestoringName] = useState<string | null>(null);
 
+	// Integração YouTube (leitura)
+	const [ytHealth, setYtHealth] = useState<YoutubeHealthResponse | null>(null);
+	const [ytLoading, setYtLoading] = useState(true);
+
 	const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const showToast = useCallback((msg: string, type: "ok" | "err" = "ok") => {
 		// A stale timer from a previous toast would dismiss the NEW one early —
@@ -129,7 +155,7 @@ export default function SettingsPage() {
 	const loadSettings = useCallback(async () => {
 		try {
 			const res = await fetch("/api/settings");
-			if (!res.ok) throw new Error("Failed to load settings");
+			if (!res.ok) throw new Error("Falha ao carregar configurações");
 			const data = (await res.json()) as SettingsResponse;
 			setBotTokenState(data.TELEGRAM_BOT_TOKEN);
 			setChatId(data.TELEGRAM_CHAT_ID ?? "");
@@ -151,7 +177,7 @@ export default function SettingsPage() {
 			);
 		} catch (e: unknown) {
 			console.error("Error loading settings:", e);
-			showToast(errMsg(e, "Failed to load settings"), "err");
+			showToast(errMsg(e, "Falha ao carregar configurações"), "err");
 		} finally {
 			setLoading(false);
 		}
@@ -161,7 +187,7 @@ export default function SettingsPage() {
 		setLoadingBackups(true);
 		try {
 			const res = await fetch("/api/admin/backups");
-			if (!res.ok) throw new Error("Failed to load backups");
+			if (!res.ok) throw new Error("Falha ao carregar backups");
 			const data = await res.json();
 			setBackups(Array.isArray(data.backups) ? data.backups : []);
 		} catch (e: unknown) {
@@ -172,10 +198,41 @@ export default function SettingsPage() {
 		}
 	}, [showToast]);
 
+	const loadYoutubeHealth = useCallback(async () => {
+		setYtLoading(true);
+		try {
+			const res = await fetch("/api/youtube/health");
+			// Um 502 da rota pode vir com corpo útil (configured:true + error) —
+			// nesse caso usamos o diagnóstico do backend em vez de descartá-lo.
+			let data: YoutubeHealthResponse | null = null;
+			if (!res.ok) {
+				data = (await res.json().catch(() => null)) as YoutubeHealthResponse | null;
+				if (!data || data.configured !== true) {
+					// 401/500 sem corpo `configured` — diagnóstico enganoso tratar
+					// como "Não configurada no servidor".
+					throw new Error(`Falha ao verificar o status (HTTP ${res.status})`);
+				}
+			} else {
+				data = (await res.json().catch(() => null)) as YoutubeHealthResponse | null;
+			}
+			if (!data) throw new Error("Resposta inválida");
+			setYtHealth(data);
+		} catch (e: unknown) {
+			console.error("Error loading YouTube health:", e);
+			setYtHealth(null);
+		} finally {
+			setYtLoading(false);
+		}
+	}, []);
+
 	useEffect(() => {
 		loadSettings();
 		loadBackups();
 	}, [loadSettings, loadBackups]);
+
+	useEffect(() => {
+		loadYoutubeHealth();
+	}, [loadYoutubeHealth]);
 
 	async function saveSettings() {
 		setSaving(true);
@@ -197,15 +254,15 @@ export default function SettingsPage() {
 			});
 			if (!res.ok) {
 				const err = (await res.json().catch(() => ({}))) as { error?: string };
-				throw new Error(err.error || "Failed to save settings");
+				throw new Error(translateSettingsError(err.error || "Falha ao salvar configurações"));
 			}
 			setBotToken("");
 			setWebhook("");
 			await loadSettings();
-			showToast("Settings saved ✓");
+			showToast("Configurações salvas ✓");
 		} catch (e: unknown) {
 			console.error("Error saving settings:", e);
-			showToast(errMsg(e, "Failed to save settings"), "err");
+			showToast(errMsg(e, "Falha ao salvar configurações"), "err");
 		} finally {
 			setSaving(false);
 		}
@@ -214,22 +271,25 @@ export default function SettingsPage() {
 	async function clearSensitive(
 		key: "TELEGRAM_BOT_TOKEN" | "NOTIFY_WEBHOOK_URL",
 	) {
+		const label = key === "TELEGRAM_BOT_TOKEN" ? "Bot token" : "Webhook";
+		const ok = window.confirm(`Remover o valor salvo de ${label}?`);
+		if (!ok) return;
 		try {
 			const res = await fetch("/api/settings", {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ [key]: "" }),
 			});
-			if (!res.ok) throw new Error("Failed to clear");
+			if (!res.ok) throw new Error("Falha ao limpar");
 			if (key === "TELEGRAM_BOT_TOKEN") setBotToken("");
 			else setWebhook("");
 			await loadSettings();
 			showToast(
-				`${key === "TELEGRAM_BOT_TOKEN" ? "Bot token" : "Webhook"} cleared`,
+				`${key === "TELEGRAM_BOT_TOKEN" ? "Bot token" : "Webhook"} removido`,
 			);
 		} catch (e: unknown) {
 			console.error(e);
-			showToast(errMsg(e, "Failed to clear value"), "err");
+			showToast(errMsg(e, "Falha ao limpar o valor"), "err");
 		}
 	}
 
@@ -239,10 +299,10 @@ export default function SettingsPage() {
 			const res = await fetch("/api/admin/backups", { method: "POST" });
 			if (!res.ok) throw new Error("Failed to create backup");
 			await loadBackups();
-			showToast("Backup created ✓");
+			showToast("Backup criado ✓");
 		} catch (e: unknown) {
 			console.error(e);
-			showToast(errMsg(e, "Failed to create backup"), "err");
+			showToast(errMsg(e, "Falha ao criar backup"), "err");
 		} finally {
 			setCreatingBackup(false);
 		}
@@ -250,7 +310,7 @@ export default function SettingsPage() {
 
 	async function restoreBackup(filename: string) {
 		const ok = window.confirm(
-			`Restore ${filename}?\n\nThis REPLACES the current database with this backup and restarts the app. A safety copy of the current DB is created first.`,
+			`Restaurar ${filename}?\n\nIsso SUBSTITUI o banco atual por este backup e reinicia o app. Uma cópia de segurança do banco atual é criada primeiro.`,
 		);
 		if (!ok) return;
 		setRestoringName(filename);
@@ -264,11 +324,11 @@ export default function SettingsPage() {
 				error?: string;
 				restarted?: boolean;
 			};
-			if (!res.ok) throw new Error(data.error || "Restore failed");
-			showToast("Restored — the app will restart now");
+			if (!res.ok) throw new Error(data.error || "Falha ao restaurar");
+			showToast("Restaurado — o app será reiniciado agora");
 		} catch (e: unknown) {
 			console.error(e);
-			showToast(errMsg(e, "Restore failed"), "err");
+			showToast(errMsg(e, "Falha ao restaurar"), "err");
 		} finally {
 			setRestoringName(null);
 		}
@@ -301,9 +361,9 @@ export default function SettingsPage() {
 			{/* Header */}
 			<div className="flex items-start justify-between">
 				<div>
-					<h1 className="text-[34px] font-bold text-ios-text">Settings</h1>
+					<h1 className="text-[34px] font-bold text-ios-text">Configurações</h1>
 					<p className="text-ios-text-secondary text-sm">
-						Notifications, publishing limits, retention & backups
+						Notificações, limites de publicação, retenção e backups
 					</p>
 				</div>
 			</div>
@@ -314,7 +374,7 @@ export default function SettingsPage() {
 					<div className="w-9 h-9 rounded-xl bg-ios-blue/10 flex items-center justify-center text-ios-blue">
 						<Bell size={18} />
 					</div>
-					<h3 className="text-[17px] font-bold text-ios-text">Notifications</h3>
+					<h3 className="text-[17px] font-bold text-ios-text">Notificações</h3>
 				</div>
 				<div className="space-y-4">
 					<div>
@@ -327,7 +387,7 @@ export default function SettingsPage() {
 									onClick={() => clearSensitive("TELEGRAM_BOT_TOKEN")}
 									className="text-[10px] text-ios-red flex items-center gap-1 hover:underline"
 								>
-									<Trash2 size={10} /> Clear ({botTokenState.masked})
+									<Trash2 size={10} /> Limpar ({botTokenState.masked})
 								</button>
 							)}
 						</div>
@@ -337,14 +397,14 @@ export default function SettingsPage() {
 							type="password"
 							placeholder={
 								botTokenState.set
-									? `Set — leave empty to keep (${botTokenState.masked})`
-									: "Paste bot token from @BotFather"
+									? `Definido — deixe vazio para manter (${botTokenState.masked})`
+									: "Cole o token do bot vindo do @BotFather"
 							}
 							className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
 						/>
 						<p className="text-[11px] text-ios-text-secondary mt-1">
-							Used to alert you when a post fails or the run finishes with
-							errors.
+							Usado para alertar você quando um post falha ou a execução
+							termina com erros.
 						</p>
 					</div>
 
@@ -353,7 +413,7 @@ export default function SettingsPage() {
 						value={chatId}
 						onChange={setChatId}
 						placeholder="e.g. 123456789 or @yourusername"
-						hint="Numeric ID or @username of the chat that receives alerts."
+						hint="ID numérico ou @username do chat que receberá os alertas."
 					/>
 
 					<div>
@@ -366,7 +426,7 @@ export default function SettingsPage() {
 									onClick={() => clearSensitive("NOTIFY_WEBHOOK_URL")}
 									className="text-[10px] text-ios-red flex items-center gap-1 hover:underline"
 								>
-									<Trash2 size={10} /> Clear ({webhookState.masked})
+									<Trash2 size={10} /> Limpar ({webhookState.masked})
 								</button>
 							)}
 						</div>
@@ -376,14 +436,14 @@ export default function SettingsPage() {
 							type="url"
 							placeholder={
 								webhookState.set
-									? `Set — leave empty to keep (${webhookState.masked})`
+									? `Definido — deixe vazio para manter (${webhookState.masked})`
 									: "https://hooks.example.com/..."
 							}
 							className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
 						/>
 						<p className="text-[11px] text-ios-text-secondary mt-1">
-							If set, receives POST JSON {"{text, ts}"} for every alert (used
-							when Telegram is not configured).
+							Se definido, recebe POST JSON {"{text, ts}"} de cada alerta
+							(usado quando o Telegram não está configurado).
 						</p>
 					</div>
 				</div>
@@ -395,15 +455,15 @@ export default function SettingsPage() {
 					<div className="w-9 h-9 rounded-xl bg-ios-green/10 flex items-center justify-center text-ios-green">
 						<Clock size={18} />
 					</div>
-					<h3 className="text-[17px] font-bold text-ios-text">Publishing</h3>
+					<h3 className="text-[17px] font-bold text-ios-text">Publicação</h3>
 				</div>
 				<Field
-					label="Min interval between posts (same channel, seconds)"
+					label="Intervalo mínimo entre posts (mesmo canal, segundos)"
 					value={minInterval}
 					onChange={setMinInterval}
 					type="number"
 					placeholder="e.g. 300"
-					hint="The cron skips a post if the channel published less than this many seconds ago. 0 or empty = no limit. Helps avoid Instagram rate limits (429)."
+					hint="O cron pula o post se o canal publicou há menos que este intervalo (em segundos). 0 ou vazio = sem limite. Ajuda a evitar limites de taxa (429)."
 				/>
 			</IOSCard>
 
@@ -414,25 +474,25 @@ export default function SettingsPage() {
 						<Database size={18} />
 					</div>
 					<h3 className="text-[17px] font-bold text-ios-text">
-						Data Retention
+						Retenção de dados
 					</h3>
 				</div>
 				<div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
 					<Field
-						label="Keep posts for (days)"
+						label="Manter posts por (dias)"
 						value={retPosts}
 						onChange={setRetPosts}
 						type="number"
 						placeholder="90"
-						hint="Published/failed/cancelled posts older than this are deleted by the daily maintenance job. Empty = default 90."
+						hint="Posts publicados/falhados/cancelados mais antigos que isso são excluídos pela manutenção diária. Vazio = padrão 90."
 					/>
 					<Field
-						label="Keep planner logs for (days)"
+						label="Manter logs de planners por (dias)"
 						value={retLogs}
 						onChange={setRetLogs}
 						type="number"
 						placeholder="30"
-						hint="Planner logs older than this are deleted. Empty = default 30."
+						hint="Logs de planners mais antigos que isso são excluídos. Vazio = padrão 30."
 					/>
 				</div>
 			</IOSCard>
@@ -456,22 +516,22 @@ export default function SettingsPage() {
 							size={14}
 							className={creatingBackup ? "animate-spin" : ""}
 						/>
-						Create now
+						Criar agora
 					</IOSButton>
 				</div>
 				<p className="text-[12px] text-ios-text-secondary mb-3">
-					Daily backups are stored in /app/data/backups (kept: 7 most recent).
-					Restoring replaces the current database and restarts the app.
+					Backups diários são gravados em /app/data/backups (mantidos os 7 mais
+					recentes). Restaurar substitui o banco atual e reinicia o app.
 				</p>
 				{loadingBackups ? (
 					<div className="flex justify-center py-6 text-ios-text-secondary">
-						<RefreshCw size={16} className="animate-spin mr-2" /> Loading
+						<RefreshCw size={16} className="animate-spin mr-2" /> Carregando
 						backups...
 					</div>
 				) : backups.length === 0 ? (
 					<div className="py-6 text-center text-ios-text-secondary text-sm">
 						<Database size={28} className="mx-auto mb-2 opacity-20" />
-						No backups yet — the daily job will create the first one.
+						Nenhum backup ainda — o job diário criará o primeiro.
 					</div>
 				) : (
 					<div className="divide-y divide-ios-separator rounded-xl border border-ios-separator overflow-hidden">
@@ -499,10 +559,84 @@ export default function SettingsPage() {
 									) : (
 										<RotateCcw size={12} />
 									)}
-									Restore
+									Restaurar
 								</button>
 							</div>
 						))}
+					</div>
+				)}
+			</IOSCard>
+
+			{/* ── Integração YouTube ── */}
+			<IOSCard className="p-5">
+				<div className="flex items-center justify-between mb-4">
+					<div className="flex items-center gap-2">
+						<div className="w-9 h-9 rounded-xl bg-ios-red/10 flex items-center justify-center text-ios-red">
+							<Youtube size={18} />
+						</div>
+						<h3 className="text-[17px] font-bold text-ios-text">Integração YouTube</h3>
+					</div>
+					<IOSButton
+						variant="secondary"
+						className="!py-2 !px-3 flex items-center gap-1"
+						onClick={loadYoutubeHealth}
+						disabled={ytLoading}
+					>
+						<RefreshCw size={14} className={ytLoading ? "animate-spin" : ""} />
+						Atualizar
+					</IOSButton>
+				</div>
+				{ytLoading ? (
+					<div className="flex justify-center py-6">
+						<div className="w-6 h-6 border-2 border-ios-blue border-t-transparent rounded-full animate-spin" />
+					</div>
+				) : !ytHealth ? (
+					<div className="py-4 text-center text-ios-text-secondary text-sm">
+						Não foi possível verificar o status da integração.
+					</div>
+				) : !ytHealth.configured ? (
+					<div className="space-y-2">
+						<p className="text-sm font-medium text-ios-orange flex items-center gap-1.5">
+							<XCircle size={15} /> Não configurada no servidor
+						</p>
+						<ul className="text-[12px] text-ios-text-secondary space-y-1 list-disc list-inside">
+							<li>YOUTUBE_API_BASE_URL: {ytHealth.base_url_configured ? "configurada ✓" : "ausente"}</li>
+							<li>YOUTUBE_API_KEY: {ytHealth.api_key_configured ? "configurada ✓" : "ausente"}</li>
+						</ul>
+						<p className="text-[11px] text-ios-text-secondary mt-1">
+							Defina as variáveis no .env do servidor e reinicie o app.
+						</p>
+					</div>
+				) : ytHealth.ok ? (
+					<div className="space-y-2">
+						<p className="text-sm font-medium text-ios-green flex items-center gap-1.5">
+							<CheckCircle2 size={15} /> API externa online
+						</p>
+						<div className="grid grid-cols-3 gap-2 text-center pt-1">
+							<div className="rounded-xl bg-ios-background border border-ios-separator p-2">
+								<p className="text-[17px] font-bold text-ios-text tabular-nums">{ytHealth.sessions_active ?? 0}</p>
+								<p className="text-[10px] text-ios-text-secondary uppercase tracking-wide">Sessões ativas</p>
+							</div>
+							<div className="rounded-xl bg-ios-background border border-ios-separator p-2">
+								<p className={`text-[17px] font-bold ${ytHealth.db_connected ? "text-ios-green" : "text-ios-red"}`}>
+									{ytHealth.db_connected ? "OK" : "Falha"}
+								</p>
+								<p className="text-[10px] text-ios-text-secondary uppercase tracking-wide">Banco remoto</p>
+							</div>
+							<div className="rounded-xl bg-ios-background border border-ios-separator p-2">
+								<p className="text-[13px] font-bold text-ios-text truncate" title={ytHealth.version}>{ytHealth.version || "—"}</p>
+								<p className="text-[10px] text-ios-text-secondary uppercase tracking-wide">Versão</p>
+							</div>
+						</div>
+					</div>
+				) : (
+					<div className="space-y-1">
+						<p className="text-sm font-medium text-ios-red flex items-center gap-1.5">
+							<XCircle size={15} /> API externa inacessível
+						</p>
+						<p className="text-[12px] text-ios-text-secondary">
+							{ytHealth.error || "A API respondeu com erro — verifique YOUTUBE_API_BASE_URL."}
+						</p>
 					</div>
 				)}
 			</IOSCard>
@@ -520,7 +654,7 @@ export default function SettingsPage() {
 					) : (
 						<Save size={16} />
 					)}
-					Save Settings
+					Salvar configurações
 				</IOSButton>
 			</div>
 		</div>

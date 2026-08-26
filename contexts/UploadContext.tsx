@@ -233,14 +233,14 @@ function isImageFile(file: File): boolean {
 
 function validateFile(file: File): { ok: boolean; error?: string } {
 	if (file.size < 1) {
-		return { ok: false, error: "File is empty" };
+		return { ok: false, error: "Arquivo vazio" };
 	}
 	if (file.size > MAX_FILE_SIZE) {
-		return { ok: false, error: "File too large (max 1GB)" };
+		return { ok: false, error: "Arquivo muito grande (máx. 1 GB)" };
 	}
 	const ext = getFileExtension(file.name);
 	if (!isVideoFile(file) && !isImageFile(file)) {
-		return { ok: false, error: `Unsupported file type: .${ext || "unknown"}` };
+		return { ok: false, error: `Tipo de arquivo não suportado: .${ext || "desconhecido"}` };
 	}
 	return { ok: true };
 }
@@ -586,7 +586,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 				prev.map((t) => (t.id === taskId ? { ...t, status: "canceled" } : t)),
 			);
 
-			resolveWaiter(taskId, { name: task?.name || "", error: "Canceled" });
+			resolveWaiter(taskId, { name: task?.name || "", error: "Cancelado" });
 
 			setActiveUploads((prev) => {
 				const next = new Set(prev);
@@ -813,7 +813,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 							}
 							// Stall (timeout or freeze-monitor abort) → transient error,
 							// the retry path resumes from the status endpoint.
-							throw new Error("Connection stalled during chunk upload");
+							throw new Error("Conexão instável durante o envio do arquivo");
 						}
 						throw new Error(
 							`Chunk ${currentChunk} upload failed. ${(chunkError as Error)?.message || ""}`,
@@ -884,8 +884,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 										? ("error" as UploadStatus)
 										: ("frozen" as UploadStatus),
 									errorMessage: isFailed
-										? `Upload failed: ${err.message || "Unknown error"}`
-										: `Upload stalled. Retrying… ${err.message || ""}`,
+										? `Falha no upload: ${err.message || "erro desconhecido"}`
+										: `Upload travado. Tentando novamente… ${err.message || ""}`,
 								}
 							: t,
 					),
@@ -896,7 +896,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 				} else {
 					resolveWaiter(task.id, {
 						name: task.name,
-						error: err.message || "Upload failed",
+						error: err.message || "Falha no upload",
 					});
 				}
 			} finally {
@@ -971,8 +971,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 										? ("error" as UploadStatus)
 										: ("frozen" as UploadStatus),
 									errorMessage: isFailed
-										? "Upload failed after multiple retries."
-										: "Connection stalled. Retrying…",
+										? "Falha no upload após várias tentativas."
+										: "Conexão instável. Tentando novamente…",
 								}
 							: t,
 					);
@@ -999,7 +999,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 				} else {
 					resolveWaiter(taskId, {
 						name: task.name,
-						error: "Upload failed after multiple retries.",
+						error: "Falha no upload após várias tentativas.",
 					});
 				}
 			}

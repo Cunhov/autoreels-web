@@ -25,13 +25,13 @@ export default function CalendarHeader({
     onFilterToggle,
     filterActive,
 }: CalendarHeaderProps) {
-    const monthName = currentDate.toLocaleString('default', { month: 'long' });
+    const monthName = currentDate.toLocaleString('pt-BR', { month: 'long' });
     const year = currentDate.getFullYear();
 
     return (
         <header className="px-6 py-4 sticky top-0 z-20 bg-ios-background/90 backdrop-blur-xl border-b border-ios-separator/50 transition-all duration-300">
             <div className="flex items-center justify-between mb-4">
-                <h1 className="text-[34px] font-bold text-ios-text tracking-tight">Calendar</h1>
+                <h1 className="text-[34px] font-bold text-ios-text tracking-tight">Calendário</h1>
                 <div className="flex gap-3">
                     <button
                         aria-label="Toggle filters"
@@ -47,7 +47,7 @@ export default function CalendarHeader({
                         onClick={onNewPost}
                     >
                         <Plus size={20} className="inline mr-1.5" />
-                        Schedule Post
+                        Agendar post
                     </IOSButton>
                 </div>
             </div>
@@ -61,7 +61,7 @@ export default function CalendarHeader({
                             : 'text-ios-text-secondary hover:text-ios-text'
                             }`}
                     >
-                        Week
+                        Semana
                     </button>
                     <button
                         onClick={() => onViewChange('month')}
@@ -70,7 +70,7 @@ export default function CalendarHeader({
                             : 'text-ios-text-secondary hover:text-ios-text'
                             }`}
                     >
-                        Month
+                        Mês
                     </button>
                 </div>
 
@@ -80,7 +80,7 @@ export default function CalendarHeader({
                         onClick={onToday}
                         className="text-xs font-semibold text-ios-blue bg-ios-blue/10 hover:bg-ios-blue/20 rounded-full px-3 py-1.5 transition-colors active:scale-95"
                     >
-                        Today
+                        Hoje
                     </button>
                     <div className="flex items-center gap-1">
                         <button

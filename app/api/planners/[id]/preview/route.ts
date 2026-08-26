@@ -197,6 +197,7 @@ export async function GET(
         id: channel.id,
         name: channel.name,
         status: channel.status,
+        platform: channel.platform,
         account_id: channel.account_id,
         username: channel.username,
         token_source: channel.token_source,

@@ -73,6 +73,7 @@ export default function EditContentModal({
 	const [trimEnd, setTrimEnd] = useState(0);
 	const [videoBusy, setVideoBusy] = useState(false);
 	const [videoMsg, setVideoMsg] = useState<string | null>(null);
+	const [saveError, setSaveError] = useState<string | null>(null);
 	const [videoMsgType, setVideoMsgType] = useState<"success" | "error">(
 		"success",
 	);
@@ -105,7 +106,8 @@ export default function EditContentModal({
 				setTrimStart(0);
 				setTrimEnd(item.duration || 0);
 			}
-			setVideoMsg(null);
+				setVideoMsg(null);
+			setSaveError(null);
 		}
 	}, [isOpen, itemsToEdit, isBulk]);
 
@@ -125,6 +127,12 @@ export default function EditContentModal({
 	};
 
 	const handleSave = async () => {
+		// Validação client: nome vazio no modo individual seria rejeitado pelo
+		// servidor (400 "Invalid name") — mostrar erro inline antes de salvar.
+		if (!isBulk && !name.trim()) {
+			setSaveError("Informe um nome para o item.");
+			return;
+		}
 		setLoading(true);
 		try {
 			const updates: Record<string, unknown> = {};
@@ -167,7 +175,7 @@ export default function EditContentModal({
 				const first = await failed[0].json().catch(() => ({}));
 				throw new Error(
 					(first as { error?: string })?.error ||
-						`Failed to update ${failed.length} of ${ids.length} items`,
+						`Falha ao atualizar ${failed.length} de ${ids.length} itens`,
 				);
 			}
 
@@ -175,7 +183,12 @@ export default function EditContentModal({
 			onClose();
 		} catch (error) {
 			console.error("Error updating items:", error);
-			alert("Failed to update items");
+			// Erro inline com a mensagem específica do servidor (ex.: "Invalid name")
+			setSaveError(
+				error instanceof Error && error.message
+					? error.message
+					: "Falha ao salvar as alterações.",
+			);
 		} finally {
 			setLoading(false);
 		}
@@ -206,7 +219,7 @@ export default function EditContentModal({
 			});
 			const data = await res.json().catch(() => ({}));
 			if (!res.ok) {
-				throw new Error(data?.error || "Failed to extract thumbnail");
+				throw new Error(data?.error || "Falha ao extrair a capa");
 			}
 			setVideoMessage("Capa atualizada com sucesso");
 			onEditComplete(); // refresh the library so the new thumbnail shows
@@ -253,7 +266,7 @@ export default function EditContentModal({
 			});
 			const data = await res.json().catch(() => ({}));
 			if (!res.ok) {
-				throw new Error(data?.error || "Failed to trim video");
+				throw new Error(data?.error || "Falha ao cortar o vídeo");
 			}
 			setVideoMessage(
 				`Corte criado na biblioteca (${formatSeconds(trimEnd - trimStart)})`,
@@ -279,7 +292,7 @@ export default function EditContentModal({
 				<div className="px-5 py-4 border-b border-gray-100 dark:border-white/10 flex items-center justify-between bg-white/50 dark:bg-white/5 backdrop-blur-md">
 					<div>
 						<h2 className="text-[17px] font-semibold text-gray-900 dark:text-white">
-							{isBulk ? `Edit ${itemsToEdit.length} Items` : "Edit Item"}
+							{isBulk ? `Editar ${itemsToEdit.length} itens` : "Editar item"}
 						</h2>
 					</div>
 					<button
@@ -295,23 +308,23 @@ export default function EditContentModal({
 					{!isBulk && (
 						<div>
 							<label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
-								Name
+								Nome
 							</label>
 							<input
 								type="text"
 								value={name}
 								onChange={(e) => setName(e.target.value)}
 								className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
-								placeholder="Item name"
+								placeholder="Nome do item"
 							/>
 						</div>
 					)}
 
 					<div>
 						<label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
-							Title{" "}
+							Título{" "}
 							<span className="text-gray-400 lowercase font-normal">
-								(optional)
+								(opcional)
 							</span>
 						</label>
 						<input
@@ -320,16 +333,16 @@ export default function EditContentModal({
 							onChange={(e) => setTitle(e.target.value)}
 							className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none transition-all"
 							placeholder={
-								isBulk ? "Leave empty to keep existing" : "Post Title"
+								isBulk ? "Deixe vazio para manter o atual" : "Título do post"
 							}
 						/>
 					</div>
 
 					<div>
 						<label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
-							Caption{" "}
+							Legenda{" "}
 							<span className="text-gray-400 lowercase font-normal">
-								(optional)
+								(opcional)
 							</span>
 						</label>
 						<textarea
@@ -338,7 +351,7 @@ export default function EditContentModal({
 							rows={4}
 							className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none transition-all"
 							placeholder={
-								isBulk ? "Leave empty to keep existing" : "Write a caption..."
+								isBulk ? "Deixe vazio para manter a atual" : "Escreva uma legenda..."
 							}
 						/>
 					</div>
@@ -369,7 +382,7 @@ export default function EditContentModal({
 								onKeyDown={handleAddTag}
 								className="bg-transparent border-none outline-none flex-1 min-w-[100px] text-[15px] text-gray-900 dark:text-white placeholder-gray-400"
 								placeholder={
-									tags.length === 0 ? "Add tags (press Enter)..." : ""
+									tags.length === 0 ? "Adicionar tags (pressione Enter)..." : ""
 								}
 							/>
 						</div>
@@ -381,7 +394,7 @@ export default function EditContentModal({
 							<div className="flex items-center gap-2">
 								<VideoIcon size={16} className="text-blue-500" />
 								<h3 className="text-[13px] font-semibold text-gray-900 dark:text-white uppercase tracking-wide">
-									Video
+									Vídeo
 								</h3>
 								{videoDuration > 0 && (
 									<span className="text-[11px] text-gray-500 dark:text-gray-400 ml-auto">
@@ -496,14 +509,18 @@ export default function EditContentModal({
 				</div>
 
 				{/* Footer */}
-				<div className="p-4 border-t border-gray-100 dark:border-white/10 bg-gray-50 dark:bg-white/5 flex gap-3">
+				<div className="p-4 border-t border-gray-100 dark:border-white/10 bg-gray-50 dark:bg-white/5 space-y-2">
+					{saveError && (
+						<p className="text-[12px] font-medium text-red-500 dark:text-red-400 text-center">{saveError}</p>
+					)}
+					<div className="flex gap-3">
 					<IOSButton
 						variant="secondary"
 						onClick={onClose}
 						className="flex-1 justify-center"
 						disabled={loading}
 					>
-						Cancel
+						Cancelar
 					</IOSButton>
 					<IOSButton
 						variant="primary"
@@ -511,8 +528,9 @@ export default function EditContentModal({
 						className="flex-1 justify-center"
 						disabled={loading}
 					>
-						{loading ? "Saving..." : "Save Changes"}
+						{loading ? "Salvando..." : "Salvar alterações"}
 					</IOSButton>
+					</div>
 				</div>
 			</div>
 		</div>

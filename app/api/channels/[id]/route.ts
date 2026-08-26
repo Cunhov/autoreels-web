@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { fetchInstagramProfile, refreshInstagramToken } from "@/lib/instagram";
+import { deleteSession, getYoutubeSessionId } from "@/lib/youtube";
 
 const channelSelect = {
     id: true,
@@ -71,6 +72,23 @@ export async function PATCH(
     }
 
     try {
+        // Canais YouTube não suportam edição direta: name/account_id/status são
+        // derivados da sessão remota e o account_id é a chave dos checks de
+        // posse/conflito — editar via PATCH poderia dessincronizá-los.
+        const existing = await prisma.channel.findFirst({
+            where: { id, user_id: userId },
+            select: { platform: true },
+        });
+        if (!existing) {
+            return NextResponse.json({ error: "Channel not found" }, { status: 404 });
+        }
+        if (existing.platform === "youtube") {
+            return NextResponse.json(
+                { error: "Canais YouTube não suportam edição direta — desconecte o canal e reconecte com cookies atualizados." },
+                { status: 400 },
+            );
+        }
+
         const data = await req.json();
         const updateData: Record<string, unknown> = {
             name: data.name,
@@ -125,6 +143,27 @@ export async function DELETE(
     }
 
     try {
+        // Canal YouTube: opção "excluir também a sessão na API externa"
+        // (?deleteRemoteSession=true, default false). Best-effort — a exclusão
+        // local do canal nunca depende da API externa responder.
+        // Mesmo sem excluir a sessão remota, ela NÃO fica exposta a outros
+        // usuários: o criador registrado em YoutubeSession persiste após a
+        // exclusão do canal (tombstone) e continua filtrando a listagem e
+        // bloqueando a vinculação por terceiros.
+        const url = new URL(req.url);
+        if (url.searchParams.get("deleteRemoteSession") === "true") {
+            const channel = await prisma.channel.findFirst({ where: { id, user_id: userId } });
+            const sessionId = channel?.platform === "youtube" ? getYoutubeSessionId(channel.settings) : "";
+            if (sessionId) {
+                await deleteSession(sessionId).catch((err: unknown) => {
+                    console.warn(
+                        `[Channels] Falha ao excluir sessão remota do YouTube ${sessionId.slice(0, 8)}…:`,
+                        err instanceof Error ? err.message : err,
+                    );
+                });
+            }
+        }
+
         await prisma.channel.delete({
             where: {
                 id,

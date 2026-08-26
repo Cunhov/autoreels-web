@@ -1,7 +1,7 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Calendar, BarChart2, Radio, Sliders, Folder, X, ArrowRight, Clock } from 'lucide-react';
+import { Search, Calendar, BarChart2, Radio, Sliders, Folder, X, ArrowRight, Clock, Youtube } from 'lucide-react';
 
 interface SearchResult {
     id: string;
@@ -13,11 +13,12 @@ interface SearchResult {
 }
 
 const STATIC_PAGES: SearchResult[] = [
-    { id: 'page-calendar', type: 'page', label: 'Calendar', sublabel: 'View scheduled posts', href: '/', icon: Calendar },
-    { id: 'page-analytics', type: 'page', label: 'Analytics', sublabel: 'Stats & insights', href: '/analytics', icon: BarChart2 },
-    { id: 'page-channels', type: 'page', label: 'Channels', sublabel: 'Instagram accounts', href: '/channels', icon: Radio },
-    { id: 'page-planners', type: 'page', label: 'Planners', sublabel: 'Automation rules', href: '/planners', icon: Sliders },
-    { id: 'page-library', type: 'page', label: 'Library', sublabel: 'Media files', href: '/content', icon: Folder },
+    { id: 'page-calendar', type: 'page', label: 'Calendário', sublabel: 'Ver posts agendados', href: '/', icon: Calendar },
+    { id: 'page-analytics', type: 'page', label: 'Analytics', sublabel: 'Estatísticas e métricas', href: '/analytics', icon: BarChart2 },
+    { id: 'page-channels', type: 'page', label: 'Canais', sublabel: 'Contas Instagram e YouTube', href: '/channels', icon: Radio },
+    { id: 'page-youtube-comments', type: 'page', label: 'Comentários do YouTube', sublabel: 'Gerenciar comentários de Shorts', href: '/youtube/comments', icon: Youtube },
+    { id: 'page-planners', type: 'page', label: 'Planners', sublabel: 'Regras de automação', href: '/planners', icon: Sliders },
+    { id: 'page-library', type: 'page', label: 'Biblioteca', sublabel: 'Arquivos de mídia', href: '/content', icon: Folder },
 ];
 
 interface CommandPaletteProps {

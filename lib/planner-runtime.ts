@@ -19,6 +19,7 @@ import {
 	type Planner,
 	type Post,
 } from "@prisma/client";
+import { getYoutubeSessionId } from "./youtube";
 import {
 	getPlannerIntervalMs,
 	getPlannerTimezone,
@@ -62,11 +63,13 @@ type PlannerConfig = Record<string, any>;
 type ChannelLike = {
 	id: string;
 	name?: string | null;
+	platform?: string | null;
 	status?: string | null;
 	access_token?: string | null;
 	token_source?: string | null;
 	token_expires_at?: Date | string | null;
 	token_refreshed_at?: Date | string | null;
+	settings?: string | null;
 };
 
 type PrismaLike = {
@@ -156,16 +159,25 @@ export function getChannelHealth(channel: ChannelLike, now = new Date()) {
 	const issues: string[] = [];
 	const warnings: string[] = [];
 	const hasToken = Boolean(channel.access_token);
+	// Canais YouTube não usam access_token do Instagram — a autenticação vive
+	// na sessão remota da API externa (Channel.settings.sessionId).
+	const isYoutube = (channel.platform || "").toLowerCase() === "youtube";
 
 	if ((channel.status || "").toLowerCase() !== "active") {
 		issues.push("inactive");
 	}
 
-	if (!hasToken) {
+	if (!hasToken && !isYoutube) {
 		issues.push("missing_token");
 	}
 
-	if (channel.token_source !== "redis" && channel.token_expires_at) {
+	// Canal YouTube ativo sem sessionId em settings cria posts que falham
+	// sempre no publisher — sinalizar como issue, não como "Ready".
+	if (isYoutube && !getYoutubeSessionId(channel.settings)) {
+		issues.push("missing_session");
+	}
+
+	if (!isYoutube && channel.token_source !== "redis" && channel.token_expires_at) {
 		const expiresAt = new Date(channel.token_expires_at);
 		const daysLeft =
 			(expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
@@ -173,7 +185,7 @@ export function getChannelHealth(channel: ChannelLike, now = new Date()) {
 		else if (daysLeft < 14) warnings.push("expiring_soon");
 	}
 
-	if (channel.token_source === "redis") {
+	if (!isYoutube && channel.token_source === "redis") {
 		warnings.push("legacy_redis_token");
 	}
 
@@ -187,23 +199,25 @@ export function getChannelHealth(channel: ChannelLike, now = new Date()) {
 
 export function describeChannelHealth(channel: ChannelLike, now = new Date()) {
 	const health = getChannelHealth(channel, now);
+	// Rótulos PT-BR: exibidos no preview/modal dos planners.
 	const readableIssues: Record<string, string> = {
-		inactive: "Channel is paused",
-		missing_token: "Token missing",
-		expired: "Token expired",
+		inactive: "Canal pausado",
+		missing_token: "Token ausente",
+		expired: "Token expirado",
+		missing_session: "Sessão do YouTube não vinculada",
 	};
 	const readableWarnings: Record<string, string> = {
-		expiring_soon: "Token expiring soon",
-		legacy_redis_token: "Legacy Redis token",
+		expiring_soon: "Token expirando em breve",
+		legacy_redis_token: "Token Redis legado",
 	};
 
 	return {
 		...health,
 		label: health.ok
 			? health.warnings.includes("expiring_soon")
-				? "Token expiring"
-				: "Ready"
-			: "Blocked",
+				? "Token expirando"
+				: "Pronto"
+			: "Bloqueado",
 		issues: health.issues.map((item) => readableIssues[item] || item),
 		warnings: health.warnings.map((item) => readableWarnings[item] || item),
 	};
@@ -364,7 +378,7 @@ async function applyCaptionTemplate(opts: {
 export async function buildPostData(opts: {
 	prisma: PrismaLike;
 	planner: { user_id: string; id: string };
-	channel: { id: string; name?: string | null };
+	channel: { id: string; name?: string | null; platform?: string | null };
 	runtime: Awaited<ReturnType<typeof resolvePlannerRuntime>>;
 	config: PlannerConfig;
 	now: Date;
@@ -389,11 +403,42 @@ export async function buildPostData(opts: {
 		postOrdinal: opts.postOrdinal,
 	});
 
+	const isYtChannel =
+		(opts.channel.platform || "").toLowerCase() === "youtube";
+	const ytTypeForPost =
+		isYtChannel && (runtime.mediaType === "IMAGE" || runtime.mediaType === "CAROUSEL")
+			? "community"
+			: isYtChannel
+				? "short"
+				: null;
+
+	// Short de planner SEM youtube_options falhava no publisher ("exige título")
+	// quando a caption resolvia vazia. Grava o título explícito usando a mesma
+	// cadeia de fallbacks (título do item → title_fallback → caption resolvida).
+	let youtubeOptions: string | null = null;
+	if (ytTypeForPost === "short") {
+		const selected = runtime.selectedContent as PlannerContentItem | null | undefined;
+		const titleCandidate = [
+			selected?.title || "",
+			selected?.title_fallback || "",
+			caption || "",
+		]
+			.map((t) => t.trim())
+			.find(Boolean);
+		if (titleCandidate) {
+			youtubeOptions = JSON.stringify({ title: titleCandidate.slice(0, 100) });
+		}
+	}
+
 	return {
 		user_id: opts.planner.user_id,
 		channel_id: opts.channel.id,
 		status: "pending",
 		media_type: runtime.mediaType,
+		// YouTube é plataforma de primeira classe: vídeo → Short, imagem/carrossel
+		// → Post na Comunidade (o publisher usa youtube_type para escolher o caminho).
+		youtube_type: ytTypeForPost,
+		youtube_options: youtubeOptions,
 		video_url:
 			runtime.mediaType === "REELS" || isVideoStory ? runtime.mediaUrl : null,
 		image_url:
@@ -517,7 +562,7 @@ export async function resolvePlannerRuntime(
 					.slice(0, 10);
 
 				if (subItems.length > 10) {
-					warnings.push("Carousel limited to 10 items for Instagram");
+					warnings.push("Carrossel limitado a 10 itens");
 				}
 				if (!thumbnailUrl && children.length > 0) {
 					thumbnailUrl = children[0].url;

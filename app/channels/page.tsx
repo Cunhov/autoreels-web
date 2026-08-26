@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
     Plus, Search, Instagram, Pencil, Trash2,
-    CheckCircle2, XCircle, AlertTriangle, RefreshCw, Wifi, WifiOff, Copy, KeyRound
+    CheckCircle2, XCircle, AlertTriangle, RefreshCw, Wifi, WifiOff, Copy, KeyRound, Youtube
 } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import IOSCard from '@/components/IOSComponents';
@@ -48,6 +48,15 @@ const healthConfig = {
     unknown: { label: 'Check token', color: 'text-ios-text-secondary', bg: 'bg-ios-gray-5', icon: AlertTriangle },
 };
 
+/** Status da sessão remota do YouTube, resolvido via /api/youtube/sessions. */
+type YtSessionStatus = 'active' | 'expired' | 'unknown';
+
+const ytSessionConfig: Record<YtSessionStatus, { label: string; color: string; bg: string; icon: typeof CheckCircle2 }> = {
+    active: { label: 'Sessão ativa', color: 'text-ios-green', bg: 'bg-ios-green/10', icon: CheckCircle2 },
+    expired: { label: 'Sessão expirada', color: 'text-ios-red', bg: 'bg-ios-red/10', icon: XCircle },
+    unknown: { label: 'Sessão?', color: 'text-ios-text-secondary', bg: 'bg-ios-gray-5', icon: AlertTriangle },
+};
+
 export default function ChannelsPage() {
     const [channels, setChannels] = useState<Channel[]>([]);
     const [posts, setPosts] = useState<PostData[]>([]);
@@ -59,6 +68,11 @@ export default function ChannelsPage() {
     const [refreshingId, setRefreshingId] = useState<string | null>(null);
     const [testResult, setTestResult] = useState<Record<string, 'ok' | 'err'>>({});
     const [deletingId, setDeletingId] = useState<string | null>(null);
+    const [deleteRemoteSession, setDeleteRemoteSession] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+    // Sessões remotas do YouTube (status por channel_id da API externa)
+    const [ytSessionStatus, setYtSessionStatus] = useState<Record<string, YtSessionStatus>>({});
+    const [refreshingYtId, setRefreshingYtId] = useState<string | null>(null);
     const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null);
     const searchParams = useSearchParams();
     const router = useRouter();
@@ -69,6 +83,29 @@ export default function ChannelsPage() {
     };
 
     useEffect(() => { fetchData(); }, []);
+
+    // Status das sessões YouTube (para o badge no card). Casado por account_id
+    // (channel_id retornado pela API externa) — o sessionId nunca sai do servidor.
+    useEffect(() => {
+        if (!channels.some((c) => c.platform === 'youtube')) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const res = await fetch('/api/youtube/sessions');
+                if (!res.ok) return;
+                const data = await res.json();
+                const map: Record<string, YtSessionStatus> = {};
+                for (const s of (data.sessions || []) as { channel_id: string | null; status: string }[]) {
+                    if (!s.channel_id) continue;
+                    const status = (s.status || '').toLowerCase() === 'active' ? 'active'
+                        : (s.status || '').toLowerCase() === 'expired' ? 'expired' : 'unknown';
+                    if (!(s.channel_id in map) || status === 'active') map[s.channel_id] = status as YtSessionStatus;
+                }
+                if (!cancelled) setYtSessionStatus(map);
+            } catch { /* badge fica 'unknown' */ }
+        })();
+        return () => { cancelled = true; };
+    }, [channels]);
 
     useEffect(() => {
         const connect = searchParams.get('connect');
@@ -118,13 +155,37 @@ export default function ChannelsPage() {
     }
 
     async function confirmDelete() {
-        if (!deletingId) return;
+        if (!deletingId || deleting) return;
+        setDeleting(true);
         try {
-            const res = await fetch(`/api/channels/${deletingId}`, { method: 'DELETE' });
+            const deletingChannel = channels.find((c) => c.id === deletingId);
+            const isYt = deletingChannel?.platform === 'youtube';
+            const res = await fetch(
+                `/api/channels/${deletingId}${isYt && deleteRemoteSession ? '?deleteRemoteSession=true' : ''}`,
+                { method: 'DELETE' },
+            );
             if (!res.ok) throw new Error();
             setDeletingId(null);
+            setDeleteRemoteSession(false);
             fetchData();
-        } catch { showToast('Failed to delete channel', 'err'); setDeletingId(null); }
+        } catch { showToast('Falha ao excluir o canal', 'err'); }
+        finally { setDeleting(false); }
+    }
+
+    /** Atualiza a sessão remota do YouTube (refresh de cookies/tokens). */
+    async function refreshYoutubeSession(channel: Channel) {
+        setRefreshingYtId(channel.id);
+        try {
+            const res = await fetch(`/api/channels/${channel.id}/youtube/refresh`, { method: 'POST' });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Falha ao atualizar sessão');
+            showToast(`${channel.name} — sessão atualizada`);
+            fetchData();
+        } catch (err: unknown) {
+            showToast(err instanceof Error ? err.message : 'Falha ao atualizar sessão', 'err');
+        } finally {
+            setRefreshingYtId(null);
+        }
     }
 
     async function refreshToken(channel: Channel) {
@@ -169,12 +230,12 @@ export default function ChannelsPage() {
             {/* Header */}
             <div className="flex items-start justify-between">
                 <div>
-                    <h1 className="text-[34px] font-bold text-ios-text">Channels</h1>
-                    <p className="text-ios-text-secondary text-sm">{channels.length} Instagram account{channels.length !== 1 ? 's' : ''} connected</p>
+                    <h1 className="text-[34px] font-bold text-ios-text">Canais</h1>
+                    <p className="text-ios-text-secondary text-sm">{channels.length} canal{channels.length !== 1 ? 'is' : ''} conectado{channels.length !== 1 ? 's' : ''}</p>
                 </div>
                 <IOSButton variant="primary" className="!py-2 !px-4 flex items-center gap-1" onClick={() => { setEditingChannel(undefined); setIsModalOpen(true); }}>
                     <Plus size={18} />
-                    Add Channel
+                    Adicionar canal
                 </IOSButton>
             </div>
 
@@ -183,7 +244,7 @@ export default function ChannelsPage() {
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-ios-text-secondary" size={16} />
                 <input
                     type="text"
-                    placeholder="Search channels…"
+                    placeholder="Buscar canais…"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                     className="w-full bg-ios-card border border-ios-separator rounded-xl py-2.5 pl-9 pr-4 text-[15px] focus:outline-none focus:ring-1 focus:ring-ios-blue transition-all"
@@ -198,9 +259,9 @@ export default function ChannelsPage() {
             ) : filtered.length === 0 ? (
                 <IOSCard className="p-12 text-center text-ios-text-secondary">
                     <Instagram size={48} className="mx-auto mb-4 opacity-30" strokeWidth={1} />
-                    <h3 className="text-xl font-semibold mb-2 text-ios-text">No channels</h3>
-                    <p className="max-w-xs mx-auto mb-6">Connect your Instagram accounts to start scheduling content.</p>
-                    <IOSButton variant="primary" onClick={() => setIsModalOpen(true)}>Connect Account</IOSButton>
+                    <h3 className="text-xl font-semibold mb-2 text-ios-text">Nenhum canal</h3>
+                    <p className="max-w-xs mx-auto mb-6">Conecte suas contas do Instagram ou YouTube para começar a agendar conteúdo.</p>
+                    <IOSButton variant="primary" onClick={() => setIsModalOpen(true)}>Conectar conta</IOSButton>
                 </IOSCard>
             ) : (
                 <div className="space-y-3">
@@ -211,6 +272,62 @@ export default function ChannelsPage() {
                         const stats = channelPostStats[channel.id] ?? { published: 0, failed: 0, total: 0 };
                         const tested = testResult[channel.id];
                         const isTesting = testingId === channel.id;
+
+                        // ── Canal YouTube: card próprio (badge de sessão + refresh) ──
+                        if (channel.platform === 'youtube') {
+                            const sConf = ytSessionConfig[ytSessionStatus[channel.account_id] ?? 'unknown'];
+                            const SIcon = sConf.icon;
+                            return (
+                                <IOSCard key={channel.id} className="p-4 group">
+                                    <div className="flex items-center gap-4">
+                                        {channel.profile_picture_url ? (
+                                            // eslint-disable-next-line @next/next/no-img-element -- mesmo padrão do card Instagram (URL externa)
+                                            <img src={channel.profile_picture_url} alt={channel.name} className="w-12 h-12 rounded-full object-cover border border-ios-separator flex-shrink-0" />
+                                        ) : (
+                                            <div className="w-12 h-12 rounded-full bg-ios-red/10 flex items-center justify-center flex-shrink-0">
+                                                <Youtube size={24} className="text-ios-red" />
+                                            </div>
+                                        )}
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <h4 className="font-semibold text-[16px] text-ios-text">{channel.name}</h4>
+                                                <span className={`flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${sConf.bg} ${sConf.color}`}>
+                                                    <SIcon size={10} />
+                                                    {sConf.label}
+                                                </span>
+                                            </div>
+                                            <p className="text-[12px] text-ios-text-secondary font-mono mt-0.5 truncate">
+                                                {channel.username ? `${channel.username} · ` : ''}ID: {channel.account_id}
+                                            </p>
+                                            {stats.total > 0 && (
+                                                <div className="flex gap-3 mt-1.5 text-[11px]">
+                                                    <span className="text-ios-green font-semibold">✓ {stats.published}</span>
+                                                    {stats.failed > 0 && <span className="text-ios-red font-semibold">✗ {stats.failed}</span>}
+                                                    <span className="text-ios-text-secondary">{stats.total} total</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="flex gap-1.5 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity flex-shrink-0">
+                                            <button
+                                                onClick={() => refreshYoutubeSession(channel)}
+                                                disabled={refreshingYtId === channel.id}
+                                                title="Atualizar sessão"
+                                                className="p-2 rounded-lg text-ios-green hover:bg-ios-green/10 transition-colors disabled:opacity-40"
+                                            >
+                                                <RefreshCw size={16} className={refreshingYtId === channel.id ? 'animate-spin' : ''} />
+                                            </button>
+                                            <button
+                                                onClick={() => setDeletingId(channel.id)}
+                                                title="Desconectar"
+                                                className="p-2 rounded-lg text-ios-red hover:bg-ios-red/10 transition-colors"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </IOSCard>
+                            );
+                        }
 
                         return (
                             <IOSCard key={channel.id} className="p-4 group">
@@ -322,12 +439,27 @@ export default function ChannelsPage() {
                             <div className="w-12 h-12 rounded-full bg-ios-red/15 flex items-center justify-center mx-auto mb-4">
                                 <Trash2 size={22} className="text-ios-red" />
                             </div>
-                            <h3 className="text-[17px] font-bold text-ios-text mb-1">Remove Channel?</h3>
-                            <p className="text-[14px] text-ios-text-secondary">This will remove the channel and all associated posts from your planners.</p>
+                            <h3 className="text-[17px] font-bold text-ios-text mb-1">Remover canal?</h3>
+                            <p className="text-[14px] text-ios-text-secondary">O canal e todos os posts associados serão removidos dos seus planners.</p>
+                            {(() => {
+                                const deleting = channels.find((c) => c.id === deletingId);
+                                if (deleting?.platform !== 'youtube') return null;
+                                return (
+                                    <label className="mt-4 mx-auto flex items-center gap-2 text-[13px] text-ios-text-secondary cursor-pointer select-none">
+                                        <input
+                                            type="checkbox"
+                                            checked={deleteRemoteSession}
+                                            onChange={(e) => setDeleteRemoteSession(e.target.checked)}
+                                            className="w-4 h-4 accent-red-500"
+                                        />
+                                        Excluir também a sessão na API externa
+                                    </label>
+                                );
+                            })()}
                         </div>
                         <div className="border-t border-ios-separator flex">
-                            <button onClick={() => setDeletingId(null)} className="flex-1 py-3.5 text-[17px] text-ios-blue font-medium border-r border-ios-separator hover:bg-ios-gray-6 transition-colors">Cancel</button>
-                            <button onClick={confirmDelete} className="flex-1 py-3.5 text-[17px] text-ios-red font-semibold hover:bg-ios-red/10 transition-colors">Remove</button>
+                            <button onClick={() => { setDeletingId(null); setDeleteRemoteSession(false); }} disabled={deleting} className="flex-1 py-3.5 text-[17px] text-ios-blue font-medium border-r border-ios-separator hover:bg-ios-gray-6 transition-colors disabled:opacity-40">Cancelar</button>
+                            <button onClick={confirmDelete} disabled={deleting} className="flex-1 py-3.5 text-[17px] text-ios-red font-semibold hover:bg-ios-red/10 transition-colors disabled:opacity-40">{deleting ? 'Removendo…' : 'Remover'}</button>
                         </div>
                     </div>
                 </div>

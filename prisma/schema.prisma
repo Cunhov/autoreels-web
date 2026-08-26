@@ -185,6 +185,11 @@ model Post {
   attempts               Int       @default(0)   // publish attempts (retry/backoff)
   last_attempt_at        DateTime? // last time the cron tried to process this post
   container_created_at   DateTime? // when the IG container was created (3-min heuristic)
+  // YouTube
+  youtube_type           String?   // "short" | "community"
+  youtube_video_id       String?   // video id do Short publicado
+  youtube_post_id        String?   // remote_post_id do post da Comunidade (p/ exclusão)
+  youtube_options        String?   // JSON: opções do Short (title, description, privacy, made_for_kids, monetize_with_ads, category_id, pinned_comment_text)
   created_at             DateTime  @default(now())
 
   user    User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
@@ -201,6 +206,20 @@ model Post {
   @@index([status, created_at])
   @@index([planner_id, status])
   @@index([channel_id, status, published_at])
+  @@index([youtube_video_id])
+}
+
+// Registro de qual usuário do app criou cada sessão remota na API do
+// YouTube (POST /api/session via /api/youtube/connect ou vinculação via
+// /api/youtube/sessions/link). Impede que sessões "órfãs" (canal local
+// excluído sem excluir a sessão remota, ou falha pós-createSession) apareçam
+// na aba "Importar sessão" de outros usuários ou sejam vinculadas por eles.
+model YoutubeSession {
+  remote_id          String   @id
+  created_by_user_id String
+  created_at         DateTime @default(now())
+
+  @@map("youtube_sessions")
 }
 
 model PostMetric {

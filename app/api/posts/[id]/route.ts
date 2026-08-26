@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
+import { parseYoutubeOptions } from "@/lib/youtube-post-options";
 import { Prisma } from "@prisma/client";
 
 /**
@@ -14,6 +15,9 @@ import { Prisma } from "@prisma/client";
  *   { scheduled_at: "<ISO future>" }              → reschedule; reactivates failed/cancelled posts
  *   { scheduled_at: null, status: "pending" }     → clear schedule → due on next cron tick
  *   { status: "pending", scheduled_at: "<ISO>" }  → retry at a specific future time
+ *   { caption: "..." }                            → edit caption of a non-published post
+ *   { youtube_options: {...} | null }             → edit/clear YouTube options (title,
+ *                                                    privacy, etc.) of a non-published post
  *
  * A plain retry ({ status: "pending" } without scheduled_at) preserves the
  * existing scheduled_at — even when it is in the past (the cron treats past
@@ -49,6 +53,26 @@ export async function PATCH(
         const body = await req.json();
         const status = body.status as string | undefined;
         const rawScheduledAt = body.scheduled_at as string | null | undefined;
+        const rawCaption = body.caption as string | undefined;
+        // undefined = não enviado; null = limpar as opções do YouTube
+        const rawYoutubeOptions = body.youtube_options as
+            | string
+            | Record<string, unknown>
+            | null
+            | undefined;
+
+        if (rawCaption !== undefined && typeof rawCaption !== "string") {
+            return NextResponse.json({ error: "caption deve ser uma string" }, { status: 400 });
+        }
+        let youtubeOptions: string | null | undefined;
+        if (rawYoutubeOptions !== undefined) {
+            try {
+                youtubeOptions = parseYoutubeOptions(rawYoutubeOptions);
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : "youtube_options inválido";
+                return NextResponse.json({ error: message }, { status: 400 });
+            }
+        }
 
         if (status !== undefined && status !== "cancelled" && status !== "pending") {
             return NextResponse.json({ error: "Invalid status" }, { status: 400 });
@@ -56,7 +80,12 @@ export async function PATCH(
         if (rawScheduledAt !== undefined && rawScheduledAt !== null && typeof rawScheduledAt !== "string") {
             return NextResponse.json({ error: "scheduled_at must be an ISO string or null" }, { status: 400 });
         }
-        if (status === undefined && rawScheduledAt === undefined) {
+        if (
+            status === undefined &&
+            rawScheduledAt === undefined &&
+            rawCaption === undefined &&
+            rawYoutubeOptions === undefined
+        ) {
             return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
         }
 
@@ -105,6 +134,51 @@ export async function PATCH(
 
         // ── status transition ───────────────────────────────────────────────
         const data: Prisma.PostUpdateInput = {};
+
+        // Edição de conteúdo (posts ainda não publicados): corrige typos de
+        // título/descrição/comentário fixado sem cancelar e recriar o post.
+        if (rawCaption !== undefined) data.caption = rawCaption;
+        if (youtubeOptions !== undefined) data.youtube_options = youtubeOptions;
+
+        // ── Revalidação cruzada YouTube: a edição não pode deixar o post
+        // inválido até o cron falhar (Short sem título, Comunidade sem texto). ──
+        if (
+            post.youtube_type &&
+            (rawCaption !== undefined || rawYoutubeOptions !== undefined)
+        ) {
+            const finalCaption =
+                rawCaption !== undefined ? rawCaption : post.caption || "";
+            const rawOptions =
+                rawYoutubeOptions !== undefined
+                    ? rawYoutubeOptions
+                    : post.youtube_options;
+            let opts: { title?: unknown } = {};
+            if (rawOptions) {
+                try {
+                    opts = JSON.parse(String(rawOptions)) as { title?: unknown };
+                } catch {
+                    /* já normalizado acima — defensivo */
+                }
+            }
+            const optTitle = typeof opts.title === "string" ? opts.title.trim() : "";
+            if (post.youtube_type === "short") {
+                // Mesma resolução do publisher: options.title || caption.
+                const effectiveTitle = optTitle || finalCaption.trim();
+                if (!effectiveTitle) {
+                    return NextResponse.json(
+                        { error: "Short do YouTube exige um título (youtube_options.title ou caption)" },
+                        { status: 400 },
+                    );
+                }
+            } else if (post.youtube_type === "community") {
+                if (!finalCaption.trim()) {
+                    return NextResponse.json(
+                        { error: "Post na Comunidade exige texto (caption)" },
+                        { status: 400 },
+                    );
+                }
+            }
+        }
 
         if (status === "cancelled") {
             // Cancel wins over any schedule change (destructive action).

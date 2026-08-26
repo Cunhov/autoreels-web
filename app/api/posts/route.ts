@@ -4,6 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { Prisma } from "@prisma/client";
+import { parseYoutubeOptions, VALID_YOUTUBE_TYPES } from "@/lib/youtube-post-options";
 
 const VALID_MEDIA_TYPES = ["REELS", "IMAGE", "CAROUSEL", "STORIES", "VIDEO"];
 
@@ -13,6 +14,8 @@ const POST_ALLOWED_FIELDS = [
     "caption", "media_type", "video_url", "image_url", "thumbnail_url",
     "children_urls", "share_to_feed", "location_id", "collaborators",
     "audio_configuration", "user_tags", "scheduled_at", "channel_id", "planner_id",
+    // YouTube
+    "youtube_type", "youtube_options",
 ] as const;
 
 /** Validate a media URL: our own /api/file/ path or http(s). */
@@ -162,15 +165,36 @@ export async function POST(req: Request) {
             payload.scheduled_at = d;
         }
 
+        // ── Campos YouTube ──
+        if (payload.youtube_type !== undefined && payload.youtube_type !== null) {
+            const ytType = String(payload.youtube_type).toLowerCase();
+            if (!VALID_YOUTUBE_TYPES.includes(ytType)) {
+                return NextResponse.json({ error: "youtube_type inválido (use short ou community)" }, { status: 400 });
+            }
+            payload.youtube_type = ytType;
+        } else if (payload.youtube_type === null) {
+            payload.youtube_type = null;
+        }
+        if (payload.youtube_options !== undefined) {
+            try {
+                payload.youtube_options = parseYoutubeOptions(payload.youtube_options);
+            } catch (err: unknown) {
+                const message = err instanceof Error ? err.message : "youtube_options inválido";
+                return NextResponse.json({ error: message }, { status: 400 });
+            }
+        }
+
         // Validate channel ownership (prevents posting on another user's channel)
+        let targetPlatform: string | null = null;
         if (payload.channel_id) {
             const channel = await prisma.channel.findFirst({
                 where: { id: String(payload.channel_id), user_id: userId },
-                select: { id: true },
+                select: { id: true, platform: true },
             });
             if (!channel) {
                 return NextResponse.json({ error: "Invalid channel" }, { status: 400 });
             }
+            targetPlatform = channel.platform;
         }
 
         // Validate planner ownership
@@ -181,6 +205,82 @@ export async function POST(req: Request) {
             });
             if (!planner) {
                 return NextResponse.json({ error: "Invalid planner" }, { status: 400 });
+            }
+        }
+
+        // ── Validação cruzada YouTube: a API é o guardião (falhas tarde no cron
+        // deixariam posts failed permanentes com dados inconsistentes). ──
+        if (payload.youtube_type) {
+            if (!payload.channel_id || targetPlatform !== "youtube") {
+                return NextResponse.json(
+                    { error: "youtube_type só é válido em posts de canal YouTube" },
+                    { status: 400 },
+                );
+            }
+            if (payload.youtube_type === "short") {
+                if (!payload.video_url) {
+                    return NextResponse.json(
+                        { error: "Short do YouTube exige video_url" },
+                        { status: 400 },
+                    );
+                }
+                // O título é obrigatório na API externa (POST /api/shorts) — sem
+                // essa checagem o post falharia tarde, no cron.
+                let shortTitle = "";
+                if (payload.youtube_options) {
+                    try {
+                        const opts = JSON.parse(String(payload.youtube_options)) as {
+                            title?: unknown;
+                        };
+                        shortTitle = typeof opts.title === "string" ? opts.title.trim() : "";
+                    } catch {
+                        /* já normalizado acima — defensivo */
+                    }
+                }
+                if (!shortTitle) {
+                    return NextResponse.json(
+                        { error: "Short do YouTube exige um título (youtube_options.title)" },
+                        { status: 400 },
+                    );
+                }
+            }
+            if (payload.youtube_type === "community") {
+                // O texto é obrigatório na API externa (POST /api/post/upload exige
+                // `message`) — sem essa checagem o post falharia tarde, no cron.
+                if (!String(payload.caption ?? "").trim()) {
+                    return NextResponse.json(
+                        { error: "Post na Comunidade exige texto (caption)" },
+                        { status: 400 },
+                    );
+                }
+                let imageCount = 0;
+                if (payload.children_urls) {
+                    try {
+                        const children = JSON.parse(String(payload.children_urls)) as {
+                            url?: string;
+                            type?: string;
+                        }[];
+                        imageCount = Array.isArray(children)
+                            ? children.filter((c) => c?.url && c.type !== "video").length
+                            : 0;
+                    } catch {
+                        /* já validado acima — defensivo */
+                    }
+                }
+                if (!imageCount && payload.image_url) imageCount = 1;
+                if (imageCount < 1) {
+                    return NextResponse.json(
+                        { error: "Post na Comunidade exige ao menos 1 imagem (children_urls ou image_url)" },
+                        { status: 400 },
+                    );
+                }
+                // A API externa (POST /api/post/upload) aceita no máximo 10 imagens.
+                if (imageCount > 10) {
+                    return NextResponse.json(
+                        { error: "Post na Comunidade aceita no máximo 10 imagens" },
+                        { status: 400 },
+                    );
+                }
             }
         }
 

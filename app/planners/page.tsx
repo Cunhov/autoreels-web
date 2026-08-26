@@ -17,6 +17,8 @@ import {
 	Clock,
 	Instagram,
 	Copy,
+	Layers,
+	Youtube,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
 import IOSCard from "@/components/IOSComponents";
@@ -44,7 +46,8 @@ interface PlannerLogItem {
 
 interface LogsResponse {
 	logs?: PlannerLogItem[];
-	nextCursor?: string | null;
+	// A rota retorna snake_case: { logs, total, next_cursor }
+	next_cursor?: string | null;
 	total?: number;
 }
 
@@ -188,6 +191,14 @@ export default function PlannersPage() {
 	const [logTotal, setLogTotal] = useState<number | null>(null);
 	const [hasMoreLogs, setHasMoreLogs] = useState(false);
 	const [clearingLogs, setClearingLogs] = useState(false);
+	// Timer de desarme do two-tap confirm — limpo ao fechar o modal/trocar de
+	// planner para não deixar "confirmado" um clique imediato após reabrir.
+	const clearLogsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const disarmClearLogs = () => {
+		if (clearLogsTimerRef.current) clearTimeout(clearLogsTimerRef.current);
+		clearLogsTimerRef.current = null;
+		setClearingLogs(false);
+	};
 	const [viewingPreview, setViewingPreview] = useState<Planner | null>(null);
 	const [previewData, setPreviewData] = useState<any>(null);
 	const [loadingPreview, setLoadingPreview] = useState(false);
@@ -217,10 +228,10 @@ export default function PlannersPage() {
 		try {
 			const pr = await fetch("/api/planners");
 			if (pr.ok) setPlanners(await pr.json());
-			else showToast("Failed to load planners", "err");
+			else showToast("Falha ao carregar planners", "err");
 		} catch (e: any) {
 			console.error("Error fetching planners:", e);
-			showToast("Failed to load planners", "err");
+			showToast("Falha ao carregar planners", "err");
 		} finally {
 			setLoading(false);
 		}
@@ -238,7 +249,7 @@ export default function PlannersPage() {
 			showToast(newStatus === "paused" ? "Planner pausado" : "Planner ativado");
 			fetchData();
 		} catch {
-			showToast("Failed to update status", "err");
+			showToast("Falha ao atualizar status", "err");
 		}
 	}
 
@@ -270,7 +281,7 @@ export default function PlannersPage() {
 				if (res.status === 409) {
 					showToast("Planner pausado — ative antes de executar", "err");
 				} else {
-					showToast(data.error || "Run failed", "err");
+					showToast(data.error || "Falha ao executar", "err");
 				}
 				return;
 			}
@@ -278,7 +289,7 @@ export default function PlannersPage() {
 			showToast(`${planner.name} — ${n} post(s) enfileirados ✓`);
 			fetchData();
 		} catch (e: any) {
-			showToast(`Run failed: ${e.message}`, "err");
+			showToast(`Falha ao executar: ${e.message}`, "err");
 		} finally {
 			setRunningId(null);
 		}
@@ -294,7 +305,7 @@ export default function PlannersPage() {
 			setDeletingId(null);
 			fetchData();
 		} catch {
-			showToast("Failed to delete planner", "err");
+			showToast("Falha ao excluir planner", "err");
 			setDeletingId(null);
 		}
 	}
@@ -323,9 +334,9 @@ export default function PlannersPage() {
 				: (data.logs ?? []);
 			setLogs((prev) => (mode === "more" ? [...prev, ...items] : items));
 			if (!Array.isArray(data)) {
-				setLogCursor(data.nextCursor ?? null);
+				setLogCursor(data.next_cursor ?? null);
 				setLogTotal(data.total ?? items.length);
-				setHasMoreLogs(Boolean(data.nextCursor));
+				setHasMoreLogs(Boolean(data.next_cursor));
 			} else {
 				// Legacy array response — no pagination info
 				setLogCursor(null);
@@ -356,13 +367,23 @@ export default function PlannersPage() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [viewingLogs, logFilter]);
 
+	// Fecha/troca o modal de logs ⇒ desarma o two-tap confirm de "Limpar logs".
+	useEffect(() => {
+		return () => disarmClearLogs();
+	}, [viewingLogs]);
+
 	async function clearLogs(plannerId: string) {
 		// Two-tap confirm: first tap arms, second tap executes (3s window)
 		if (!clearingLogs) {
 			setClearingLogs(true);
-			setTimeout(() => setClearingLogs(false), 3000);
+			if (clearLogsTimerRef.current) clearTimeout(clearLogsTimerRef.current);
+			clearLogsTimerRef.current = setTimeout(() => {
+				clearLogsTimerRef.current = null;
+				setClearingLogs(false);
+			}, 3000);
 			return;
 		}
+		disarmClearLogs();
 		try {
 			const res = await fetch(`/api/planners/logs/${plannerId}`, {
 				method: "DELETE",
@@ -419,7 +440,7 @@ export default function PlannersPage() {
 				<div>
 					<h1 className="text-[34px] font-bold text-ios-text">Planners</h1>
 					<p className="text-ios-text-secondary text-sm">
-						Automate your posting schedule
+						Automatize sua agenda de publicações
 					</p>
 				</div>
 				<IOSButton
@@ -431,7 +452,7 @@ export default function PlannersPage() {
 					}}
 				>
 					<Plus size={18} />
-					New Planner
+					Novo planner
 				</IOSButton>
 			</div>
 
@@ -448,18 +469,18 @@ export default function PlannersPage() {
 						strokeWidth={1}
 					/>
 					<h3 className="text-xl font-semibold mb-2 text-ios-text">
-						No planners yet
+						Nenhum planner ainda
 					</h3>
 					<p className="max-w-xs mx-auto mb-6">
-						Create a planner to automatically schedule reels on a recurring
-						schedule.
+						Crie um planner para agendar publicações automaticamente em um
+						ciclo recorrente.
 					</p>
 					<IOSButton
 						variant="primary"
 						className="mx-auto"
 						onClick={() => setIsWizardOpen(true)}
 					>
-						Create Your First Planner
+						Criar meu primeiro planner
 					</IOSButton>
 				</IOSCard>
 			) : (
@@ -527,8 +548,20 @@ export default function PlannersPage() {
 												Last: {relativeTime(planner.last_run)}
 											</span>
 											<span className="flex items-center gap-1">
-												<Instagram size={11} />
-												{(planner.channels || []).length} channels
+												{(() => {
+													const chans = planner.channels || [];
+													const isYt = (c: { platform?: string }) =>
+														(c.platform || "").toLowerCase() === "youtube";
+													const isIg = (c: { platform?: string }) =>
+														(c.platform || "").toLowerCase() === "instagram";
+													const ChanIcon = chans.length > 0 && chans.every(isYt)
+														? Youtube
+														: chans.length > 0 && chans.every(isIg)
+															? Instagram
+															: Layers;
+													return <ChanIcon size={11} />;
+												})()}
+												{(planner.channels || []).length} canais
 											</span>
 											<span
 												className={`flex items-center gap-1 ${nextRun.due ? "text-ios-green font-semibold" : ""}`}
@@ -542,11 +575,11 @@ export default function PlannersPage() {
 										{stats.total > 0 && (
 											<div className="flex gap-3 mt-2 text-[11px]">
 												<span className="text-ios-green font-semibold">
-													✓ {stats.published} published
+													✓ {stats.published} publicados
 												</span>
 												{stats.failed > 0 && (
 													<span className="text-ios-red font-semibold">
-														✗ {stats.failed} failed
+														✗ {stats.failed} falharam
 													</span>
 												)}
 												<span className="text-ios-text-secondary">
@@ -641,10 +674,10 @@ export default function PlannersPage() {
 								<Trash2 size={22} className="text-ios-red" />
 							</div>
 							<h3 className="text-[17px] font-bold text-ios-text mb-1">
-								Delete Planner?
+								Excluir planner?
 							</h3>
 							<p className="text-[14px] text-ios-text-secondary">
-								This action cannot be undone.
+								Esta ação não pode ser desfeita.
 							</p>
 						</div>
 						<div className="border-t border-ios-separator flex">
@@ -652,13 +685,13 @@ export default function PlannersPage() {
 								onClick={() => setDeletingId(null)}
 								className="flex-1 py-3.5 text-[17px] text-ios-blue font-medium border-r border-ios-separator hover:bg-ios-gray-6 transition-colors"
 							>
-								Cancel
+								Cancelar
 							</button>
 							<button
 								onClick={confirmDelete}
 								className="flex-1 py-3.5 text-[17px] text-ios-red font-semibold hover:bg-ios-red/10 transition-colors"
 							>
-								Delete
+								Excluir
 							</button>
 						</div>
 					</div>
@@ -790,7 +823,7 @@ export default function PlannersPage() {
 									Preview: {viewingPreview.name}
 								</h2>
 								<p className="text-[12px] text-ios-text-secondary">
-									Next run without creating posts
+									Próxima execução sem criar posts
 								</p>
 							</div>
 							<div className="flex items-center gap-2">
@@ -816,7 +849,7 @@ export default function PlannersPage() {
 							{loadingPreview ? (
 								<div className="flex items-center justify-center py-12 text-ios-text-secondary">
 									<RefreshCw size={18} className="animate-spin mr-2" />
-									Loading preview...
+									Carregando preview...
 								</div>
 							) : previewData?.error ? (
 								<div className="p-4 rounded-xl bg-ios-red/10 text-ios-red text-sm">
@@ -831,20 +864,20 @@ export default function PlannersPage() {
 											))}
 										</div>
 									)}
-									{previewData?.next_run_at && (
+									{previewData?.gating?.next_run_at && (
 										<div className="bg-ios-card border border-ios-separator rounded-xl p-4 flex items-center gap-2">
 											<Zap size={16} className="text-ios-blue" />
 											<div>
 												<div className="text-xs uppercase tracking-wide text-ios-text-secondary mb-0.5">
-													Next run
+													Próxima execução
 												</div>
 												<div className="font-semibold text-ios-text">
-													{new Date(previewData.next_run_at).toLocaleString(
-														"pt-BR",
-													)}
+													{new Date(
+														previewData.gating.next_run_at,
+													).toLocaleString("pt-BR")}
 												</div>
 											</div>
-											{previewData?.gated && (
+											{previewData?.gating?.gated && (
 												<span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-amber-100 text-amber-800">
 													Gated
 												</span>
@@ -854,17 +887,47 @@ export default function PlannersPage() {
 									<div className="grid gap-2">
 										<div className="bg-ios-card border border-ios-separator rounded-xl p-4">
 											<div className="text-xs uppercase tracking-wide text-ios-text-secondary mb-1">
-												Selected content
+												Conteúdo selecionado
 											</div>
 											<div className="font-semibold text-ios-text">
 												{previewData?.runtime?.selectedContent?.id ||
-													"No content"}
+													"Sem conteúdo"}
 											</div>
 											<div className="text-sm text-ios-text-secondary mt-1">
-												{previewData?.runtime?.mediaType || "Unknown"} ·{" "}
+												{(() => {
+												// Preview diferencia "Short do YouTube"/"Post na Comunidade".
+												// Em planners mistos IG+YT o conteúdo vai para as duas
+												// plataformas — rotula as duas em vez de sugerir só YouTube.
+												const channels: Array<{ platform?: string }> =
+													previewData?.channels || [];
+												const mediaType = String(
+													previewData?.runtime?.mediaType || "",
+												).toUpperCase();
+												const hasYt = channels.some(
+													(c) => (c.platform || "").toLowerCase() === "youtube",
+												);
+												if (hasYt) {
+													const ytLabel =
+														mediaType === "IMAGE" || mediaType === "CAROUSEL"
+															? "Post na Comunidade"
+															: "Short do YouTube";
+													const onlyYt = channels.every(
+														(c) => (c.platform || "").toLowerCase() === "youtube",
+													);
+													if (onlyYt) return ytLabel;
+													const igLabel =
+														mediaType === "CAROUSEL"
+															? "Carrossel"
+															: mediaType === "IMAGE"
+																? "Imagem"
+																: "Reels";
+													return `${igLabel} · ${ytLabel}`;
+												}
+												return previewData?.runtime?.mediaType || "Desconhecido";
+											})()}{" "}
 												{previewData?.runtime?.mediaUrl
-													? "Media ready"
-													: "No media URL"}
+													? "Mídia pronta"
+													: "Sem mídia"}
 											</div>
 										</div>
 										<div className="bg-ios-card border border-ios-separator rounded-xl p-4">
@@ -872,12 +935,12 @@ export default function PlannersPage() {
 												Caption
 											</div>
 											<p className="text-sm text-ios-text whitespace-pre-wrap">
-												{previewData?.runtime?.caption || "No caption"}
+												{previewData?.runtime?.caption || "Sem legenda"}
 											</p>
 										</div>
 										<div className="bg-ios-card border border-ios-separator rounded-xl p-4">
 											<div className="text-xs uppercase tracking-wide text-ios-text-secondary mb-2">
-												Channels
+												Canais
 											</div>
 											<div className="space-y-2">
 												{(previewData?.channels || []).map((channel: any) => (
@@ -901,7 +964,7 @@ export default function PlannersPage() {
 																		: "text-ios-red"
 																}
 															>
-																{channel.health?.ok ? "Ready" : "Blocked"}
+																{channel.health?.ok ? "Pronto" : "Bloqueado"}
 															</div>
 															{(channel.health?.warnings || []).length > 0 && (
 																<div className="text-[11px] text-amber-700">

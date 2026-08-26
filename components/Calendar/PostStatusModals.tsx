@@ -45,20 +45,20 @@ export function ErrorModal({ post, onClose, onPostsChanged }: ErrorModalProps) {
                         <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center">
                             <AlertCircle size={24} />
                         </div>
-                        <h3 className="text-xl font-semibold">Post Failed</h3>
+                        <h3 className="text-xl font-semibold">Falha na publicação</h3>
                     </div>
 
                     <div className="space-y-4">
                         <div className="bg-red-50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 rounded-xl p-4">
-                            <h4 className="text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wide mb-1">Error Message</h4>
+                            <h4 className="text-xs font-bold text-red-600 dark:text-red-400 uppercase tracking-wide mb-1">Mensagem de erro</h4>
                             <p className="text-sm text-red-800 dark:text-red-200 font-mono break-words">
-                                {post.error_message || "Unknown error occurred"}
+                                {post.error_message || "Erro desconhecido"}
                             </p>
                         </div>
 
                         {post.failed_reason && (
                             <div>
-                                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Possible Reason</h4>
+                                <h4 className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Motivo possível</h4>
                                 <p className="text-sm text-gray-700 dark:text-gray-300">
                                     {post.failed_reason}
                                 </p>
@@ -66,7 +66,7 @@ export function ErrorModal({ post, onClose, onPostsChanged }: ErrorModalProps) {
                         )}
 
                         <div className="text-xs text-gray-400 mt-2">
-                            Suggestion: Check your Instagram connection or media format.
+                            Sugestão: verifique a conexão do canal (Instagram/YouTube) ou o formato da mídia.
                         </div>
                     </div>
 
@@ -78,7 +78,7 @@ export function ErrorModal({ post, onClose, onPostsChanged }: ErrorModalProps) {
                             <RotateCcw size={16} className="mr-2" /> Tentar novamente
                         </IOSButton>
                         <IOSButton onClick={onClose} variant="secondary" className="w-full justify-center py-3">
-                            Close
+                            Fechar
                         </IOSButton>
                     </div>
                 </div>
@@ -100,6 +100,11 @@ export function SuccessModal({ post, onClose }: SuccessModalProps) {
         ? `https://www.instagram.com/p/${post.instagram_media_id}/`
         : null;
 
+    // Deep link do Short publicado (youtube_video_id é salvo pelo publisher).
+    const youtubeUrl = post.youtube_video_id
+        ? `https://youtu.be/${post.youtube_video_id}`
+        : null;
+
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
             <div className="bg-white dark:bg-zinc-900 w-full max-w-4xl max-h-[90vh] rounded-2xl overflow-hidden shadow-2xl flex flex-col md:flex-row">
@@ -112,14 +117,18 @@ export function SuccessModal({ post, onClose }: SuccessModalProps) {
                 {/* Left: Preview/Embed */}
                 <div className="w-full md:w-1/2 bg-black flex items-center justify-center overflow-y-auto p-4 custom-scrollbar">
                     <div className="text-white/50 text-center space-y-3">
-                        <p>Preview unavailable in-app</p>
-                        {instagramPostUrl ? (
+                        <p>Prévia indisponível no app</p>
+                        {youtubeUrl ? (
+                            <a href={youtubeUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline text-sm block">
+                                Ver no YouTube
+                            </a>
+                        ) : instagramPostUrl ? (
                             <a href={instagramPostUrl} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline text-sm block">
-                                View on Instagram
+                                Ver no Instagram
                             </a>
                         ) : post.video_url ? (
                             <a href={post.video_url} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline text-sm block">
-                                Open media
+                                Abrir mídia
                             </a>
                         ) : null}
                     </div>
@@ -128,7 +137,7 @@ export function SuccessModal({ post, onClose }: SuccessModalProps) {
                 {/* Right: Insights */}
                 <div className="w-full md:w-1/2 p-6 flex flex-col bg-ios-background">
                     <div className="flex justify-between items-center mb-6">
-                        <h3 className="text-2xl font-bold text-ios-text">Post Insights</h3>
+                        <h3 className="text-2xl font-bold text-ios-text">Detalhes da publicação</h3>
                         <button onClick={onClose} className="hidden md:block p-2 hover:bg-black/5 rounded-full transition-colors text-ios-secondary">
                             <X size={24} />
                         </button>
@@ -138,13 +147,13 @@ export function SuccessModal({ post, onClose }: SuccessModalProps) {
                         <div className="grid grid-cols-2 gap-4">
                         </div>
                         <div className="text-center py-10 text-gray-400 border-2 border-dashed border-gray-200 rounded-xl">
-                            No insights available yet.
+                            Métricas ainda não disponíveis.
                         </div>
                     </div>
 
                     <div className="mt-6 pt-4 border-t border-ios-separator">
                         <p className="text-xs text-center text-gray-400">
-                            Posted on {new Date(post.scheduled_at).toLocaleDateString()} at {new Date(post.scheduled_at).toLocaleTimeString()}
+                            Publicado em {new Date(post.scheduled_at).toLocaleDateString()} às {new Date(post.scheduled_at).toLocaleTimeString()}
                         </p>
                     </div>
                 </div>

@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Calendar, BarChart2, Radio, Sliders, PlusSquare, Folder, LogOut, Search, CloudUpload, Settings } from 'lucide-react';
+import { Calendar, BarChart2, Radio, Sliders, PlusSquare, Folder, LogOut, Search, CloudUpload, Settings, Youtube } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
@@ -40,13 +40,14 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
     }, []);
 
     const navItems = [
-        { name: 'Calendar', path: '/', icon: Calendar, badge: badges.failedPosts > 0 ? badges.failedPosts : 0, badgeColor: 'bg-ios-red' },
+        { name: 'Calendário', path: '/', icon: Calendar, badge: badges.failedPosts > 0 ? badges.failedPosts : 0, badgeColor: 'bg-ios-red' },
         { name: 'Analytics', path: '/analytics', icon: BarChart2, badge: 0, badgeColor: '' },
-        { name: 'Channels', path: '/channels', icon: Radio, badge: 0, badgeColor: '' },
+        { name: 'Canais', path: '/channels', icon: Radio, badge: 0, badgeColor: '' },
+        { name: 'Comentários', path: '/youtube/comments', icon: Youtube, badge: 0, badgeColor: '' },
         { name: 'Planners', path: '/planners', icon: Sliders, badge: badges.activePlanners > 0 ? badges.activePlanners : 0, badgeColor: 'bg-ios-green' },
-        { name: 'Library', path: '/content', icon: Folder, badge: 0, badgeColor: '' },
+        { name: 'Biblioteca', path: '/content', icon: Folder, badge: 0, badgeColor: '' },
         { name: 'Uploads', path: '/upload', icon: CloudUpload, badge: activeUploads, badgeColor: 'bg-ios-blue' },
-        { name: 'Settings', path: '/settings', icon: Settings, badge: 0, badgeColor: '' },
+        { name: 'Configurações', path: '/settings', icon: Settings, badge: 0, badgeColor: '' },
     ];
 
     const userEmail = session?.user?.email ?? '';
@@ -58,7 +59,7 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
                 {/* App Logo & Title */}
                 <div className="px-2 pt-2 pb-1">
                     <h1 className="text-[22px] font-bold tracking-tight text-ios-blue select-none">AutoReels</h1>
-                    <p className="text-[11px] text-ios-text-secondary mt-0.5">Instagram Automation</p>
+                    <p className="text-[11px] text-ios-text-secondary mt-0.5">Automação Instagram + YouTube</p>
                 </div>
 
                 {/* Search shortcut */}
@@ -68,7 +69,7 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
                         className="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-ios-gray-6 text-ios-text-secondary hover:bg-ios-gray-5 transition-colors text-[13px]"
                     >
                         <Search size={14} />
-                        <span>Search…</span>
+                        <span>Buscar…</span>
                         <kbd className="ml-auto font-mono text-[11px] bg-ios-separator px-1.5 py-0.5 rounded">⌘K</kbd>
                     </button>
                 )}
@@ -101,7 +102,7 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
                     className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-ios-blue text-white text-[15px] font-semibold transition-opacity hover:opacity-90 active:opacity-75"
                 >
                     <PlusSquare size={18} />
-                    New Post
+                    Novo post
                 </Link>
             </div>
 
@@ -111,14 +112,14 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
                     <div className="w-8 h-8 rounded-full bg-ios-blue/20 text-ios-blue flex items-center justify-center text-[13px] font-bold shrink-0">
                         {userInitial}
                     </div>
-                    <p className="text-[12px] text-ios-text-secondary truncate flex-1">{userEmail || 'Logged in'}</p>
+                    <p className="text-[12px] text-ios-text-secondary truncate flex-1">{userEmail || 'Sessão ativa'}</p>
                 </div>
                 <button
                     onClick={() => signOut()}
                     className="flex items-center gap-2 px-3 py-2 w-full rounded-xl text-ios-red text-[14px] hover:bg-ios-red/10 transition-colors"
                 >
                     <LogOut size={16} />
-                    Sign out
+                    Sair
                 </button>
             </div>
         </div>

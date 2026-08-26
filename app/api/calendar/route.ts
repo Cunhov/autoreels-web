@@ -105,6 +105,13 @@ export async function GET(req: Request) {
 			error_message: true,
 			failed_reason: true,
 			children_urls: true,
+			instagram_media_id: true,
+			// YouTube: preserva tipo/opções na duplicação e habilita o deep link
+			// do vídeo publicado (watch_url) nos modais de status.
+			youtube_type: true,
+			youtube_options: true,
+			youtube_video_id: true,
+			youtube_post_id: true,
 			collaborators: true,
 			audio_configuration: true,
 			user_tags: true,

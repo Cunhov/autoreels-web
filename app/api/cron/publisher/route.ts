@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
+import { lstat, readFile } from "fs/promises";
+import { extname, resolve, sep } from "path";
 import { prisma } from "@/lib/prisma";
 import {
 	fetchWithTimeout,
@@ -12,6 +14,14 @@ import {
 import { runPlannerOnce } from "@/lib/planner-runtime";
 import { sendNotification } from "@/lib/notify";
 import { normalizeCarouselChild } from "@/lib/carousel-normalize";
+import {
+	YoutubeApiError,
+	createShort,
+	getSession,
+	getYoutubeSessionId,
+	uploadCommunityPost,
+	type YoutubeShortOptions,
+} from "@/lib/youtube";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -111,7 +121,10 @@ function classifyError(
 	if (e instanceof SyntaxError) return "transient";
 
 	const msg = e instanceof Error ? e.message : String(e || "");
-	if (/missing credentials/i.test(msg)) return "definitive";
+	// Config ausente (ex.: getYoutubeConfig lança "YOUTUBE_API_KEY não
+	// configurada") é permanente: sem isso posts YT viram transient, ocupam o
+	// lote do cron a cada tick e starving publicações válidas.
+	if (/YOUTUBE_API_KEY|não configurada|missing credentials/i.test(msg)) return "definitive";
 	if (/carousel has no media items/i.test(msg)) return "definitive";
 
 	// Unknown/network errors: retry rather than burn the post
@@ -262,6 +275,7 @@ interface RetryablePost {
 /** Minimal shape of the counters the retry helper updates. */
 interface PublishResults {
 	errors: number;
+	published: number;
 	transient: number;
 	rate_limited: number;
 	throttled: number;
@@ -379,7 +393,7 @@ async function isChannelThrottled(
 async function logPlanner(
 	plannerId: string,
 	message: string,
-	level: "info" | "error" = "info",
+	level: "info" | "error" | "warning" = "info",
 	details: unknown = {},
 ) {
 	if (!plannerId || plannerId === "unknown") return;
@@ -411,7 +425,7 @@ const LOG_THROTTLE_MS = 30 * 60 * 1000; // 30 min
 async function throttledLog(
 	plannerId: string,
 	message: string,
-	level: "info" | "error" = "info",
+	level: "info" | "error" | "warning" = "info",
 	details: unknown = {},
 ) {
 	const key = `${plannerId}:${message}`;
@@ -507,6 +521,357 @@ async function refreshDueChannelTokens(
 		}
 	}
 	return refreshed;
+}
+
+// ─── YouTube (Shorts + Comunidade) ──────────────────────────────────────
+
+// Só trata como sessão-expirada quando o sinal é inequívoco. "expirad/expired"
+// genérico NÃO entra: a API externa retorna 502 "attestation BotGuard expirada..."
+// para tokens BotGuard transientes (auto-renováveis) e erros TLS falam em
+// "certificate has expired" — nenhum dos dois significa cookies inválidos.
+const YT_SESSION_EXPIRED_RE = /cookies may be invalid|session expired/i;
+
+interface YoutubePublishPost {
+	id: string;
+	caption?: string | null;
+	video_url?: string | null;
+	image_url?: string | null;
+	children_urls?: string | null;
+	youtube_type?: string | null;
+	youtube_options?: string | null;
+	attempts?: number;
+	created_at?: Date | null;
+	channel?: {
+		id?: string;
+		name?: string | null;
+		settings?: string | null;
+	} | null;
+}
+
+/** MIME types aceitos no upload para a API externa. */
+const YT_MIME_TYPES: Record<string, string> = {
+	".mp4": "video/mp4",
+	".mov": "video/quicktime",
+	".webm": "video/webm",
+	".mkv": "video/x-matroska",
+	".jpg": "image/jpeg",
+	".jpeg": "image/jpeg",
+	".png": "image/png",
+	".gif": "image/gif",
+	".webp": "image/webp",
+};
+
+/**
+ * Lê um arquivo de mídia do storage local usando o MESMO mecanismo de
+ * `app/api/file/[...path]/route.ts`: URLs `/api/file/<relpath>` são
+ * resolvidas contra data/uploads e public/uploads.
+ */
+async function readLocalUploadFile(
+	mediaUrl: string,
+): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+	const relative = mediaUrl.startsWith("/api/file/")
+		? mediaUrl.slice("/api/file/".length)
+		: mediaUrl.replace(/^\//, "");
+	if (relative.includes("..") || relative.includes("\\")) {
+		throw new MalformedDataError(`Caminho de mídia inválido: ${relative}`);
+	}
+	// Colapsa segmento duplicado de registros antigos (admin/admin/arquivo.mp4)
+	const parts = relative.split("/");
+	const deduped =
+		parts.length >= 2 && parts[0] === parts[1] ? parts.slice(1).join("/") : null;
+
+	const roots = [
+		resolve(process.cwd(), "data", "uploads"),
+		resolve(process.cwd(), "public", "uploads"),
+	];
+	for (const root of roots) {
+		for (const rel of [relative, ...(deduped ? [deduped] : [])]) {
+			const candidate = resolve(root, rel);
+			if (!candidate.startsWith(root + sep)) continue;
+			try {
+				const stat = await lstat(candidate); // lstat: rejeita symlinks
+				if (!stat.isFile()) continue;
+				const buffer = await readFile(candidate);
+				const ext = extname(rel).toLowerCase();
+				return {
+					buffer,
+					contentType: YT_MIME_TYPES[ext] || "application/octet-stream",
+					filename: rel.split("/").pop() || "midia",
+				};
+			} catch {
+				/* tenta o próximo candidato */
+			}
+		}
+	}
+	throw new MalformedDataError(
+		`Arquivo de mídia não encontrado no storage local: ${mediaUrl}`,
+	);
+}
+
+/**
+ * Vista sem cópia do Buffer para uso como BlobPart. `new Uint8Array(buffer)`
+ * DUPLICARIA o pico de memória (buffer + cópia) em vídeos grandes; a view usa
+ * o mesmo ArrayBuffer (readFile nunca usa SharedArrayBuffer — cast seguro).
+ */
+function bufferView(buf: Buffer): Uint8Array<ArrayBuffer> {
+	return new Uint8Array(
+		buf.buffer as ArrayBuffer,
+		buf.byteOffset,
+		buf.byteLength,
+	);
+}
+
+/** Coleta as imagens de um post da Comunidade. */
+function collectCommunityImageUrls(post: YoutubePublishPost): string[] {
+	const urls: string[] = [];
+	if (post.children_urls) {
+		try {
+			const children = JSON.parse(post.children_urls) as {
+				url?: string;
+				type?: string;
+			}[];
+			for (const child of children) {
+				if (child?.url && child.type !== "video") urls.push(child.url);
+			}
+		} catch {
+			throw new MalformedDataError("Malformed children_urls");
+		}
+	}
+	if (!urls.length && post.image_url) urls.push(post.image_url);
+	return urls;
+}
+
+/** Publica um post YouTube (Short ou Comunidade) e persiste o resultado. */
+async function publishYoutubePost(opts: {
+	post: YoutubePublishPost;
+	plannerId: string;
+	now: Date;
+	results: PublishResults;
+}): Promise<void> {
+	const { post, plannerId, now, results } = opts;
+
+	const sessionId = getYoutubeSessionId(post.channel?.settings);
+	if (!sessionId) {
+		await prisma.post.update({
+			where: { id: post.id },
+			data: {
+				status: "failed",
+				error_message:
+					"Canal YouTube sem sessão vinculada — reconecte em Canais",
+				failed_reason: "Missing Credentials",
+			},
+		});
+		results.errors++;
+		await logPlanner(plannerId, `Post ${post.id}: canal YouTube sem sessão vinculada`, "error");
+		await notifyPostFailed(post, "Canal YouTube sem sessão vinculada");
+		return;
+	}
+
+	try {
+		if (post.youtube_type === "community") {
+			const message = (post.caption || "").trim();
+			if (!message) throw new MalformedDataError("Post na Comunidade exige texto");
+			const imageUrls = collectCommunityImageUrls(post);
+			if (imageUrls.length < 1) {
+				throw new MalformedDataError("Post na Comunidade exige ao menos 1 imagem");
+			}
+			// A API externa aceita no máximo 10 imagens — trunca com aviso no log
+			// do planner em vez de descartar silenciosamente.
+			if (imageUrls.length > 10) {
+				await logPlanner(
+					plannerId,
+					`[YouTube] Post na Comunidade tem ${imageUrls.length} imagens; publicando apenas as 10 primeiras`,
+					"warning",
+				).catch(() => {});
+				imageUrls.length = 10;
+			}
+			const images: { buffer: Buffer; contentType: string; filename: string }[] = [];
+			for (const url of imageUrls) {
+				images.push(await readLocalUploadFile(url));
+			}
+			await logPlanner(
+				plannerId,
+				`[YouTube] Publicando post na Comunidade (${images.length} imagem(ns)) do canal ${post.channel?.name || post.id}`,
+				"info",
+			);
+			const created = await uploadCommunityPost({
+				sessionId,
+				message,
+				images: images.map((img) => ({
+					blob: new Blob([bufferView(img.buffer)], { type: img.contentType }),
+					filename: img.filename,
+					contentType: img.contentType,
+				})),
+			});
+			await prisma.post.update({
+				where: { id: post.id },
+				data: {
+					status: "published",
+					published_at: now,
+					youtube_post_id: created.remote_post_id || String(created.id),
+				},
+			});
+			results.published++;
+			await logPlanner(
+				plannerId,
+				`[YouTube] Post na Comunidade publicado (id remoto ${created.remote_post_id})`,
+				"info",
+			);
+			return;
+		}
+
+		// ── Short ──
+		if (post.youtube_type && post.youtube_type !== "short") {
+			throw new MalformedDataError(`youtube_type inválido: ${post.youtube_type}`);
+		}
+		if (!post.video_url) {
+			throw new MalformedDataError("Short do YouTube exige um vídeo");
+		}
+		// Opções do Short salvas na criação do post (JSON em youtube_options)
+		let options: YoutubeShortOptions & { products?: unknown } = {};
+		if (post.youtube_options) {
+			try {
+				options = JSON.parse(post.youtube_options) as typeof options;
+			} catch {
+				throw new MalformedDataError("Malformed youtube_options");
+			}
+		}
+		await logPlanner(
+			plannerId,
+			`[YouTube] Enviando Short (${post.video_url}) para a API externa`,
+			"info",
+		);
+		const videoFile = await readLocalUploadFile(post.video_url);
+		// Título: opção salva ou caption (limite de 100 chars da API)
+		const title = (
+			options.title?.trim() || (post.caption || "").trim()
+		).slice(0, 100);
+		if (!title) {
+			throw new MalformedDataError("Short do YouTube exige título");
+		}
+		const short = await createShort({
+			sessionId,
+			title,
+			description: options.description ?? "",
+			privacy: options.privacy ?? "PRIVATE",
+			madeForKids: options.made_for_kids ?? false,
+			categoryId: options.category_id ?? 17,
+			monetizeWithAds: options.monetize_with_ads ?? false,
+			pinnedCommentText: options.pinned_comment_text || undefined,
+			video: {
+				blob: new Blob([bufferView(videoFile.buffer)], { type: videoFile.contentType }),
+				filename: videoFile.filename,
+				contentType: videoFile.contentType,
+			},
+		});
+		await prisma.post.update({
+			where: { id: post.id },
+			data: {
+				status: "published",
+				published_at: now,
+				youtube_video_id: short.video_id || null,
+				youtube_type: post.youtube_type ?? "short",
+			},
+		});
+		results.published++;
+		await logPlanner(
+			plannerId,
+			`[YouTube] Short publicado: ${short.title}${short.watch_url ? ` — ${short.watch_url}` : ""}`,
+			"info",
+		);
+	} catch (e: unknown) {
+		const rawMsg =
+			e instanceof Error ? e.message : String(e ?? "Unknown error");
+
+		// O regex NÃO é um sinal inequívoco: na API externa a mesma mensagem é
+		// lançada sempre que o bootstrap HTML não rende um channelId — inclusive
+		// em falhas transitórias (página de consentimento/bot-check do YouTube).
+		// Antes de falhar permanentemente, confirma o estado real da sessão via
+		// GET /api/session/{id}: só trata como expirada se status === "expired".
+		if (YT_SESSION_EXPIRED_RE.test(rawMsg)) {
+			const sessionStatus = sessionId
+				? await getSession(sessionId)
+						.then((s) => String(s.status || ""))
+						.catch(() => "")
+				: "";
+			if (sessionStatus === "expired") {
+				const friendly =
+					"Sessão do YouTube expirada — reconecte em Canais";
+				await logPlanner(
+					plannerId,
+					`[YouTube] Post ${post.id}: ${friendly}`,
+					"error",
+				);
+				await prisma.post.update({
+					where: { id: post.id },
+					data: {
+						status: "failed",
+						error_message: friendly,
+						failed_reason: "Session Expired",
+					},
+				});
+				if (post.channel?.id) {
+					await prisma.channel
+						.update({
+							where: { id: post.channel.id },
+							data: { status: "inactive" },
+						})
+						.catch(() => {});
+				}
+				results.errors++;
+				await notifyPostFailed(post, friendly);
+				return;
+			}
+			// Status não-confirmado (rede instável ao consultar a sessão) ou ainda
+			// "active": cai no caminho transiente abaixo e tenta de novo depois.
+		}
+
+		// Reaproveita a classificação permanente/transiente do Instagram
+		// mapeando o status HTTP da API externa para igStatus.
+		const ytStatus = e instanceof YoutubeApiError ? e.status : 0;
+		const kind = classifyError(withIgStatus(rawMsg, ytStatus), ytStatus);
+		const errMsg = e instanceof Error && e.name === "AbortError"
+			? "API do YouTube expirou o tempo limite"
+			: rawMsg;
+
+		if (kind === "rate-limited") {
+			await handleRetryableFailure({
+				post,
+				errMsg: `Rate limited (429): ${errMsg}`,
+				revertToStatus: "pending",
+				countAs: "rate_limited",
+				plannerId,
+				now,
+				results,
+			});
+			return;
+		}
+		if (kind === "transient") {
+			await handleRetryableFailure({
+				post,
+				errMsg,
+				revertToStatus: "pending",
+				plannerId,
+				now,
+				results,
+			});
+			return;
+		}
+
+		// Erro definitivo → falha imediata
+		await logPlanner(plannerId, `[YouTube] Erro definitivo post=${post.id}: ${errMsg}`, "error");
+		await prisma.post.update({
+			where: { id: post.id },
+			data: {
+				status: "failed",
+				error_message: errMsg,
+				failed_reason:
+					e instanceof MalformedDataError ? "Malformed Data" : "Publishing Failed",
+			},
+		});
+		results.errors++;
+		await notifyPostFailed(post, errMsg);
+	}
 }
 
 // ─── Route Handler ────────────────────────────────────────────────────────────
@@ -759,6 +1124,12 @@ async function handler(request: Request) {
 							where: { id: post.id, status: "processing" },
 							data: { status: "pending" },
 						});
+						continue;
+					}
+
+					// ─── YouTube (Short ou Comunidade): publicação direta ───
+					if (post.channel?.platform === "youtube") {
+						await publishYoutubePost({ post, plannerId, now, results });
 						continue;
 					}
 

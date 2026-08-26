@@ -230,6 +230,12 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
             const children = (post as unknown as { children_urls?: string }).children_urls;
             if (children) payload.children_urls = children;
 
+            // Preserva o tipo/opções de posts YouTube (Short vs Comunidade).
+            const ytType = (post as unknown as { youtube_type?: string | null }).youtube_type;
+            const ytOptions = (post as unknown as { youtube_options?: string | null }).youtube_options;
+            if (ytType) payload.youtube_type = ytType;
+            if (ytOptions) payload.youtube_options = ytOptions;
+
             const res = await fetch('/api/posts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -263,11 +269,11 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
                                     {date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
                                 </h2>
                                 <p className="text-xs text-ios-secondary">
-                                    {posts.length} post{posts.length !== 1 ? 's' : ''} scheduled
+                                    {posts.length} post{posts.length !== 1 ? 's' : ''} agendado{posts.length !== 1 ? 's' : ''}
                                 </p>
                             </div>
                         </div>
-                        <button onClick={onClose} title="Close" className="p-2 rounded-full hover:bg-black/5 text-ios-secondary transition-colors">
+                        <button onClick={onClose} title="Fechar" className="p-2 rounded-full hover:bg-black/5 text-ios-secondary transition-colors">
                             <X size={20} />
                         </button>
                     </div>
@@ -276,7 +282,7 @@ export default function DayDetailsModal({ date, posts, onClose, onPostClick, onP
                     <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                         {posts.length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-40 text-ios-secondary">
-                                <p>No posts scheduled for this day.</p>
+                                <p>Nenhum post agendado para este dia.</p>
                             </div>
                         ) : (
                             posts.map(post => {

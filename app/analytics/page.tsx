@@ -32,6 +32,7 @@ interface ChannelData {
     id: string;
     name: string;
     status: string;
+    platform?: string;
 }
 
 interface PlannerData {
@@ -509,7 +510,7 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
             {channelStats.length > 0 && (
                 <IOSCard className="p-5">
                     <h3 className="text-[17px] font-bold mb-4">Channels</h3>
-                    <p className="text-[11px] text-ios-text-secondary -mt-2 mb-2">Toque em um canal para ver as métricas reais do Instagram.</p>
+                    <p className="text-[11px] text-ios-text-secondary -mt-2 mb-2">Toque em um canal para ver as métricas disponíveis.</p>
                     <div className="divide-y divide-ios-separator">
                         {channelStats.map(ch => (
                             <button
@@ -915,11 +916,29 @@ function InstagramIcon() {
     );
 }
 
+// ── Estado vazio p/ canais YouTube (a API externa não expõe métricas) ────────
+function YoutubeMetricsEmpty() {
+    return (
+        <IOSCard className="p-12 text-center text-ios-text-secondary">
+            <Video size={48} className="mx-auto mb-4 opacity-30" strokeWidth={1} />
+            <h3 className="text-xl font-semibold mb-2 text-ios-text">Métricas do YouTube ainda não disponíveis</h3>
+            <p className="max-w-sm mx-auto text-[14px]">
+                A API do YouTube integrada ao app não fornece métricas de audiência.
+                Os Shorts e posts na Comunidade deste canal aparecem no calendário normalmente.
+            </p>
+        </IOSCard>
+    );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 export default function AnalyticsPage() {
     const [channels, setChannels] = useState<ChannelData[]>([]);
     const [selectedChannel, setSelectedChannel] = useState<string>('all');
     const [toast, showToast] = useToast();
+
+    const selectedIsYoutube =
+        selectedChannel !== 'all' &&
+        channels.find((ch) => ch.id === selectedChannel)?.platform === 'youtube';
 
     useEffect(() => {
         fetch('/api/channels')
@@ -935,8 +954,10 @@ export default function AnalyticsPage() {
                     <h1 className="text-[34px] font-bold text-ios-text">Analytics</h1>
                     <p className="text-sm text-ios-text-secondary">
                         {selectedChannel === 'all'
-                            ? 'Resumo local de todas as contas — selecione um canal para métricas reais do Instagram.'
-                            : 'Métricas reais do Instagram (alcance, engajamento, salvos).'}
+                            ? 'Resumo local de todas as contas — selecione um canal para métricas reais.'
+                            : selectedIsYoutube
+                                ? 'Este canal publica via YouTube — métricas de audiência ainda não disponíveis.'
+                                : 'Métricas reais do Instagram (alcance, engajamento, salvos).'}
                     </p>
                 </div>
             </div>
@@ -955,7 +976,7 @@ export default function AnalyticsPage() {
                         onClick={() => setSelectedChannel(ch.id)}
                         className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-semibold border whitespace-nowrap transition-colors ${selectedChannel === ch.id ? 'bg-ios-blue text-white border-ios-blue' : 'bg-ios-card border-ios-separator text-ios-text-secondary'}`}
                     >
-                        <span className="w-5 h-5 rounded-full bg-pink-100 dark:bg-pink-900/30 flex items-center justify-center text-pink-500 text-[10px] font-bold">
+                        <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${ch.platform === 'youtube' ? 'bg-ios-red/10 text-ios-red' : 'bg-pink-100 dark:bg-pink-900/30 text-pink-500'}`}>
                             {ch.name[0]?.toUpperCase() ?? '?'}
                         </span>
                         {ch.name}
@@ -965,6 +986,8 @@ export default function AnalyticsPage() {
 
             {selectedChannel === 'all' ? (
                 <LocalDashboard channels={channels} onToast={showToast} onSelectChannel={setSelectedChannel} />
+            ) : selectedIsYoutube ? (
+                <YoutubeMetricsEmpty />
             ) : (
                 <ChannelInsights channelId={selectedChannel} onToast={showToast} />
             )}

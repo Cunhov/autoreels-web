@@ -30,17 +30,20 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
     }, []);
 
     const navItems = [
-        { name: 'Calendar', path: '/', icon: Calendar, badge: failedCount > 0 ? failedCount : 0, badgeColor: 'bg-ios-red' },
+        { name: 'Calendário', path: '/', icon: Calendar, badge: failedCount > 0 ? failedCount : 0, badgeColor: 'bg-ios-red' },
         { name: 'Analytics', path: '/analytics', icon: BarChart2, badge: 0, badgeColor: '' },
-        { name: 'Channels', path: '/channels', icon: Radio, badge: 0, badgeColor: '' },
+        { name: 'Canais', path: '/channels', icon: Radio, badge: 0, badgeColor: '' },
         { name: 'Planners', path: '/planners', icon: Sliders, badge: activePlanners > 0 ? activePlanners : 0, badgeColor: 'bg-ios-green' },
-        { name: 'Library', path: '/content', icon: Folder, badge: 0, badgeColor: '' },
-        { name: 'Settings', path: '/settings', icon: Settings, badge: 0, badgeColor: '' },
+        { name: 'Biblioteca', path: '/content', icon: Folder, badge: 0, badgeColor: '' },
+        { name: 'Configurações', path: '/settings', icon: Settings, badge: 0, badgeColor: '' },
     ];
 
     const fabActions = [
-        { label: 'New Post', href: '/new', color: 'bg-ios-blue' },
-        { label: 'New Planner', href: '/planners', color: 'bg-purple-600' },
+        { label: 'Novo post', href: '/new', color: 'bg-ios-blue' },
+        { label: 'Novo planner', href: '/planners', color: 'bg-purple-600' },
+        // /youtube/comments não cabe no TabBar (já são 6 itens) — no mobile a
+        // página fica acessível como ação do FAB.
+        { label: 'Comentários YouTube', href: '/youtube/comments', color: 'bg-ios-red' },
     ];
 
     return (
@@ -76,7 +79,7 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
                         <Link
                             key={item.path}
                             href={item.path}
-                            className={`relative flex flex-col items-center justify-center flex-1 h-full gap-0.5 transition-colors ${isActive(item.path) ? 'text-ios-blue' : 'text-ios-text-secondary'
+                            className={`relative flex min-w-0 flex-col items-center justify-center flex-1 h-full gap-0.5 transition-colors ${isActive(item.path) ? 'text-ios-blue' : 'text-ios-text-secondary'
                                 }`}
                         >
                             <div className="relative">
@@ -87,7 +90,7 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
                                     </span>
                                 )}
                             </div>
-                            <span className="text-[9px] font-medium">{item.name}</span>
+                            <span className="text-[9px] font-medium max-w-full truncate px-0.5">{item.name}</span>
                         </Link>
                     ))}
 
@@ -101,7 +104,7 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
                             }`}>
                             {fabOpen ? <X size={18} /> : <Plus size={20} />}
                         </div>
-                        <span className="text-[9px] font-medium">{fabOpen ? 'Close' : 'New'}</span>
+                        <span className="text-[9px] font-medium max-w-full truncate px-0.5">{fabOpen ? 'Fechar' : 'Novo'}</span>
                     </button>
                 </div>
             </div>

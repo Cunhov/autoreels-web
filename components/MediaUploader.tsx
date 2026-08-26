@@ -5,19 +5,41 @@ import { Upload, X, Film, Image as ImageIcon } from "lucide-react";
 interface MediaUploaderProps {
 	files: File[];
 	onFilesChange: (files: File[]) => void;
+	/** Limite opcional de arquivos (ex.: 10 imagens da API de Comunidade). */
+	maxFiles?: number;
+	/** Atributo accept do input (default: vídeo + imagem). */
+	accept?: string;
 }
 
 export default function MediaUploader({
 	files,
 	onFilesChange,
+	maxFiles,
+	accept,
 }: MediaUploaderProps) {
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const [isDragging, setIsDragging] = useState(false);
+	const [limitMessage, setLimitMessage] = useState<string | null>(null);
+
+	/** Adiciona arquivos respeitando maxFiles; avisa quando descarta. */
+	const addFiles = (incoming: File[]) => {
+		let next = [...files, ...incoming];
+		let dropped = 0;
+		if (maxFiles !== undefined && next.length > maxFiles) {
+			dropped = next.length - maxFiles;
+			next = next.slice(0, maxFiles);
+		}
+		onFilesChange(next);
+		setLimitMessage(
+			dropped > 0
+				? `Limite de ${maxFiles} arquivo(s) — ${dropped} descartado(s).`
+				: null,
+		);
+	};
 
 	const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 		if (e.target.files && e.target.files.length > 0) {
-			const newFiles = Array.from(e.target.files);
-			onFilesChange([...files, ...newFiles]);
+			addFiles(Array.from(e.target.files));
 		}
 		// Reset so selecting the same file again re-triggers onChange
 		e.target.value = "";
@@ -27,11 +49,23 @@ export default function MediaUploader({
 		e.preventDefault();
 		setIsDragging(false);
 		if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-			const newFiles = Array.from(e.dataTransfer.files).filter(
-				(file) =>
-					file.type.startsWith("video/") || file.type.startsWith("image/"),
+			const allowedPrefixes = (accept ?? "video/*,image/*")
+				.split(",")
+				.map((a) => a.trim().replace(/\*$/, ""))
+				.filter(Boolean);
+			const all = Array.from(e.dataTransfer.files);
+			const newFiles = all.filter((file) =>
+				allowedPrefixes.some((prefix) => file.type.startsWith(prefix)),
 			);
-			onFilesChange([...files, ...newFiles]);
+			// Arquivos sem tipo (comum fora de macOS/Windows) ou de formato não
+			// suportado não são descartados em silêncio.
+			const ignored = all.length - newFiles.length;
+			if (ignored > 0) {
+				setLimitMessage(
+					`${ignored} arquivo(s) ignorado(s): formato não suportado.`,
+				);
+			}
+			addFiles(newFiles);
 		}
 	};
 
@@ -61,32 +95,36 @@ export default function MediaUploader({
 					<Upload size={32} />
 				</div>
 				<h3 className="text-lg font-semibold text-ios-text mb-1">
-					Upload Media
+					Enviar mídia
 				</h3>
 				<p className="text-ios-secondary text-sm max-w-[200px]">
-					Drag and drop images or videos here or click to browse.
+					Arraste e solte imagens ou vídeos aqui ou clique para selecionar.
 				</p>
 				<input
 					ref={fileInputRef}
 					type="file"
 					multiple
-					accept="video/*,image/*"
+					accept={accept ?? "video/*,image/*"}
 					className="hidden"
 					onChange={handleFileChange}
 				/>
 			</div>
 
-			{files.length > 0 && (
+			{limitMessage && (
+			<p className="text-xs text-ios-orange font-medium">{limitMessage}</p>
+		)}
+
+		{files.length > 0 && (
 				<div className="bg-ios-card border border-ios-separator rounded-xl overflow-hidden divide-y divide-ios-separator">
 					<div className="p-3 bg-ios-background/50 border-b border-ios-separator flex justify-between items-center">
 						<span className="text-xs font-semibold text-ios-secondary uppercase tracking-wider px-1">
-							Selected Files ({files.length})
+							Arquivos selecionados ({files.length})
 						</span>
 						<button
 							onClick={() => onFilesChange([])}
 							className="text-xs text-red-500 hover:text-red-600 font-medium"
 						>
-							Clear All
+							Limpar tudo
 						</button>
 					</div>
 					<div className="max-h-[300px] overflow-y-auto">
