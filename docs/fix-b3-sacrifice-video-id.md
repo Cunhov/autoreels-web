@@ -9,6 +9,7 @@ existe na sessão da API (usado pela token farm).
 ## O que mudou
 
 ### API externa (`~/Projects/youtube-community-api`, commit `1efc081`)
+
 - `app/models/session.py:92` — `SessionResponse` ganha `sacrifice_video_id: str | None = None`.
 - `app/api/session.py:119` e `:148` — `list_sessions`/`get_session` incluem
   `sacrifice_video_id` no SELECT e na resposta.
@@ -21,6 +22,7 @@ existe na sessão da API (usado pela token farm).
 - Testes: `48 passed`.
 
 ### App (`autoreels-web`, commit `cad96ef`)
+
 - `lib/youtube.ts` — `YoutubeSession.sacrifice_video_id?: string | null`; limpeza do `as any`
   em `getYoutubeSessionId` (objeto tipado).
 - `app/api/youtube/products/route.ts` — `resolveVideoIdForProductSearch` agora recebe
@@ -33,6 +35,7 @@ existe na sessão da API (usado pela token farm).
 - Erro de sessão remota não propaga 502: cai no 400 com orientação.
 
 ## Como testar
+
 1. Canal YT sem nenhum Short publicado, mas com `sacrifice_video_id` configurado na API
    (`POST /api/sessions/{id}/config {sacrifice_video_id=VIDEO_ID}`).
 2. `GET /api/youtube/products?channelId=&query=caderno` → esperado 200 com produtos
@@ -41,6 +44,7 @@ existe na sessão da API (usado pela token farm).
 4. Retrocompat: `GET /api/youtube/products?channelId=&videoId=VIDEO&query=` mantém prioridade do explícito.
 
 ## Riscos residuais
+
 - Se a API externa em produção estiver numa versão anterior (sem `sacrifice_video_id` na
   resposta), o fallback 3 retorna `undefined` silenciosamente → cai no 400 (comportamento seguro).
 - `getSession` exige sessão com canal válido; sessão expirada → 400 orientativo (não false-positivo).
