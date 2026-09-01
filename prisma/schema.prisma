@@ -147,6 +147,8 @@ model ContentItem {
   size        Int?
   duration    Float?
   caption     String?
+  caption_youtube String?  // caption específica do YouTube (arquivo youtube.txt na pasta)
+  caption_instagram String? // caption específica do Instagram (arquivo instagram.txt na pasta)
   created_at  DateTime @default(now())
 
   user        User      @relation(fields: [user_id], references: [id], onDelete: Cascade)

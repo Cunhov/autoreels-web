@@ -108,8 +108,95 @@ export function normalizeYoutubeProductsCsv(value: unknown): string | null {
     return null;
 }
 
-/** Const de privacidades válidas do YouTube (para UI e validação). */
-export const YOUTUBE_PRIVACIES = ['PUBLIC', 'UNLISTED', 'PRIVATE'] as const;
+/**
+ * Formato canônico de produto afiliado no config do planner:
+ *   { query: nome digitado, item?: bloco verbatim (itemId) quando o usuário
+ *     escolheu um produto específico da busca; se ausente, a API auto-seleciona
+ *     o melhor produto para aquele nome na publicação }
+ */
+export interface YoutubeProductEntry {
+	query: string;
+	item?: unknown;
+	title?: string;
+	vendor?: string;
+	price?: string;
+	commission_pct?: number;
+}
+
+/**
+ * Normaliza youtube_products (novo formato) -> array de {query, item?}.
+ * Aceita: array de {query,item?} | array de strings | CSV string (legacy).
+ * Retorna null se vazio/ inválido. NUNCA lança.
+ */
+export function normalizeYoutubeProductsList(value: unknown): YoutubeProductEntry[] | null {
+	if (value == null) return null;
+	if (Array.isArray(value)) {
+		const out: YoutubeProductEntry[] = [];
+		for (const v of value) {
+			if (typeof v === 'string') {
+				const q = v.trim();
+				if (q) out.push({ query: q });
+			} else if (v && typeof v === 'object') {
+				const o = v as Record<string, unknown>;
+				const q = typeof o.query === 'string' ? o.query.trim() : String(o.title ?? o.name ?? '').trim();
+				if (!q) continue;
+				out.push({
+					query: q,
+					...(o.item !== undefined ? { item: o.item } : {}),
+					...(typeof o.title === 'string' ? { title: o.title } : {}),
+					...(typeof o.vendor === 'string' ? { vendor: o.vendor } : {}),
+					...(typeof o.price === 'string' ? { price: o.price } : {}),
+					...(typeof o.commission_pct === 'number' ? { commission_pct: o.commission_pct } : {}),
+				});
+			}
+		}
+		return out.length > 0 ? out : null;
+	}
+	if (typeof value === 'string') {
+		const clean = value.split(',').map(s => s.trim()).filter(Boolean);
+		if (clean.length === 0) return null;
+		// legacy CSV de itemIds: cada entrada vira { query: id } (sem item)
+		return clean.map(q => ({ query: q }));
+	}
+	console.warn('[planner-config] youtube_products inválido (esperado array de {query,item?} ou CSV); ignorado.');
+	return null;
+}
+
+/** Serializa a lista de produtos para o config JSON (array de objetos). */
+export function serializeYoutubeProducts(entries: YoutubeProductEntry[] | null): YoutubeProductEntry[] | null {
+	if (!entries || entries.length === 0) return null;
+	return entries.map(e => ({
+		query: e.query,
+		...(e.item !== undefined ? { item: e.item } : {}),
+		...(e.title !== undefined ? { title: e.title } : {}),
+		...(e.vendor !== undefined ? { vendor: e.vendor } : {}),
+		...(e.price !== undefined ? { price: e.price } : {}),
+		...(e.commission_pct !== undefined ? { commission_pct: e.commission_pct } : {}),
+	}));
+}
+
+/** Categorias de vídeo do YouTube (id -> nome) para o dropdown do planner. */
+export const YOUTUBE_CATEGORIES: Record<number, string> = {
+	1: 'Film & Animation',
+	2: 'Autos & Vehicles',
+	10: 'Music',
+	15: 'Pets & Animals',
+	17: 'Sports',
+	18: 'Short Movies',
+	19: 'Travel & Events',
+	20: 'Gaming',
+	21: 'Videoblogging',
+	22: 'People & Blogs',
+	23: 'Comedy',
+	24: 'Entertainment',
+	25: 'News & Politics',
+	26: 'Howto & Style',
+	27: 'Education',
+	28: 'Science & Technology',
+	29: 'Nonprofits & Activism',
+};
+
+export const YOUTUBE_CATEGORY_DEFAULT = 22;
 
 
 /**
