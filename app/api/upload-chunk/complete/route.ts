@@ -42,6 +42,14 @@ export async function POST(req: Request) {
 	let totalChunks = 0;
 	let finalizeToken: string | null = null;
 	let lock: FinalizeLock | null = null;
+	// Quota aggregate fica em escopo da função: pré-check (declared size, ANTES de
+	// consumir) e check exato pós-concat reusam o mesmo valor — uma única leitura.
+	let quotaBytes = 0;
+	let usedBefore = 0;
+	// 413 de quota com parts ainda staged: NÃO apagar os .part.* no finally — o
+	// retry do cliente converge reutilizando os mesmos parts (idempotente) em vez
+	// de re-reportar "No uploaded chunks found".
+	let preserveParts = false;
 
 	const cleanupParts = async () => {
 		if (!partBase) return;
@@ -120,10 +128,7 @@ export async function POST(req: Request) {
 		// ── Staging: locate the .part.{i} files ─────────────────────────────────
 		const stagingPath = normalizeUploadPath(userId, targetPath);
 		if (!stagingPath) {
-			return NextResponse.json(
-				{ error: "Invalid upload path" },
-				{ status: 400 },
-			);
+			return NextResponse.json({ error: "Invalid upload path" }, { status: 400 });
 		}
 
 		const uploadDir = getUploadsDir();
@@ -164,6 +169,29 @@ export async function POST(req: Request) {
 			return NextResponse.json(
 				{ error: "No uploaded chunks found" },
 				{ status: 400 },
+			);
+		}
+
+		// ── Quota PRE-CHECK (declared size, ANTES de consumir os parts) ─────────
+		// A ordem do finally importa: qualquer retorno com o lock segurando os
+		// parts faz o cleanupParts() apagá-los. Um 413 aqui NÃO pode destruir o
+		// staging, senão o retry do cliente encontra zero parts e reporta o erro
+		// enganoso "No uploaded chunks found" (o 413 real fica escondido nos logs
+		// do proxy). Com preserveParts, o retry re-encontra os parts e converge:
+		// 413 até o usuário liberar quota, depois finaliza reaproveitando-os.
+		// O check EXATO contra o tamanho real no disco segue rodando pós-concat
+		// (guarda contra cliente que declara tamanho menor).
+		quotaBytes = getUserQuotaBytes();
+		const quotaAgg = await prisma.contentItem.aggregate({
+			where: { user_id: userId },
+			_sum: { size: true },
+		});
+		usedBefore = quotaAgg._sum.size || 0;
+		if (usedBefore + sizeDeclared > quotaBytes) {
+			preserveParts = true;
+			return NextResponse.json(
+				{ error: "Quota exceeded (upload limit reached)" },
+				{ status: 413 },
 			);
 		}
 
@@ -293,13 +321,11 @@ export async function POST(req: Request) {
 			if (safeThumb) thumbnailUrl = `/api/file/${safeThumb}`;
 		}
 
-		// ── Quota check (before persisting the DB record) ───────────────────────
-		const quotaBytes = getUserQuotaBytes();
-		const agg = await prisma.contentItem.aggregate({
-			where: { user_id: userId },
-			_sum: { size: true },
-		});
-		const usedBefore = agg._sum.size || 0;
+		// ── Quota exact check (before persisting the DB record) ────────────────
+		// Reusa o aggregate do pré-check; o tamanho EXATO vem do arquivo real em
+		// disco (guarda um cliente que declarou size menor no formData). Parts já
+		// consumidos nesta altura (renomeados p/ .finalizing), então nada a
+		// preservar no staging.
 		if (usedBefore + actualSize > quotaBytes) {
 			await unlink(finalDiskPath).catch(() => {});
 			finalDiskPath = null;
@@ -375,10 +401,7 @@ export async function POST(req: Request) {
 		// the finalize dir are cleaned in `finally`).
 		if (finalDiskPath) await unlink(finalDiskPath).catch(() => {});
 		if (thumbnailDiskPath) await unlink(thumbnailDiskPath).catch(() => {});
-		return NextResponse.json(
-			{ error: getErrorMessage(error) },
-			{ status: 500 },
-		);
+		return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
 	} finally {
 		// Remove the private finalize dir (idempotent — success already emptied it).
 		if (finalizeToken) {
@@ -393,7 +416,11 @@ export async function POST(req: Request) {
 		if (lock) {
 			// Remove any straggler `.part.*` left under the staging path (normally
 			// none: we renamed them all before concatenating).
-			await cleanupParts();
+			// UNLESS preserveParts: a pre-concat 413 (quota) must leave the staged
+			// parts intact for the client's retry to reuse them idempotently.
+			if (!preserveParts) {
+				await cleanupParts();
+			}
 			// Release the lock LAST: while we hold it, no other request can write
 			// parts or cancel, so this cleanup cannot race a new upload.
 			await lock.release();
