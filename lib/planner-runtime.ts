@@ -373,6 +373,222 @@ export async function applyCaptionTemplate(opts: {
 }
 
 /**
+ * ÚNICA função que monta o youtube_options JSON de um Short (F2/M5/M17/M18).
+ * Usada por buildPostData (criação) E propagatePlannerConfigToPendingPosts
+ * (edição de planner) — garantia de que editar um planner nunca apaga
+ * products/título/template-desc dos Shorts pendentes.
+ *
+ * Cadeia de título (M17): youtube_title RESOLVIDO de templates → title do item
+ * → title_fallback → caption resolvida → nome do arquivo da biblioteca. Antes
+ * a propagação re-derivava SEM youtube_title no titleCandidate: editar só o
+ * título não se refletia nos pending.
+ * Products via toYoutubeProductsJson (F1/M5 — separa names/items, sem {var}),
+ * description com resolveYtTpl (M18), alias youtube_pinned_comment ??
+ * youtube_pinned_comment_text (G4) e herança privacy/made_for_kids/monetize/
+ * category config > item > youtube_options.
+ *
+ * Retorna JSON string, ou null se não houver título candidato (caption vazia +
+ * sem fallbacks) — mesmo contrato do buildPostData original.
+ */
+async function buildYoutubeOptionsForPost(opts: {
+	prisma: PrismaLike;
+	planner: { user_id: string };
+	config: PlannerConfig;
+	selectedContent: PlannerContentItem | null | undefined;
+	channelName: string;
+	now: Date;
+	caption: string;
+	itemName?: string; // nome do arquivo do item de biblioteca (se ausente, resolve via lookup)
+}): Promise<string | null> {
+	const { config, selectedContent } = opts;
+	const selected = selectedContent as PlannerContentItem | null | undefined;
+	const cfg = config as Record<string, unknown>;
+	const selAny = selected as unknown as Record<string, unknown> | null | undefined;
+
+	// Resolve youtube_title/description templates (se contiver {var}). `{date}`
+	// usa `now` — propagação passa o now do run; buildPostData o do post.
+	const varsForYt = await resolveCaptionTemplateVars(
+		opts.prisma,
+		selected as PlannerContentItem | null | undefined,
+		opts.planner,
+		config,
+		opts.channelName,
+		opts.now,
+	);
+	const resolveYtTpl = (v: string): string =>
+		v.includes("{") ? substituteCaptionTemplate(v, varsForYt) : v;
+	const rawYtTitle =
+		typeof cfg["youtube_title"] === "string"
+			? resolveYtTpl(String(cfg["youtube_title"]))
+			: "";
+	const rawYtDescTpl =
+		typeof cfg["youtube_description"] === "string"
+			? resolveYtTpl(String(cfg["youtube_description"]))
+			: "";
+
+	// Nome do arquivo do item de biblioteca (último recurso da cadeia de título).
+	// buildPostData pré-busca e passa `itemName`; propagação resolve aqui.
+	let itemName = opts.itemName || "";
+	if (!itemName) {
+		const libId = selected?.id || selected?.folder_id;
+		if (libId) {
+			try {
+				const libItem = await opts.prisma.contentItem.findFirst({
+					where: { id: libId, user_id: opts.planner.user_id },
+					select: { name: true },
+				});
+				itemName = libItem?.name
+					? String(libItem.name).replace(/\.[A-Za-z0-9]+$/, "")
+					: "";
+			} catch {}
+		}
+	}
+
+	// M17: youtube_title resolvido é a PRIMEIRA fonte do título. Antes a
+	// propagação pulava esse passo — editar o título nunca propagava.
+	const titleCandidate = [
+		rawYtTitle || "",
+		selected?.title || "",
+		selected?.title_fallback || "",
+		opts.caption || "",
+		itemName,
+	]
+		.map((t) => String(t).trim())
+		.find(Boolean);
+	if (!titleCandidate) return null;
+
+	// helper strict boolean (BK-21)
+	const toStrictBool = (v: unknown): boolean => {
+		if (typeof v === "boolean") return v;
+		if (typeof v === "string") return v.toLowerCase() === "true";
+		if (typeof v === "number") return v === 1;
+		if (v == null) return false;
+		return String(v).toLowerCase() === "true";
+	};
+
+	// privacy: config.youtube_privacy > item.privacy > item.youtube_options.privacy > PUBLIC
+	let youtubePrivacy: string = "PUBLIC";
+	const cfgPrivacy = cfg["youtube_privacy"];
+	const selPrivacy = selAny?.["privacy"];
+	if (
+		typeof cfgPrivacy === "string" &&
+		["PUBLIC", "UNLISTED", "PRIVATE"].includes(
+			String(cfgPrivacy).toUpperCase(),
+		)
+	) {
+		youtubePrivacy = String(cfgPrivacy).toUpperCase();
+	} else if (
+		typeof selPrivacy === "string" &&
+		["PUBLIC", "UNLISTED", "PRIVATE"].includes(
+			String(selPrivacy).toUpperCase(),
+		)
+	) {
+		youtubePrivacy = String(selPrivacy).toUpperCase();
+	} else {
+		// tenta extrair de youtube_options do item se existir
+		const rawYtOpt = selAny?.["youtube_options"];
+		if (rawYtOpt != null) {
+			try {
+				const parsed =
+					typeof rawYtOpt === "string"
+						? (JSON.parse(rawYtOpt as string) as Record<string, unknown>)
+						: (rawYtOpt as Record<string, unknown>);
+				if (
+					typeof parsed.privacy === "string" &&
+					["PUBLIC", "UNLISTED", "PRIVATE"].includes(
+						String(parsed.privacy).toUpperCase(),
+					)
+				) {
+					youtubePrivacy = String(parsed.privacy).toUpperCase();
+				}
+			} catch {}
+		}
+	}
+	// made_for_kids / monetize: config > item > youtube_options
+	let madeForKids: boolean | null = null;
+	if (cfg["youtube_made_for_kids"] !== undefined)
+		madeForKids = toStrictBool(cfg["youtube_made_for_kids"]);
+	else if (selAny?.["made_for_kids"] !== undefined)
+		madeForKids = toStrictBool(selAny?.["made_for_kids"]);
+	else {
+		const rawYtOpt = selAny?.["youtube_options"];
+		if (rawYtOpt != null) {
+			try {
+				const parsed =
+					typeof rawYtOpt === "string"
+						? (JSON.parse(rawYtOpt as string) as Record<string, unknown>)
+						: (rawYtOpt as Record<string, unknown>);
+				if (parsed.made_for_kids !== undefined)
+					madeForKids = toStrictBool(parsed.made_for_kids);
+			} catch {}
+		}
+	}
+	let monetizeWithAds: boolean | null = null;
+	if (cfg["youtube_monetize_with_ads"] !== undefined)
+		monetizeWithAds = toStrictBool(cfg["youtube_monetize_with_ads"]);
+	else if (selAny?.["monetize_with_ads"] !== undefined)
+		monetizeWithAds = toStrictBool(selAny?.["monetize_with_ads"]);
+	else {
+		const rawYtOpt = selAny?.["youtube_options"];
+		if (rawYtOpt != null) {
+			try {
+				const parsed =
+					typeof rawYtOpt === "string"
+						? (JSON.parse(rawYtOpt as string) as Record<string, unknown>)
+						: (rawYtOpt as Record<string, unknown>);
+				if (parsed.monetize_with_ads !== undefined)
+					monetizeWithAds = toStrictBool(parsed.monetize_with_ads);
+			} catch {}
+		}
+	}
+
+	// Produtos afiliados (F1/M5): helper ÚNICO toYoutubeProductsJson separa
+	// nomes (auto-select via /api/shorts/auto) de itens verbatim (/api/shorts
+	// com products). NUNCA aplicar template {var} nem split por vírgula em
+	// nomes de produto (M22) — produto não é caption, e vírgula pode ser parte
+	// do nome. CSV legacy é normalizado para {query}.
+	const productsPayload = toYoutubeProductsJson(cfg["youtube_products"]);
+	let productsJson: string | null = null;
+	let productNamesJson: string | null = null;
+	if (productsPayload.hasItems) {
+		// [{ item: <bloco verbatim do catálogo> }] — /api/shorts (products)
+		productsJson = JSON.stringify(productsPayload.items);
+	}
+	if (productsPayload.hasNames) {
+		// ["nome", ...] — /api/shorts/auto (product_names)
+		productNamesJson = JSON.stringify(productsPayload.names);
+	}
+
+	// categoria e descricao: usar config quando houver, senão defaults (com
+	// template resolvido — M18: a propagação antes mandava a descrição crua).
+	const descriptionVal = (rawYtDescTpl ? rawYtDescTpl : opts.caption || "") as string;
+	const categoryIdRaw = cfg["youtube_category_id"];
+	const categoryId = categoryIdRaw !== undefined ? Number(categoryIdRaw) : undefined;
+	// G4: alias youtube_pinned_comment ?? youtube_pinned_comment_text (o wizard
+	// grava ambos; runtime lê o alias primeiro, config/preview idem).
+	const pinnedRaw =
+		(cfg["youtube_pinned_comment"] as unknown) ??
+		cfg["youtube_pinned_comment_text"] ??
+		selAny?.["pinned_comment_text"] ??
+		selAny?.["youtube_pinned_comment"];
+
+	const ytObj: Record<string, unknown> = {
+		title: titleCandidate.slice(0, 100),
+		privacy: youtubePrivacy,
+		...(madeForKids !== null ? { made_for_kids: madeForKids } : {}),
+		...(monetizeWithAds !== null ? { monetize_with_ads: monetizeWithAds } : {}),
+	};
+	if (descriptionVal) ytObj.description = String(descriptionVal).slice(0, 5000);
+	if (categoryId !== undefined && Number.isInteger(categoryId))
+		ytObj.category_id = categoryId;
+	if (typeof pinnedRaw === "string" && pinnedRaw.trim())
+		ytObj.pinned_comment_text = pinnedRaw.trim().slice(0, 10000);
+	if (productsJson) ytObj.products = productsJson;
+	if (productNamesJson) ytObj.product_names = productNamesJson;
+	return JSON.stringify(ytObj);
+}
+
+/**
  * Monta os dados de criação de um Post (Prisma.PostUncheckedCreateInput) a partir
  * do runtime resolvido. Aplica:
  *   - STORIES .mp4 → video_url (não image_url)
@@ -418,140 +634,23 @@ export async function buildPostData(opts: {
 				? "short"
 				: null;
 
-	// Short de planner SEM youtube_options falhava no publisher ("exige título")
-	// quando a caption resolvia vazia. Grava o título explícito usando a mesma
-	// cadeia de fallbacks (título do item → title_fallback → caption resolvida)
-	// e, por fim, o NOME do arquivo do item de biblioteca — uma caption
-	// exclusivamente-template (ex.: "{post_caption}" de item sem caption)
-	// resolveria vazio e o Short nunca mais publicaria. Com o nome como último
-	// recurso o título nunca fica vazio para itens da biblioteca.
+	// F2/M5/M17/M18: função ÚNICA buildYoutubeOptionsForPost — a MESMA usada
+	// pela propagação. Garante que criar posts e editar um planner produzem o
+	// MESMO youtube_options (products preservados, título com youtube_title
+	// resolvido, description com template, pinned alias G4, herança
+	// config>item>youtube_options). Sem duplicação de lógica.
 	let youtubeOptions: string | null = null;
 	if (ytTypeForPost === "short") {
-		const selected = runtime.selectedContent as PlannerContentItem | null | undefined;
-		let itemName = "";
-		const libId = selected?.id || selected?.folder_id;
-		if (libId) {
-			const libItem = await opts.prisma.contentItem.findFirst({
-				where: { id: libId, user_id: opts.planner.user_id },
-				select: { name: true },
-			});
-			itemName = libItem?.name
-				? String(libItem.name).replace(/\.[A-Za-z0-9]+$/, "")
-				: "";
-		}
-		// Resolve youtube_title/description/products templates (se contiver {var})
-		const cfg = config as Record<string, unknown>;
-		const varsForYt = await resolveCaptionTemplateVars(
-				opts.prisma,
-				selected as PlannerContentItem | null | undefined,
-				opts.planner,
-				config,
-				opts.channel.name || "",
-				opts.now,
-			);
-		const resolveYtTpl = (v: string): string => v.includes("{") ? substituteCaptionTemplate(v, varsForYt) : v;
-		const rawYtTitle = typeof cfg["youtube_title"] === "string" ? resolveYtTpl(String(cfg["youtube_title"])) : "";
-		const rawYtDescTpl = typeof cfg["youtube_description"] === "string" ? resolveYtTpl(String(cfg["youtube_description"])) : "";
-		// Produtos afiliados (B1/M1..M4/M22): helper ÚNICO toYoutubeProductsJson
-		// separa nomes (auto-select via /api/shorts/auto) de itens verbatim
-		// (/api/shorts com products). NUNCA aplicar template {var} nem split por
-		// vírgula em nomes de produto (M22) — produto não é caption, e vírgula
-		// pode ser parte do nome. CSV legacy é normalizado para {query}.
-		const productsPayload = toYoutubeProductsJson(cfg["youtube_products"]);
-		let productsJson: string | null = null;
-		let productNamesJson: string | null = null;
-		if (productsPayload.hasItems) {
-			// [{ item: <bloco verbatim do catálogo> }] — /api/shorts (products)
-			productsJson = JSON.stringify(productsPayload.items);
-		}
-		if (productsPayload.hasNames) {
-			// ["nome", ...] — /api/shorts/auto (product_names)
-			productNamesJson = JSON.stringify(productsPayload.names);
-		}
-		const titleCandidate = [
-			rawYtTitle || "",
-			selected?.title || "",
-			selected?.title_fallback || "",
-			caption || "",
-			itemName,
-		]
-			.map((t) => String(t).trim())
-			.find(Boolean);
-		if (titleCandidate) {
-			// BK-22 FIX: expandir para salvar youtube_options COMPLETO (privacy/made_for_kids/monetize/description)
-			// antes só salvava {title}. Agora preserva youtube_options quando houver herança de config/conteúdo.
-			const selAny = selected as unknown as Record<string, unknown> | null | undefined;
-			// helper strict boolean (BK-21)
-			const toStrictBool = (v: unknown): boolean => {
-				if (typeof v === "boolean") return v;
-				if (typeof v === "string") return v.toLowerCase() === "true";
-				if (typeof v === "number") return v === 1;
-				if (v == null) return false;
-				return String(v).toLowerCase() === "true";
-			};
-			// privacy: config.youtube_privacy > item.privacy > item.youtube_options.privacy > PUBLIC
-			let youtubePrivacy: string = "PUBLIC";
-			const cfgPrivacy = cfg["youtube_privacy"];
-			const selPrivacy = selAny?.["privacy"];
-			if (typeof cfgPrivacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(cfgPrivacy).toUpperCase())) {
-				youtubePrivacy = String(cfgPrivacy).toUpperCase();
-			} else if (typeof selPrivacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(selPrivacy).toUpperCase())) {
-				youtubePrivacy = String(selPrivacy).toUpperCase();
-			} else {
-				// tenta extrair de youtube_options do item se existir
-				const rawYtOpt = selAny?.["youtube_options"];
-				if (rawYtOpt != null) {
-					try {
-						const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
-						if (typeof parsed.privacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(parsed.privacy).toUpperCase())) {
-							youtubePrivacy = String(parsed.privacy).toUpperCase();
-						}
-					} catch {}
-				}
-			}
-			let madeForKids: boolean | null = null;
-			if (cfg["youtube_made_for_kids"] !== undefined) madeForKids = toStrictBool(cfg["youtube_made_for_kids"]);
-			else if (selAny?.["made_for_kids"] !== undefined) madeForKids = toStrictBool(selAny?.["made_for_kids"]);
-			else {
-				const rawYtOpt = selAny?.["youtube_options"];
-				if (rawYtOpt != null) {
-					try {
-						const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
-						if (parsed.made_for_kids !== undefined) madeForKids = toStrictBool(parsed.made_for_kids);
-					} catch {}
-				}
-			}
-			let monetizeWithAds: boolean | null = null;
-			if (cfg["youtube_monetize_with_ads"] !== undefined) monetizeWithAds = toStrictBool(cfg["youtube_monetize_with_ads"]);
-			else if (selAny?.["monetize_with_ads"] !== undefined) monetizeWithAds = toStrictBool(selAny?.["monetize_with_ads"]);
-			else {
-				const rawYtOpt = selAny?.["youtube_options"];
-				if (rawYtOpt != null) {
-					try {
-						const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
-						if (parsed.monetize_with_ads !== undefined) monetizeWithAds = toStrictBool(parsed.monetize_with_ads);
-					} catch {}
-				}
-			}
-			// categoria e descricao: usar config quando houver, senão defaults (com template resolvido)
-			const descriptionVal = (rawYtDescTpl ? rawYtDescTpl : (caption || "")) as string;
-			const categoryIdRaw = cfg["youtube_category_id"];
-			const categoryId = categoryIdRaw !== undefined ? Number(categoryIdRaw) : undefined;
-			const pinnedRaw = (cfg["youtube_pinned_comment"] as unknown) ?? cfg["youtube_pinned_comment_text"] ?? selAny?.["pinned_comment_text"] ?? selAny?.["youtube_pinned_comment"];
-
-			const ytObj: Record<string, unknown> = {
-				title: titleCandidate.slice(0, 100),
-				privacy: youtubePrivacy,
-				...(madeForKids !== null ? { made_for_kids: madeForKids } : {}),
-				...(monetizeWithAds !== null ? { monetize_with_ads: monetizeWithAds } : {}),
-			};
-			if (descriptionVal) ytObj.description = String(descriptionVal).slice(0, 5000);
-			if (categoryId !== undefined && Number.isInteger(categoryId)) ytObj.category_id = categoryId;
-			if (typeof pinnedRaw === "string" && pinnedRaw.trim()) ytObj.pinned_comment_text = pinnedRaw.trim().slice(0, 10000);
-			if (productsJson) ytObj.products = productsJson;
-			if (productNamesJson) ytObj.product_names = productNamesJson;
-			youtubeOptions = JSON.stringify(ytObj);
-		}
+		youtubeOptions = await buildYoutubeOptionsForPost({
+			prisma: opts.prisma,
+			planner: { user_id: opts.planner.user_id },
+			config,
+			selectedContent:
+				runtime.selectedContent as PlannerContentItem | null | undefined,
+			channelName: opts.channel.name || "",
+			now: opts.now,
+			caption,
+		});
 	}
 
 	return {
@@ -607,6 +706,7 @@ const CAPTION_PROPAGATION_KEYS = [
   "youtube_monetize_with_ads",
   "youtube_category_id",
   "youtube_pinned_comment_text",
+  "youtube_pinned_comment",
   "youtube_products",
   "collaborators",
   "user_tags",
@@ -645,114 +745,6 @@ export function shouldPropagateConfig(
     }
   }
   return false;
-}
-
-/**
- * Constrói youtube_options JSON para um post de Short a partir do config atualizado
- * e caption já resolvida. Espelha a lógica de buildPostData para consistência.
- * Retorna null se não houver título candidato (caption vazia + sem fallbacks).
- */
-export async function buildYoutubeOptionsForPropagation(opts: {
-  prisma: PrismaLike;
-  planner: { user_id: string };
-  config: PlannerConfig;
-  caption: string;
-  selectedContent: PlannerContentItem | null | undefined;
-}): Promise<string | null> {
-  const selected = opts.selectedContent as PlannerContentItem | null | undefined;
-  let itemName = "";
-  const libId = selected?.id || selected?.folder_id;
-  if (libId) {
-    try {
-      const libItem = await opts.prisma.contentItem.findFirst({
-        where: { id: libId, user_id: opts.planner.user_id },
-        select: { name: true },
-      });
-      itemName = libItem?.name ? String(libItem.name).replace(/\.[A-Za-z0-9]+$/, "") : "";
-    } catch {}
-  }
-  const titleCandidate = [
-    selected?.title || "",
-    selected?.title_fallback || "",
-    opts.caption || "",
-    itemName,
-  ]
-    .map((t) => String(t).trim())
-    .find(Boolean);
-  if (!titleCandidate) return null;
-
-  const cfg = opts.config as Record<string, unknown>;
-  const selAny = selected as unknown as Record<string, unknown> | null | undefined;
-  const toStrictBool = (v: unknown): boolean => {
-    if (typeof v === "boolean") return v;
-    if (typeof v === "string") return v.toLowerCase() === "true";
-    if (typeof v === "number") return v === 1;
-    if (v == null) return false;
-    return String(v).toLowerCase() === "true";
-  };
-  let youtubePrivacy: string = "PUBLIC";
-  const cfgPrivacy = cfg["youtube_privacy"];
-  const selPrivacy = selAny?.["privacy"];
-  if (typeof cfgPrivacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(cfgPrivacy).toUpperCase())) {
-    youtubePrivacy = String(cfgPrivacy).toUpperCase();
-  } else if (typeof selPrivacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(selPrivacy).toUpperCase())) {
-    youtubePrivacy = String(selPrivacy).toUpperCase();
-  } else {
-    const rawYtOpt = selAny?.["youtube_options"];
-    if (rawYtOpt != null) {
-      try {
-        const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
-        if (typeof parsed.privacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(parsed.privacy).toUpperCase())) {
-          youtubePrivacy = String(parsed.privacy).toUpperCase();
-        }
-      } catch {}
-    }
-  }
-  let madeForKids: boolean | null = null;
-  if (cfg["youtube_made_for_kids"] !== undefined) madeForKids = toStrictBool(cfg["youtube_made_for_kids"]);
-  else if (selAny?.["made_for_kids"] !== undefined) madeForKids = toStrictBool(selAny?.["made_for_kids"]);
-  else {
-    const rawYtOpt = selAny?.["youtube_options"];
-    if (rawYtOpt != null) {
-      try {
-        const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
-        if (parsed.made_for_kids !== undefined) madeForKids = toStrictBool(parsed.made_for_kids);
-      } catch {}
-    }
-  }
-  let monetizeWithAds: boolean | null = null;
-  if (cfg["youtube_monetize_with_ads"] !== undefined) monetizeWithAds = toStrictBool(cfg["youtube_monetize_with_ads"]);
-  else if (selAny?.["monetize_with_ads"] !== undefined) monetizeWithAds = toStrictBool(selAny?.["monetize_with_ads"]);
-  else {
-    const rawYtOpt = selAny?.["youtube_options"];
-    if (rawYtOpt != null) {
-      try {
-        const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
-        if (parsed.monetize_with_ads !== undefined) monetizeWithAds = toStrictBool(parsed.monetize_with_ads);
-      } catch {}
-    }
-  }
-  const descriptionVal = (typeof cfg["youtube_description"] === "string" ? String(cfg["youtube_description"]) : (opts.caption || "")) as string;
-  const categoryIdRaw = cfg["youtube_category_id"];
-  const categoryId = categoryIdRaw !== undefined ? Number(categoryIdRaw) : undefined;
-  const pinnedRaw = cfg["youtube_pinned_comment_text"] ?? selAny?.["pinned_comment_text"];
-
-  const ytObj: Record<string, unknown> = {
-    title: titleCandidate.slice(0, 100),
-    privacy: youtubePrivacy,
-    ...(madeForKids !== null ? { made_for_kids: madeForKids } : {}),
-    ...(monetizeWithAds !== null ? { monetize_with_ads: monetizeWithAds } : {}),
-  };
-  if (descriptionVal) ytObj.description = String(descriptionVal).slice(0, 5000);
-  if (categoryId !== undefined && Number.isInteger(categoryId)) ytObj.category_id = categoryId;
-  if (typeof pinnedRaw === "string" && (pinnedRaw as string).trim()) ytObj.pinned_comment_text = (pinnedRaw as string).trim().slice(0, 10000);
-  // B1: propagação usa o MESMO helper do buildPostData (toYoutubeProductsJson)
-  // para reconstruir products/product_names — sem isso, editar um planner
-  // apagaria os produtos afiliados dos Shorts pendentes (M5/W8).
-  const propagatedProducts = toYoutubeProductsJson(cfg["youtube_products"]);
-  if (propagatedProducts.hasItems) ytObj.products = JSON.stringify(propagatedProducts.items);
-  if (propagatedProducts.hasNames) ytObj.product_names = JSON.stringify(propagatedProducts.names);
-  return JSON.stringify(ytObj);
 }
 
 /**
@@ -886,16 +878,19 @@ export async function propagatePlannerConfigToPendingPosts(
     let newYoutubeOptions: string | null | undefined = undefined; // undefined = não alterar
     if (isYtChannel && ytType === "short") {
       try {
-        newYoutubeOptions = await buildYoutubeOptionsForPropagation({
+        newYoutubeOptions = await buildYoutubeOptionsForPost({
           prisma: prismaClient as PrismaLike,
           planner: { user_id: planner.user_id },
           config: newConfig,
-          caption: newCaption,
           selectedContent,
+          channelName,
+          now,
+          caption: newCaption,
         });
       } catch {}
     } else if (isYtChannel && ytType === "community") {
-      // Comunidade não tem youtube_options (usa caption); não mexe
+      // Comunidade não tem youtube_options (usa caption); não reescreve
+      // youtube_options — propagação só toca caption nesses posts.
       newYoutubeOptions = undefined;
     }
 
