@@ -20,22 +20,13 @@ import {
 	normalizeYoutubeProductsList,
 	resolveCaptionTextForWizard,
 	serializeYoutubeProducts,
+	TIKTOK_PRIVACY_FALLBACK,
+	labelTiktokPrivacy,
 	type YoutubeProductEntry,
 } from "@/lib/planner-config";
 
 const PLANNER_MIX_ERROR = "Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
 const PLANNER_TIKTOK_MIX_ERROR = "Planners TikTok não podem misturar canais de outras plataformas.";
-const TIKTOK_PRIVACY_FALLBACK: readonly string[] = [
-	"PUBLIC_TO_EVERYONE",
-	"MUTUAL_FOLLOW_FRIENDS",
-	"SELF_ONLY",
-] as const;
-const TIKTOK_PRIVACY_LABELS: Record<string, string> = {
-	PUBLIC_TO_EVERYONE: "Público para todos",
-	MUTUAL_FOLLOW_FRIENDS: "Amigos mútuos",
-	FOLLOWER_OF_CREATOR: "Seguidores do criador",
-	SELF_ONLY: "Somente eu",
-};
 
 // B1 — produtos afiliados: resultado da busca live (mesmo shape do payload
 // GET /api/youtube/products: { item, title, vendor, price, commission_pct }).
@@ -2056,7 +2047,7 @@ export default function PlannerWizard({
 										</div>
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
-												Privacy Level
+												Nível de privacidade
 											</label>
 											<select
 												value={tiktokPrivacyLevel}
@@ -2068,13 +2059,13 @@ export default function PlannerWizard({
 											>
 												{tiktokPrivacyOptions.map((opt) => (
 													<option key={opt} value={opt}>
-														{TIKTOK_PRIVACY_LABELS[opt] ?? opt}
+														{labelTiktokPrivacy(opt)}
 													</option>
 												))}
 											</select>
 											<p className="text-[10px] text-gray-400 mt-1">
-												Opções vindas do creator_info do canal (fallback: Público, Amigos
-												mútuos, Somente eu).
+												Opções vindas do creator_info do canal (fallback: Público (todos),
+												Amigos mútuos, Só eu). O valor salvo é o código cru exigido pela API.
 											</p>
 										</div>
 										<div className="space-y-3">

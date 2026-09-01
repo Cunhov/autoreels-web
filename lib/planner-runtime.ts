@@ -809,6 +809,10 @@ async function buildYoutubeOptionsForPost(opts: {
 /**
  * Helper de TikTok: normaliza privacy_level com fallback do creator_info.
  * Exportado para A4 implementar buildTiktokOptionsForPost completo.
+ *
+ * IMPORTANTE (T5): esta função deve SEMPRE retornar o VALUE cru
+ * (PUBLIC_TO_EVERYONE, SELF_ONLY, ...) — a API TikTok exige o código cru.
+ * Rótulos PT-BR são exclusivos de UI via labelTiktokPrivacy (planner-config).
  */
 export function getTiktokPrivacyOptions(fallback?: string[]): string[] {
 	if (fallback && Array.isArray(fallback) && fallback.length > 0) return fallback;
