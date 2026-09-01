@@ -93,14 +93,25 @@ export async function GET(req: Request) {
         if (endDate) where.scheduled_at.lte = endDate;
     }
 
-    const posts = await prisma.post.findMany({
-        where,
-        orderBy: {
-            created_at: "desc",
-        },
-        skip: offset,
-        take: limit,
-    });
+    // S2-analytics: o GET lista o Post inteiro (sem select). Após um merge de
+    // schema sem migration (ex.: colunas tiktok_* / captions sem ALTER TABLE),
+    // o Prisma lança P2022 "column does not exist" e o Analytics (LocalDashboard)
+    // ficava em branco com 500 cru (stack leak). Vira JSON seguro — e o painel
+    // volta a funcionar assim que o DB é alinhado (prisma db push / migrate deploy).
+    let posts: Awaited<ReturnType<typeof prisma.post.findMany>>;
+    try {
+        posts = await prisma.post.findMany({
+            where,
+            orderBy: {
+                created_at: "desc",
+            },
+            skip: offset,
+            take: limit,
+        });
+    } catch (error: unknown) {
+        console.error("List posts error:", error);
+        return NextResponse.json({ error: getErrorMessage(error) }, { status: 500 });
+    }
 
     return NextResponse.json(posts);
 }
