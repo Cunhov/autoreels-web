@@ -5,7 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { escapeHtml } from "@/lib/sanitize";
 // Contract with fix3-core: lib/planner-config.ts is created by that worktree.
-import { parsePlannerConfig, validatePlannerConfig } from "@/lib/planner-config";
+import { parsePlannerConfig, validatePlannerConfig, validatePlannerChannelMix, PLANNER_MIX_ERROR } from "@/lib/planner-config";
+import { propagatePlannerConfigToPendingPosts, shouldPropagateConfig } from "@/lib/planner-runtime";
 
 import { PLANNER_STATUSES, isPlannerStatus } from "@/lib/planner-status";
 const VALID_PLANNER_STATUS = [...PLANNER_STATUSES] as const;
@@ -65,6 +66,8 @@ export async function PATCH(
         // channel_ids: must be an array; every id must belong to this user.
         // Empty array is VALID (user explicitly disconnected all channels).
         let safeChannelIds: string[] | undefined;
+        let beforeChannelIds: string[] | null = null;
+        let oldConfigRaw: string | null = null;
         if (channel_ids !== undefined) {
             if (!Array.isArray(channel_ids)) {
                 return NextResponse.json({ error: "channel_ids must be an array" }, { status: 400 });
@@ -78,8 +81,42 @@ export async function PATCH(
                     return NextResponse.json({ error: "One or more channels do not belong to this user" }, { status: 400 });
                 }
             }
+            // Isolation: bloquear planners mistos YT+IG
+            if (channel_ids.length > 1) {
+                const mixCheck = await validatePlannerChannelMix(channel_ids, prisma);
+                if (!mixCheck.ok) {
+                    return NextResponse.json({ error: PLANNER_MIX_ERROR }, { status: 400 });
+                }
+            }
             safeChannelIds = channel_ids;
+            // Captura canais antes da atualização para detectar removidos.
+            // Necessário para cancelar Posts órfãos — o publisher busca por
+            // Post.channel_id, não por planner.channels, então set() sozinho
+            // deixaria posts scheduled/pending órfãos sendo publicados.
+            const existing = await prisma.planner.findFirst({
+                where: { id, user_id: userId },
+                select: { channels: { select: { id: true } }, config: true },
+            });
+            if (!existing) {
+                return NextResponse.json({ error: "Planner not found" }, { status: 404 });
+            }
+            beforeChannelIds = existing.channels.map(c => c.id);
+            oldConfigRaw = (existing as unknown as { config?: string }).config ?? null;
         }
+
+        // Captura config antigo para detectar diff de descrição/título (bug-desc)
+        if (safeConfig !== undefined && oldConfigRaw === null) {
+            try {
+                const prev = await prisma.planner.findFirst({
+                    where: { id, user_id: userId },
+                    select: { config: true },
+                });
+                oldConfigRaw = prev?.config ?? null;
+            } catch {}
+        }
+        // Se channel_ids não foi enviado mas safeConfig sim, ainda precisamos do oldConfigRaw
+        // (já capturado acima). Se channel_ids foi enviado, o prev já foi buscado para beforeChannelIds,
+        // mas não tínhamos oldConfigRaw — buscamos separadamente.
 
         const planner = await prisma.planner.update({
             where: { id, user_id: userId },
@@ -96,6 +133,107 @@ export async function PATCH(
                 } : {}),
             },
         });
+
+        // ── BUG-FIX (track bug-remove): cancelar Posts órfãos de canais removidos ─
+        // Comportamento esperado: remover canal = cancela/deleta Posts com status
+        // pendente daquele channel_id. Sem isso, o publisher ainda publica pois
+        // busca Post por status/channel_id, ignorando planner.channels.
+        if (safeChannelIds !== undefined && beforeChannelIds !== null) {
+            const afterIds = new Set(safeChannelIds);
+            const removedChannelIds = beforeChannelIds.filter(cid => !afterIds.has(cid));
+            if (removedChannelIds.length > 0) {
+                const cancellableStatuses = [
+                    'pending',
+                    'scheduled',
+                    'queued',
+                    'draft',
+                    'processing',
+                    'processing_upload',
+                    'processing_children',
+                    'ready_to_publish',
+                ];
+                try {
+                    const result = await prisma.post.updateMany({
+                        where: {
+                            planner_id: id,
+                            channel_id: { in: removedChannelIds },
+                            status: { in: cancellableStatuses },
+                        },
+                        data: {
+                            status: 'cancelled',
+                            error_message: 'Canal removido do planner',
+                            failed_reason: 'channel_removed',
+                        },
+                    });
+                    if (result.count > 0) {
+                        await prisma.plannerLog.create({
+                            data: {
+                                planner_id: id,
+                                level: 'info',
+                                message: `Canal(is) removido(s) — ${result.count} post(s) cancelado(s)`,
+                                details: JSON.stringify({
+                                    removed_channel_ids: removedChannelIds,
+                                    cancelled_count: result.count,
+                                    before: beforeChannelIds,
+                                    after: safeChannelIds,
+                                }),
+                            },
+                        });
+                    }
+                } catch (logErr) {
+                    console.error('[planner PATCH] falha ao cancelar posts de canal removido:', logErr);
+                    // Não falha o PATCH — a remoção do canal já ocorreu; auditoria apenas.
+                    try {
+                        await prisma.plannerLog.create({
+                            data: {
+                                planner_id: id,
+                                level: 'warning',
+                                message: 'Falha ao cancelar posts de canal removido',
+                                details: JSON.stringify({
+                                    removed_channel_ids: removedChannelIds,
+                                    error: logErr instanceof Error ? logErr.message : String(logErr),
+                                }),
+                            },
+                        });
+                    } catch {}
+                }
+            }
+        }
+
+        // ── BUG-FIX (track bug-desc): editar descrição/título propaga para posts pendentes ──
+        // COMPORTAMENTO ESPERADO: Editar caption/título do planner (via config) atualiza
+        // caption/youtube_options de TODOS os posts pending/scheduled/queued.
+        // Posts têm snapshot de caption criado em runPlannerOnce via buildPostData;
+        // editar config não propagava — bug reportado.
+        if (safeConfig !== undefined) {
+            try {
+                const oldCfg = oldConfigRaw ? parsePlannerConfig(oldConfigRaw) : {};
+                const newCfg = parsePlannerConfig(safeConfig);
+                if (shouldPropagateConfig(oldCfg as Record<string, unknown>, newCfg as Record<string, unknown>)) {
+                    const { updated, total } = await propagatePlannerConfigToPendingPosts(
+                        prisma as unknown as Parameters<typeof propagatePlannerConfigToPendingPosts>[0],
+                        { id, user_id: userId },
+                        newCfg as Record<string, unknown>,
+                        new Date()
+                    );
+                    if (updated > 0) {
+                        console.log(`[planner PATCH] bug-desc: ${updated}/${total} posts propagados para planner ${id}`);
+                    }
+                }
+            } catch (propErr) {
+                console.warn("[planner PATCH] falha ao propagar descrição para posts pendentes:", propErr);
+                try {
+                    await prisma.plannerLog.create({
+                        data: {
+                            planner_id: id,
+                            level: "warning",
+                            message: "Falha ao propagar descrição para posts pendentes",
+                            details: JSON.stringify({ error: propErr instanceof Error ? propErr.message : String(propErr) }),
+                        },
+                    });
+                } catch {}
+            }
+        }
 
         return NextResponse.json(planner);
     } catch (error: unknown) {
