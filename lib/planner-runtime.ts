@@ -942,7 +942,7 @@ export async function propagatePlannerConfigToPendingPosts(
     let newYoutubeOptions: string | null | undefined = undefined; // undefined = não alterar
     if (isYtChannel && ytType === "short") {
       try {
-        newYoutubeOptions = await buildYoutubeOptionsForPost({
+        const rebuilt = await buildYoutubeOptionsForPost({
           prisma: prismaClient as PrismaLike,
           planner: { user_id: planner.user_id },
           config: newConfig,
@@ -952,6 +952,14 @@ export async function propagatePlannerConfigToPendingPosts(
           caption: newCaption,
           platform: channelPlatform,
         });
+        // F7/QA: buildYoutubeOptionsForPost retorna null quando NENHUM título
+        // é resolvível (config patológico legado: youtube_title e caption
+        // vazios no post). Nesse caso NÃO apagar youtube_options existente do
+        // post pendente — regra M5/B2: editar planner nunca apaga dados de
+        // publicação (products/título antigos preservados); o post continua
+        // pendente e a falha real (se houver) será de publicação, não de
+        // propagação silenciosa.
+        if (rebuilt !== null) newYoutubeOptions = rebuilt;
       } catch {}
     } else if (isYtChannel && ytType === "community") {
       // Comunidade não tem youtube_options (usa caption); não reescreve

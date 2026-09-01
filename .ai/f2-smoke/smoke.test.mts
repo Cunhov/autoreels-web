@@ -282,8 +282,49 @@ await tryIt("T6 alias G4 só youtube_pinned_comment → pinned re-resolvido", as
   assert.strictEqual(yt.pinned_comment_text, "Pinned via alias");
 });
 
+// ── Teste 7 (F7/QA): título não-resolvível NÃO apaga youtube_options ──
+// buildYoutubeOptionsForPost retorna null quando nenhum título é derivável
+// (config patológico legado: youtube_title + capção + content sem título).
+// A propagação NÃO pode zerar youtube_options de um Short pendente nesse
+// caso — regra M5/B2 (editar planner nunca apaga dados de publicação).
+await tryIt("T7 título não-resolvível → youtube_options existente preservado", async () => {
+  const prisma = makePrisma([
+    {
+      ...pendingShort,
+      id: "p9",
+      youtube_options: JSON.stringify({
+        title: "Titulo ANTIGO",
+        privacy: "PUBLIC",
+        products: JSON.stringify([{ item: { id: "p1", title: "Smartwatch X", merchant: { id: "m1" } } }]),
+      }),
+    },
+  ]);
+  // Config sem youtube_title e com content vazio (sem título/caption/fallback) —
+  // título não resolvível → buildYoutubeOptionsForPost retorna null.
+  const cfg: AnyRec = {
+    ...baseConfig,
+    youtube_title: undefined,
+    youtube_description: undefined,
+    content: [{ }],
+  };
+  await propagatePlannerConfigToPendingPosts(
+    prisma as never,
+    { id: "pl1", user_id: "u1" },
+    cfg as never,
+    new Date("2026-09-02T12:00:00Z"),
+  );
+  const upd = prisma._updates.find((u: AnyRec) => u.id === "p9");
+  assert.ok(upd, "update feito");
+  assert.strictEqual(
+    (upd.data as AnyRec).youtube_options,
+    undefined,
+    "F7: youtube_options NÃO é zerado quando o título não resolve (null preserva o existente)",
+  );
+  // caption pode ser re-derivada (vazia aqui) — contrato é só não mexer em youtube_options
+});
+
 if (process.exitCode) {
   console.error("\n❌ FALHOU — veja erros acima");
 } else {
-  console.log("\n✅ Todos os 6 testes passaram");
+  console.log("\n✅ Todos os 7 testes passaram");
 }
