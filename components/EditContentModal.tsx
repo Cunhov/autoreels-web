@@ -14,6 +14,8 @@ interface ContentItem {
 	name: string;
 	title?: string;
 	caption?: string;
+	caption_youtube?: string | null;
+	caption_instagram?: string | null;
 	youtube_products?: string | null;
 	tags?: string[] | string;
 	type: string;
@@ -22,6 +24,13 @@ interface ContentItem {
 	path?: string;
 	duration?: number;
 	thumbnail_url?: string;
+}
+
+/** Sanitiza texto de legenda/caption por plataforma (mesma régua da caption). */
+function sanitizeCaptionText(v: string): string {
+	let s = v.trim();
+	if (s.length > CAPTION_MAX) s = s.slice(0, CAPTION_MAX);
+	return escapeHtml(s);
 }
 
 /** Tags are stored as JSON string in DB; the API may return raw or normalized. */
@@ -65,6 +74,8 @@ export default function EditContentModal({
 	const [name, setName] = useState("");
 	const [title, setTitle] = useState("");
 	const [caption, setCaption] = useState("");
+	const [captionYoutube, setCaptionYoutube] = useState("");
+	const [captionInstagram, setCaptionInstagram] = useState("");
 	const [youtubeProducts, setYoutubeProducts] = useState("");
 	const [tags, setTags] = useState<string[]>([]);
 	const [tagInput, setTagInput] = useState("");
@@ -97,6 +108,8 @@ export default function EditContentModal({
 				setName("");
 				setTitle("");
 				setCaption("");
+				setCaptionYoutube("");
+				setCaptionInstagram("");
 				setYoutubeProducts("");
 			} else {
 				// Single item - prefill
@@ -104,6 +117,8 @@ export default function EditContentModal({
 				setName(item.name || "");
 				setTitle(item.title || "");
 				setCaption(item.caption || "");
+				setCaptionYoutube(item.caption_youtube || "");
+				setCaptionInstagram(item.caption_instagram || "");
 				setYoutubeProducts(item.youtube_products || "");
 				setTags(normalizeTags(item.tags));
 				setVideoDuration(item.duration || 0);
@@ -178,6 +193,11 @@ export default function EditContentModal({
 					if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
 					updates.caption = escapeHtml(cap);
 				}
+				// Bulk: campo vazio = manter o atual (não sobrescreve).
+				if (captionYoutube.trim())
+					updates.caption_youtube = sanitizeCaptionText(captionYoutube);
+				if (captionInstagram.trim())
+					updates.caption_instagram = sanitizeCaptionText(captionInstagram);
 				if (youtubeProducts.trim())
 					updates.youtube_products = youtubeProducts.trim().slice(0, 5000);
 				if (tags.length > 0)
@@ -192,17 +212,19 @@ export default function EditContentModal({
 				let cap = caption.trim();
 				if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
 				updates.caption = escapeHtml(cap);
+				// Individual: campo vazio LIMPA o item (null) — remoção explícita no modal.
+				updates.caption_youtube = captionYoutube.trim()
+					? sanitizeCaptionText(captionYoutube)
+					: null;
+				updates.caption_instagram = captionInstagram.trim()
+					? sanitizeCaptionText(captionInstagram)
+					: null;
 				// Produtos do item: só envia se o usuário digitou (bulk vazio = manter).
 				// No modo individual, campo vazio LIMPA o item (updates.youtube_products = null)
 				// — decisão: remover produto marcado é ação explícita no modal.
-				if (isBulk) {
-					if (youtubeProducts.trim())
-						updates.youtube_products = youtubeProducts.trim().slice(0, 5000);
-				} else {
-					updates.youtube_products = youtubeProducts.trim()
-						? youtubeProducts.trim().slice(0, 5000)
-						: null;
-				}
+				updates.youtube_products = youtubeProducts.trim()
+					? youtubeProducts.trim().slice(0, 5000)
+					: null;
 				updates.tags = tags
 					.map((t) => escapeHtml(t.trim()).slice(0, 50))
 					.filter(Boolean);
@@ -444,6 +466,75 @@ export default function EditContentModal({
 						>
 							{caption.length}/{CAPTION_MAX}
 						</div>
+					</div>
+
+					<div>
+						<label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
+							Legenda YouTube{" "}
+							<span className="text-gray-400 lowercase font-normal">(opcional)</span>
+						</label>
+						<textarea
+							value={captionYoutube}
+							onChange={(e) => setCaptionYoutube(e.target.value)}
+							maxLength={CAPTION_MAX}
+							rows={3}
+							className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none transition-all"
+							placeholder={
+								isBulk
+									? "Deixe vazio para manter a atual"
+									: "Específica para o planner YouTube..."
+							}
+						/>
+						<p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+							Usada no lugar da legenda padrão quando o post vai para o YouTube.
+							Vazia = usa a legenda padrão.
+						</p>
+					</div>
+
+					<div>
+						<label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
+							Legenda Instagram{" "}
+							<span className="text-gray-400 lowercase font-normal">(opcional)</span>
+						</label>
+						<textarea
+							value={captionInstagram}
+							onChange={(e) => setCaptionInstagram(e.target.value)}
+							maxLength={CAPTION_MAX}
+							rows={3}
+							className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none transition-all"
+							placeholder={
+								isBulk
+									? "Deixe vazio para manter a atual"
+									: "Específica para o planner Instagram..."
+							}
+						/>
+						<p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+							Usada no lugar da legenda padrão quando o post vai para o Instagram.
+							Vazia = usa a legenda padrão.
+						</p>
+					</div>
+
+					<div>
+						<label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
+							Produtos Afiliados (YouTube){" "}
+							<span className="text-gray-400 lowercase font-normal">(opcional)</span>
+						</label>
+						<textarea
+							value={youtubeProducts}
+							onChange={(e) => setYoutubeProducts(e.target.value)}
+							maxLength={5000}
+							rows={2}
+							className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none transition-all"
+							placeholder={
+								isBulk
+									? "Deixe vazio para manter os atuais"
+									: "Nomes separados por vírgula — ex: Cadeira Gamer, Mousepad"
+							}
+						/>
+						<p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+							Nomes de produtos afiliados (YouTube Shopping) separados por vírgula.
+							Usados no lugar dos produtos fixos do planner quando o vídeo tem.
+						</p>
 					</div>
 
 					<div>
