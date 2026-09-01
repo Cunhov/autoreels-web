@@ -236,6 +236,116 @@ export const YOUTUBE_CATEGORIES: Record<number, string> = {
 export const YOUTUBE_CATEGORY_DEFAULT = 22;
 
 /**
+ * Estima o texto FINAL de uma legenda como o runtime fará (applyCaptionTemplate
+ * simplificado, sem acesso ao banco): rotação ativa com templates → substitui
+ * cada template; senão → substitui a caption base. Variáveis conhecidas
+ * resolvem dos fallbacks que o planner conhece; {date} e {channel_name} sempre
+ * resolvem não-vazios; placeholders desconhecidos ({hashtags}, {qualquer_coisa})
+ * resolvem "" — conservador: um texto que possa resolver vazio falha
+ * permanentemente na publicação (Comunidade exige message não-vazia no
+ * publisher e na API externa). Fonte ÚNICA também do wizard
+ * (components/PlannerWizard.tsx importa esta função) para não divergirem.
+ */
+export function resolveCaptionTextForWizard(opts: {
+	caption: string;
+	captionTemplates: string;
+	captionRotation: string;
+	captionFallback: string;
+	titleFallback: string;
+}): string {
+	const {
+		caption,
+		captionTemplates,
+		captionRotation,
+		captionFallback,
+		titleFallback,
+	} = opts;
+	const templates = captionTemplates
+		.split("\n")
+		.map((s) => s.trim())
+		.filter(Boolean);
+	const source =
+		templates.length > 0 && captionRotation !== "off"
+			? templates.join("\n")
+			: caption;
+	return source.replace(/\{[a-zA-Z0-9_]+\}/g, (m: string) => {
+		switch (m) {
+			case "{post_caption}":
+				return captionFallback;
+			case "{post_title}":
+				return titleFallback;
+			case "{date}":
+			case "{channel_name}":
+				return "1"; // sempre resolvem não-vazio
+			default:
+				return ""; // {hashtags} e desconhecidos → ""
+		}
+	});
+}
+
+/** Campos youtube_* do config — presença indica planner com canal YouTube. */
+const YT_CONFIG_KEYS = [
+	"youtube_title",
+	"youtube_description",
+	"youtube_products",
+	"youtube_privacy",
+	"youtube_made_for_kids",
+	"youtube_monetize_with_ads",
+	"youtube_category_id",
+	"youtube_pinned_comment",
+	"youtube_pinned_comment_text",
+] as const;
+
+/**
+ * M7/P0-B0 — Post na Comunidade do YouTube exige texto (deadlock do wizard:
+ * campos IG ocultos pelo isolation sem substituto YT). Só dispara para
+ * planners com canal YouTube (config tem campo youtube_*) e entradas de
+ * Comunidade (media_type IMAGE/CAROUSEL — o wizard oculta os campos de vídeo
+ * nesse modo e expõe "Texto da Publicação" gravando no MESMO content[].caption).
+ * SHORTS NUNCA bloqueiam aqui: entradas media_type REELS (ou sem media_type,
+ * legado preservado tal-qual) passam sem exigir texto — com youtube_title o
+ * upload direto de Short não depende de caption (rawYtTitle é a 1ª fonte do
+ * título no runtime, planner-runtime.ts:452-474).
+ */
+function validateYtCommunityText(
+	config: PlannerJson,
+	errors: string[],
+): void {
+	if (!Array.isArray(config.content)) return;
+	const hasYtField = YT_CONFIG_KEYS.some((k) => k in config);
+	if (!hasYtField) return; // planner IG: regra não se aplica
+	const cfgTemplates: string[] = Array.isArray(config.caption_templates)
+		? config.caption_templates.filter(
+				(t: unknown): t is string => typeof t === "string",
+			)
+		: [];
+	const cfgRotation = String(config.caption_rotation || "off");
+	for (const entry of config.content) {
+		if (!entry || typeof entry !== "object") continue;
+		const e = entry as Record<string, unknown>;
+		const mediaType = String(e.media_type || "");
+		// Comunidade = IMAGE/CAROUSEL (o runtime classifica YT CAROUSEL como
+		// community, planner-runtime.ts:414-418). REELS/sem media_type → Short
+		// ou legado: jamais bloqueia.
+		if (mediaType !== "IMAGE" && mediaType !== "CAROUSEL") continue;
+		const text = resolveCaptionTextForWizard({
+			caption: typeof e.caption === "string" ? e.caption : "",
+			captionTemplates: cfgTemplates.join("\n"),
+			captionRotation: cfgRotation,
+			captionFallback:
+				typeof e.caption_fallback === "string" ? e.caption_fallback : "",
+			titleFallback: typeof e.title_fallback === "string" ? e.title_fallback : "",
+		}).trim();
+		if (!text) {
+			errors.push(
+				'Posts na Comunidade do YouTube exigem texto — preencha o campo "Texto da Publicação" no planner.',
+			);
+			break;
+		}
+	}
+}
+
+/**
  * Valida a estrutura do config. Retorna { ok, errors } — NUNCA lança.
  * Usado nas rotas de escrita (400 com a lista) e pelo runtime (log claro).
  */
@@ -288,6 +398,10 @@ export function validatePlannerConfig(config: unknown): {
     if (c.content !== undefined && !Array.isArray(c.content)) {
         errors.push("content deve ser um array");
     }
+
+    // YT Community (M7/P0-B0): texto da publicação obrigatório server-side, mas
+    // Shorts com youtube_title NUNCA são bloqueados (entrada REELS ou legado).
+    validateYtCommunityText(c, errors);
 
     // sleep_schedule
     if (c.sleep_schedule !== undefined && c.sleep_schedule !== null) {

@@ -14,6 +14,7 @@ import IOSButton from "@/components/IOSButton";
 import MediaUploader from "./MediaUploader";
 import ContentLibrary from "./ContentLibrary";
 import { useUploadActions } from "@/contexts/UploadContext";
+import { resolveCaptionTextForWizard } from "@/lib/planner-config";
 
 const PLANNER_MIX_ERROR = "Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
 
@@ -81,52 +82,6 @@ function toLocalDateTimeInput(iso: string | null | undefined): string {
 	if (Number.isNaN(d.getTime())) return "";
 	const pad = (n: number) => String(n).padStart(2, "0");
 	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/**
- * Estima o texto FINAL da legenda como o runtime fará (applyCaptionTemplate):
- * rotação ativa com templates → substitui cada template; senão → substitui a
- * caption base. Variáveis conhecidas resolvem dos fallbacks/valores que o
- * wizard conhece; {date} e {channel_name} sempre resolvem não-vazios.
- * Placeholders desconhecidos ({hashtags}, {qualquer_coisa}) resolvem "" —
- * conservador: não dá para garantir tags no wizard, e um título/texto que
- * possa resolver vazio falha permanentemente no publish.
- */
-function resolveCaptionTextForWizard(opts: {
-	caption: string;
-	captionTemplates: string;
-	captionRotation: string;
-	captionFallback: string;
-	titleFallback: string;
-}): string {
-	const {
-		caption,
-		captionTemplates,
-		captionRotation,
-		captionFallback,
-		titleFallback,
-	} = opts;
-	const templates = captionTemplates
-		.split("\n")
-		.map((s) => s.trim())
-		.filter(Boolean);
-	const source =
-		templates.length > 0 && captionRotation !== "off"
-			? templates.join("\n")
-			: caption;
-	return source.replace(/\{[a-zA-Z0-9_]+\}/g, (m: string) => {
-		switch (m) {
-			case "{post_caption}":
-				return captionFallback;
-			case "{post_title}":
-				return titleFallback;
-			case "{date}":
-			case "{channel_name}":
-				return "1"; // sempre resolvem não-vazio
-			default:
-				return ""; // {hashtags} e desconhecidos → ""
-		}
-	});
 }
 
 // Shape of an entry in planner config.content (library items, legacy uploads, carousels).
@@ -800,10 +755,14 @@ export default function PlannerWizard({
 		// conhece o nome/título do item de biblioteca, então consulta a
 		// biblioteca como o runtime faz (ex.: caption "{post_title}" com item
 		// cujo ContentItem.title está preenchido publica bem via runtime).
+		// M23/W2: youtube_title (campo VISÍVEL do box YT) supre o título — o
+		// runtime usa rawYtTitle como 1ª fonte (planner-runtime.ts:452-474); com
+		// título preenchido o upload direto não depende de caption oculta.
 		if (
 			youtubeSelected &&
 			!isCarousel &&
 			mediaType === "REELS" &&
+			!youtubeTitle.trim() &&
 			!resolveCaptionTextForWizard({
 				caption,
 				captionTemplates,
@@ -816,7 +775,7 @@ export default function PlannerWizard({
 			const libraryTitlesAvailable = await selectedLibraryItemsHaveTitles();
 			if (!libraryTitlesAvailable) {
 				setFormError(
-					"Shorts do YouTube exigem um título — informe uma legenda com texto literal, o Título reserva, ou um template com conteúdo fixo.",
+					"Shorts do YouTube exigem um título — preencha o campo \"Título\" em Configurações YouTube, ou informe uma legenda com texto literal.",
 				);
 				return;
 			}
@@ -826,7 +785,10 @@ export default function PlannerWizard({
 		// permanentemente (mesma validação do servidor, aplicada cedo aqui). O
 		// texto precisa existir na legenda RESOLVIDA: captionFallback só ajuda
 		// quando referenciada via {post_caption} — caption vazia com fallback
-		// preenchido ainda resolveria vazio na publicação.
+		// preenchido ainda resolveria vazio na publicação. M7/P0-B0: no planner
+		// só-YouTube o campo VISÍVEL é "Texto da Publicação" (grava no MESMO
+		// content[].caption); a mensagem aponta para ele em vez de citar campos
+		// IG ocultos (isolamento b3d5d56).
 		if (
 			youtubeSelected &&
 			(isCarousel || mediaType === "IMAGE") &&
@@ -839,7 +801,9 @@ export default function PlannerWizard({
 			}).trim()
 		) {
 			setFormError(
-				"Posts na Comunidade do YouTube exigem um texto — informe uma legenda com texto literal, a Legenda reserva (via {post_caption}), ou um template com conteúdo fixo.",
+				onlyYoutubeSelected
+					? "Posts na Comunidade do YouTube exigem texto — preencha o campo \"Texto da Publicação\" em Configurações YouTube."
+					: "Posts na Comunidade do YouTube exigem um texto — informe uma legenda com texto literal, a Legenda reserva (via {post_caption}), ou um template com conteúdo fixo.",
 			);
 			return;
 		}
@@ -1453,7 +1417,11 @@ export default function PlannerWizard({
 											<option value="IMAGE">
 												{onlyYoutubeSelected ? "Post na Comunidade" : "Post / Image"}
 											</option>
-											<option value="CAROUSEL">Carousel</option>
+											<option value="CAROUSEL">
+												{onlyYoutubeSelected
+													? "Carrossel · Post na Comunidade"
+													: "Carousel"}
+											</option>
 											{!youtubeSelected && <option value="STORIES">Story</option>}
 										</select>
 									</div>
@@ -1681,8 +1649,43 @@ export default function PlannerWizard({
 											</div>
 										)}
 
-									{onlyYoutubeSelected && (
-										<div className="space-y-4 p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-200 dark:border-red-900/30">
+									{onlyYoutubeSelected &&
+										(isCarousel || mediaType === "IMAGE") && (
+											<div className="space-y-4 p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-200 dark:border-red-900/30">
+												<h4 className="text-xs font-bold text-ios-text uppercase tracking-wide flex items-center gap-2">
+													<Youtube size={14} className="text-ios-red" />
+													Configurações YouTube
+												</h4>
+												<div>
+													<div className="flex justify-between items-center mb-1.5">
+														<label className="text-xs font-medium text-ios-text block">
+															Texto da Publicação <span className="text-ios-red">*</span>
+														</label>
+														<span className="text-[11px] text-gray-400">
+															{caption.length}/5000
+														</span>
+													</div>
+													<textarea
+														value={caption}
+														onChange={(e) => {
+															setCaption(e.target.value.slice(0, 5000));
+															setSettingsTouched(true);
+														}}
+														className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm h-28 resize-none focus:border-ios-blue outline-none"
+														placeholder="Escreva o texto do post na Comunidade..."
+														maxLength={5000}
+													/>
+													<p className="text-[10px] text-gray-400 mt-1">
+														Este texto é a mensagem publicada na Comunidade do
+														YouTube (a Comunidade não recebe produtos afiliados).
+													</p>
+												</div>
+											</div>
+										)}
+										{onlyYoutubeSelected &&
+											!isCarousel &&
+											mediaType === "REELS" && (
+												<div className="space-y-4 p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-200 dark:border-red-900/30">
 											<h4 className="text-xs font-bold text-ios-text uppercase tracking-wide flex items-center gap-2">
 												<Youtube size={14} className="text-ios-red" />
 												Configurações YouTube
