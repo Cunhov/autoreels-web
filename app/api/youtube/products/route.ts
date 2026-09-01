@@ -83,9 +83,10 @@ export async function GET(req: Request) {
 				sort,
 				limit,
 			},
-			// F4: proxy do canal (Channel.proxy_url, com fallback para
+			// B3: proxy do canal (Channel.proxy_url, com fallback para
 			// settings.proxy_url) — mesma cobertura do publisher (audit-track-api
-			// F4-Wide); um canal atrás de proxy busca produtos pelo proxy.
+			// F4-Wide planeja ampliar p/ rotas de gerenciamento); um canal atrás
+			// de proxy busca produtos pelo proxy.
 			getChannelProxyUrl(guard.channel),
 		);
 		return NextResponse.json({
@@ -120,7 +121,10 @@ async function resolveVideoIdForProductSearch(
 		where: {
 			channel_id: channelId,
 			status: "published",
+			// publisher grava `short.video_id || null` — nunca string vazia hoje,
+			// mas dados legados podem conter "" (id não-11-char = fake); excluir.
 			youtube_video_id: { not: null },
+			NOT: [{ youtube_video_id: { equals: "" } }],
 		},
 		orderBy: { published_at: "desc" },
 		select: { youtube_video_id: true },

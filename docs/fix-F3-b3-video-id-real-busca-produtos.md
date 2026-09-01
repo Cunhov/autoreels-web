@@ -15,9 +15,9 @@ A busca de produtos fabricava um `videoId` falso — o wizard derivava de `youtu
 ### 1. `app/api/youtube/products/route.ts` — videoId OPCIONAL + fallback real
 - `:22-41` — `videoIdParam` (query) passa a ser **opcional**; `resolveVideoIdForProductSearch(videoIdParam, guard.channel.id)` resolve o vídeo alvo:
   1. **videoId explícito** (`?videoId=`) → mantido (retrocompat: `channelId+videoId+query` continua aceito e tem prioridade);
-  2. **ausente** → último `Post` publicado do canal: `where { channel_id, status:"published", youtube_video_id:{not:null} }`, `orderBy published_at desc` (`:113-131`);
+  2. **ausente** → último `Post` publicado do canal: `where { channel_id, status:"published", youtube_video_id:{not:null} }`, `orderBy published_at desc` (`:113-133`); guard adicional `NOT: [{ youtube_video_id: { equals: "" } }]` exclui strings vazias legadas (publisher grava `short.video_id || null`, mas ids vazios antigos = fake, fora do espirito do B3);
   3. **nenhum** → `null` → **400 PT-BR** `"Nenhum vídeo publicado para buscar produtos — publique um Short primeiro."` (`:26-41`) — fluxo de vídeo isca (`sacrifice_video_id` / `POST /api/sessions/{id}/config`) fica **documentado, NÃO implementado** (fase futura, PLANNER_AUDIT_REPORT §2 P0-B3).
-- `:75-93` — `listProducts` recebe `resolvedVideoId` e **`getChannelProxyUrl(guard.channel)`** (import `:7`; F4-Wide: mesma cobertura de proxy do publisher).
+- `:75-95` — `listProducts` recebe `resolvedVideoId` e **`getChannelProxyUrl(guard.channel)`** (import `:7`; mesma cobertura de proxy do publisher — F4-Wide ampliará p/ rotas de gestão).
 - `:93` — resposta ganha `video_id: resolvedVideoId` (additive, para depuração/UI).
 
 ### 2. `lib/youtube.ts` — `listProducts` com `proxyUrl?`

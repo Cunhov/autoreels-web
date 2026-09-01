@@ -626,7 +626,8 @@ export interface ProductSearchParams {
  * GET /api/sessions/{session_id}/products — catálogo de produtos taggeáveis.
  * `video_id` é obrigatório pela API (vídeo alvo da tagagem). `proxyUrl?`
  * repassa o proxy do canal (Channel.proxy_url) — rotas que têm o Channel
- * devem passar getChannelProxyUrl(channel).
+ * devem passar getChannelProxyUrl(channel) (B3/F3, mesma cobertura do
+ * publisher).
  */
 export async function listProducts(
 	sessionId: string,
