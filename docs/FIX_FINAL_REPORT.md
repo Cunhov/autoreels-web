@@ -1,8 +1,8 @@
 # FIX_FINAL_REPORT — F7 Integração/QA Final (7 blocos consolidados)
 
-> **Agente:** 8 — BUILDER+CRÍTICO (gauntlet loop) · **Fase:** F7 — INTEGRADOR/QA FINAL
-> **Branch:** `feat/yt-products-dual-captions` · **HEAD inicial:** `85855ad` (base da cadeia F0–F6) → **HEAD final:** commit deste relatório
-> **Natureza:** auditoria cross-bloco + re-verificação da barra completa + 1 limpeza mínima (import morto) + relatório de consolidação. Nenhuma feature nova; nenhum contrato quebrado.
+> **Agente:** 7+8 — BUILDER+CRÍTICO (gauntlet loop) · **Fase:** F7 — INTEGRADOR/QA FINAL
+> **Branch:** `feat/yt-products-dual-captions` · **HEAD inicial:** `85855ad` (base da cadeia F0–F6) → **HEAD final:** `c123820` (F7, commits `8c946b2` + `4a2ab60` + reconciliação de doc)
+> **Natureza:** auditoria cross-bloco + re-verificação da barra completa + 2 correções de QA (guard M5 na propagação `8c946b2` + limpeza de import morto `4a2ab60`) + relatório de consolidação (seção 8 abaixo cobre os dois commits, incluindo a colisão entre agentes paralelos do F7). Nenhuma feature nova; nenhum contrato quebrado.
 
 ---
 
