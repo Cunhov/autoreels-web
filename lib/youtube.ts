@@ -624,12 +624,15 @@ export interface ProductSearchParams {
 
 /**
  * GET /api/sessions/{session_id}/products — catálogo de produtos taggeáveis.
- * `video_id` é obrigatório pela API (vídeo alvo da tagagem).
+ * `video_id` é obrigatório pela API (vídeo alvo da tagagem). `proxyUrl?`
+ * repassa o proxy do canal (Channel.proxy_url) — rotas que têm o Channel
+ * devem passar getChannelProxyUrl(channel).
  */
 export async function listProducts(
 	sessionId: string,
 	videoId: string,
 	params: ProductSearchParams = {},
+	proxyUrl?: string | null,
 ): Promise<YoutubeProduct[]> {
 	const qs = new URLSearchParams({ video_id: videoId });
 	if (params.query) qs.set("query", params.query);
@@ -642,6 +645,9 @@ export async function listProducts(
 	qs.set("limit", String(params.limit ?? 50));
 	const data = (await youtubeFetch(
 		`/api/sessions/${encodeURIComponent(sessionId)}/products?${qs.toString()}`,
+		{},
+		15_000,
+		proxyUrl ?? null,
 	)) as { products?: YoutubeProduct[] };
 	return data.products || [];
 }

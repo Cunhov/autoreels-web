@@ -684,10 +684,12 @@ export default function PlannerWizard({
 		setYoutubeProductDrafts((prev) => prev.filter((d) => d.key !== key));
 	};
 
-	/** Busca live no catálogo do canal. videoId fica VAZIO nesta fase (F1) — a
-	 *  resolução real (último Short publicado / vídeo isca) chega na fase F3
-	 *  (B3); se 400, mensagem amigável e a entrada continua como nome p/ auto-
-	 *  select na publicação. */
+	/** Busca live no catálogo do canal. O videoId NÃO é derivado de título/item
+	 *  (isso fabricava um id falso — B3/F3): a rota /api/youtube/products
+	 *  resolve sozinha o último Short publicado do canal quando videoId vem
+	 *  vazio. Se a rota responde 400 (canal sem nenhum vídeo publicado),
+	 *  mensagem amigável e a entrada continua como nome p/ auto-select na
+	 *  publicação. */
 	const searchYoutubeProduct = async (key: string, rawQuery: string) => {
 		const query = rawQuery.trim();
 		if (!query) {
@@ -733,16 +735,26 @@ export default function PlannerWizard({
 				}
 			}
 			if (!res.ok) {
-				// B1/F1: nesta fase videoId é vazio e a rota responde 400
-				// ("videoId é obrigatório") — deixa a entrada como NOME p/ auto-
-				// select na publicação (POST /api/shorts/auto busca no momento).
+				// B3/F3: rota responde 400 só quando o canal não tem NENHUM Short
+				// publicado (sem videoId explícito e sem fallback). Deixa a entrada
+				// como NOME p/ auto-select na publicação (POST /api/shorts/auto
+				// busca no momento da publicação, com o vídeo real).
 				if (res.status === 400) {
-					updateYoutubeProductDraft(key, {
-						status: "name",
-						error:
-							"Publique um Short primeiro para buscar o catálogo. Você ainda pode deixar só o nome — a publicação auto-seleciona o melhor produto.",
-						results: [],
-					});
+					// guard anti-race (mesma convenção do path de sucesso): só aplica
+					// se o input ainda é o query que disparou esta busca.
+					setYoutubeProductDrafts((prev) =>
+						prev.map((d) =>
+							d.key === key && d.query.trim() === query
+								? {
+										...d,
+										status: "name" as const,
+										error:
+											"Nenhum vídeo publicado ainda — publique um Short primeiro para buscar o catálogo. Você ainda pode deixar só o nome: a publicação auto-seleciona o melhor produto.",
+										results: [],
+								  }
+								: d,
+						),
+					);
 					return;
 				}
 				updateYoutubeProductDraft(key, {
