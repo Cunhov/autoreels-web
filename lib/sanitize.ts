@@ -128,6 +128,20 @@ export function formatImageCount(count: number): string {
   return count === 1 ? "1 imagem" : `${count} imagens`;
 }
 
+/**
+ * Sanitiza uma legenda (caption / caption_youtube / caption_instagram):
+ * trim, limite CAPTION_MAX (2200) e escape HTML — espelha a sanitização da
+ * whitelist de content-items (BK-07/BK-14, F4 dual captions). Único ponto
+ * usado por content-items POST/PATCH e upload-chunk/complete.
+ */
+export function sanitizeCaption(input: unknown): string {
+  const str = String(input ?? "").trim();
+  const capped = str.length > CAPTION_MAX ? str.slice(0, CAPTION_MAX) : str;
+  return capped.includes("<") || capped.includes(">")
+    ? escapeHtml(capped)
+    : capped;
+}
+
 /** Trunca youtube_options para null padronizado (BK-19). */
 export function normalizeYoutubeOptions(value: unknown): string | null {
   if (value === undefined || value === null || value === "") return null;

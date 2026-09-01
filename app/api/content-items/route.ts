@@ -6,12 +6,13 @@ import { Prisma } from "@prisma/client";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { cleanPathSegment } from "@/lib/upload-path";
 import { normalizeTags } from "./shared";
-import { escapeHtml, CAPTION_MAX } from "@/lib/sanitize";
+import { escapeHtml, sanitizeCaption } from "@/lib/sanitize";
 
 // Fields a client may set when creating a content item. Server-owned fields
 // (id, user_id, created_at, path) are excluded to prevent mass assignment.
 const POST_ALLOWED_FIELDS = [
-    "name", "title", "caption", "tags", "type", "size", "duration",
+    "name", "title", "caption", "caption_youtube", "caption_instagram",
+    "tags", "type", "size", "duration",
     "parent_id", "url", "thumbnail_url",
 ] as const;
 
@@ -195,12 +196,17 @@ export async function POST(req: Request) {
             }
             payload.name = escapeHtml(cleanName).slice(0, 200);
         }
-        // BK-07/BK-14 caption sanitização + limite 2200
+        // BK-07/BK-14 caption sanitização + limite 2200 (espelhada pelas
+        // captions por plataforma caption_youtube/caption_instagram — F4).
+        // sanitizeCaption faz trim + slice(CAPTION_MAX) + escape `<`/`>`.
         if (payload.caption !== undefined && payload.caption !== null) {
-            let cap = String(payload.caption);
-            if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
-            if (cap.includes("<") || cap.includes(">")) cap = escapeHtml(cap);
-            payload.caption = cap;
+            payload.caption = sanitizeCaption(payload.caption);
+        }
+        if (payload.caption_youtube !== undefined && payload.caption_youtube !== null) {
+            payload.caption_youtube = sanitizeCaption(payload.caption_youtube);
+        }
+        if (payload.caption_instagram !== undefined && payload.caption_instagram !== null) {
+            payload.caption_instagram = sanitizeCaption(payload.caption_instagram);
         }
         if (payload.title !== undefined && payload.title !== null) {
             let t = String(payload.title).trim();

@@ -10,6 +10,7 @@ import {
 	isVideoExtension,
 } from "@/lib/upload-path";
 import { isFfmpegAvailable, getVideoDurationSec } from "@/lib/ffmpeg";
+import { sanitizeCaption } from "@/lib/sanitize";
 import { randomUUID } from "crypto";
 import { createReadStream, createWriteStream } from "fs";
 import { mkdir, rename, rm, stat, unlink, writeFile } from "fs/promises";
@@ -68,6 +69,8 @@ export async function POST(req: Request) {
 		const tagsRaw = formData.get("tags") as string | null;
 		const parentId = formData.get("parentId") as string | null;
 		const caption = formData.get("caption") as string | null;
+		const captionYoutube = formData.get("captionYoutube") as string | null;
+		const captionInstagram = formData.get("captionInstagram") as string | null;
 		const thumbnailPathLegacy = formData.get("thumbnailPath") as string | null;
 		const thumbnailFile = formData.get("thumbnail");
 		const totalChunksRaw = formData.get("totalChunks") as string | null;
@@ -355,7 +358,12 @@ export async function POST(req: Request) {
 			...(thumbnailUrl ? { thumbnail_url: thumbnailUrl } : {}),
 			...(tagsRaw ? { tags: tagsRaw } : {}),
 			...(parentId ? { parent_id: parentId } : { parent_id: null }),
-			...(caption ? { caption } : {}),
+			// F4 dual captions: caption genérica + captions por plataforma vindas
+			// do formData (youtube.txt/instagram.txt da pasta). MESMA
+			// sanitizeCaption do content-items (trim + 2200 + escape) — nunca cru.
+			...(caption ? { caption: sanitizeCaption(caption) } : {}),
+			...(captionYoutube ? { caption_youtube: sanitizeCaption(captionYoutube) } : {}),
+			...(captionInstagram ? { caption_instagram: sanitizeCaption(captionInstagram) } : {}),
 		};
 
 		const dotIndex = safeFilename.lastIndexOf(".");

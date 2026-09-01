@@ -6,12 +6,13 @@ import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { deleteFileFromDisk, collectItemFiles } from "@/lib/deleteFiles";
 import { cleanPathSegment } from "@/lib/upload-path";
 import { normalizeTags } from "../shared";
-import { escapeHtml, CAPTION_MAX } from "@/lib/sanitize";
+import { escapeHtml, sanitizeCaption } from "@/lib/sanitize";
 
 // Fields a client may update. Server-owned fields (id, user_id, created_at,
 // path) are excluded to prevent mass assignment / arbitrary file deletion.
 const PATCH_ALLOWED_FIELDS = [
-    "name", "title", "caption", "tags", "type", "size", "duration",
+    "name", "title", "caption", "caption_youtube", "caption_instagram",
+    "tags", "type", "size", "duration",
     "parent_id", "thumbnail_url", "url",
 ] as const;
 
@@ -137,12 +138,17 @@ export async function PATCH(
             }
             payload.name = escapeHtml(cleanName).slice(0, 200);
         }
-        // BK-07/BK-14 sanitização caption/title com limite
+        // BK-07/BK-14 sanitização caption/title com limite — captions por
+        // plataforma (F4 dual captions) usam a MESMA sanitizeCaption (trim +
+        // slice 2200 + escape). NUNCA gravar caption_* sem sanitize.
         if (payload.caption !== undefined && payload.caption !== null) {
-            let cap = String(payload.caption);
-            if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
-            if (cap.includes("<") || cap.includes(">")) cap = escapeHtml(cap);
-            payload.caption = cap;
+            payload.caption = sanitizeCaption(payload.caption);
+        }
+        if (payload.caption_youtube !== undefined && payload.caption_youtube !== null) {
+            payload.caption_youtube = sanitizeCaption(payload.caption_youtube);
+        }
+        if (payload.caption_instagram !== undefined && payload.caption_instagram !== null) {
+            payload.caption_instagram = sanitizeCaption(payload.caption_instagram);
         }
         if (payload.title !== undefined && payload.title !== null) {
             let t = String(payload.title).trim();
