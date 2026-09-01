@@ -32,6 +32,16 @@ import {
 } from "@/lib/youtube";
 import { isHostAllowed } from "@/lib/ssrf-guard";
 import { getChannelProxyUrl } from "@/lib/proxy";
+import {
+  createTiktokVideoInit,
+  uploadTiktokChunks,
+  fetchTiktokPublishStatus,
+  getValidTiktokAccessToken,
+  mapTiktokErrorToPortuguese,
+  classifyTiktokError,
+  TiktokApiError,
+} from "@/lib/tiktok";
+import { resolveFinalCaption } from "@/lib/planner-runtime";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -582,6 +592,349 @@ async function refreshDueChannelTokens(
 	}
 	return refreshed;
 }
+
+
+// ─── TikTok ─────────────────────────────────────────────────────────────────
+const TIKTOK_MAX_FILE_BYTES = 500 * 1024 * 1024; // 500 MB (Media Transfer Guide)
+const TIKTOK_CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB por chunk (5–10 MB spec)
+const TIKTOK_POLL_ATTEMPTS = 3;
+const TIKTOK_POLL_BACKOFF_MS = 2000;
+const TIKTOK_PULL_DOMAIN = "autoreels.cunhov.site";
+
+interface TiktokPublishPost {
+  id: string;
+  caption?: string | null;
+  video_url?: string | null;
+  image_url?: string | null;
+  children_urls?: string | null;
+  tiktok_type?: string | null;
+  tiktok_options?: string | null;
+  tiktok_publish_id?: string | null;
+  attempts?: number;
+  created_at?: Date | null;
+  channel?: {
+    id?: string;
+    name?: string | null;
+    settings?: string | null;
+    platform?: string | null;
+    proxy_url?: string | null;
+    proxy_enabled?: boolean | null;
+  } | null;
+}
+
+function isTiktokPULLFromUrl(mediaUrlAbsolute: string): boolean {
+  if (!mediaUrlAbsolute) return false;
+  // Usa domínio verificado do spec: https://autoreels.cunhov.site/api/file/...
+  return mediaUrlAbsolute.includes(`${TIKTOK_PULL_DOMAIN}/api/file/`);
+}
+
+async function publishTiktokPost(opts: {
+  post: TiktokPublishPost;
+  plannerId: string;
+  now: Date;
+  results: PublishResults;
+  startTime: number;
+  maxExecMs: number;
+}): Promise<void> {
+  const { post, plannerId, now, results, startTime, maxExecMs } = opts;
+
+  // Guard tiktok_type: só video em v1; photo -> MalformedDataError
+  if (post.tiktok_type && post.tiktok_type !== "video") {
+    const msg = `TikTok v1: apenas vídeo suportado (recebido: ${post.tiktok_type})`;
+    const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+      status: "failed",
+      error_message: msg,
+      failed_reason: "Malformed Data",
+    });
+    if (!wrote) return;
+    results.errors++;
+    await logPlanner(plannerId, `Post ${post.id}: ${msg}`, "error");
+    await notifyPostFailed(post as RetryablePost, msg);
+    return;
+  }
+
+  // Parse tiktok_options JSON
+  let tiktokOptions: {
+    title?: string;
+    privacy_level?: string;
+    disable_duet?: boolean;
+    disable_stitch?: boolean;
+    disable_comment?: boolean;
+    video_cover_timestamp_ms?: number;
+    brand_content_toggle?: boolean;
+    brand_organic_toggle?: boolean;
+  } = {};
+  if (post.tiktok_options) {
+    try {
+      tiktokOptions = JSON.parse(post.tiktok_options) as typeof tiktokOptions;
+    } catch {
+      const msg = "Malformed tiktok_options";
+      const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+        status: "failed",
+        error_message: msg,
+        failed_reason: "Malformed Data",
+      });
+      if (!wrote) return;
+      results.errors++;
+      await logPlanner(plannerId, `Post ${post.id}: ${msg}`, "error");
+      await notifyPostFailed(post as RetryablePost, msg);
+      return;
+    }
+  }
+
+  // Resolve caption via resolveFinalCaption('tiktok', item) (import de lib/planner-runtime.ts)
+  // Fallback: tiktok_options.title > post.caption
+  // Tenta buscar ContentItem caption_tiktok se post tiver relação com library? Best-effort via post.caption
+  let resolvedCaption = "";
+  try {
+    // post.caption já é final do planner (buildPostData), mas para TikTok tentamos tiktok fallback
+    const itemForCaption: { caption?: string | null; caption_tiktok?: string | null } = { caption: post.caption };
+    // Se tiktok_options tem título explícito, ele vence; senão usa resolveFinalCaption
+    if (tiktokOptions.title && String(tiktokOptions.title).trim()) {
+      resolvedCaption = String(tiktokOptions.title).trim();
+    } else {
+      // Se post tem caption_tiktok persistido (quando A4 completar), prioriza; senão caption
+      const withTk = post as unknown as { caption_tiktok?: string | null };
+      if (withTk.caption_tiktok) itemForCaption.caption_tiktok = withTk.caption_tiktok;
+      resolvedCaption = resolveFinalCaption("tiktok", itemForCaption);
+      if (!resolvedCaption) resolvedCaption = (post.caption || "").trim();
+    }
+  } catch {
+    resolvedCaption = (tiktokOptions.title || post.caption || "").trim();
+  }
+  const title = (tiktokOptions.title?.trim() || resolvedCaption || (post.caption || "").trim()).slice(0, 2200);
+  if (!title) {
+    const msg = "TikTok exige título/legenda (tiktok_options.title ou caption)";
+    const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+      status: "failed",
+      error_message: msg,
+      failed_reason: "Malformed Data",
+    });
+    if (!wrote) return;
+    results.errors++;
+    await logPlanner(plannerId, `Post ${post.id}: ${msg}`, "error");
+    await notifyPostFailed(post as RetryablePost, msg);
+    return;
+  }
+
+  // Token válido (refresh automático se expires_at < now+60s) — proxy sempre via getChannelProxyUrl
+  let tokenData: { accessToken: string; openId: string };
+  try {
+    tokenData = await getValidTiktokAccessToken(post.channel as { id: string; settings?: string | null; proxy_url?: string | null; proxy_enabled?: boolean | null });
+  } catch (e: unknown) {
+    const raw = e instanceof Error ? e.message : String(e ?? "Unknown error");
+    const pt = mapTiktokErrorToPortuguese(raw);
+    const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+      status: "failed",
+      error_message: pt,
+      failed_reason: /Token|não configurado|reconectar/i.test(pt) ? "Missing Credentials" : "Publishing Failed",
+    });
+    if (!wrote) return;
+    results.errors++;
+    await logPlanner(plannerId, `[Tiktok] Post ${post.id}: ${pt}`, "error");
+    await notifyPostFailed(post as RetryablePost, pt);
+    return;
+  }
+
+  // Resolve proxy (sempre repassado)
+  const proxyUrl = getChannelProxyUrl(post.channel as unknown as { proxy_url?: string | null; settings?: string | null }) ?? null;
+
+  // Determinar mediaUrl (TikTok v1 só vídeo)
+  const mediaUrl = (post.video_url || "").trim();
+  if (!mediaUrl) {
+    const msg = "TikTok exige vídeo (video_url ausente)";
+    const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+      status: "failed",
+      error_message: msg,
+      failed_reason: "Malformed Data",
+    });
+    if (!wrote) return;
+    results.errors++;
+    await logPlanner(plannerId, `Post ${post.id}: ${msg}`, "error");
+    await notifyPostFailed(post as RetryablePost, msg);
+    return;
+  }
+
+  // M13: re-checa antes do call externo
+  if (!(await isPostStillInFlight(post.id))) {
+    await logPlanner(plannerId, `[Tiktok] Post ${post.id} cancelado antes do init — nada foi publicado`, "warning").catch(() => {});
+    return;
+  }
+
+  try {
+    // Determinar source_info: PULL_FROM_URL quando mediaUrl já é https://autoreels.cunhov.site/api/file/... (evita reupload); default FILE_UPLOAD
+    const systemBaseUrl = resolveSystemBaseUrl();
+    const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, mediaUrl);
+    const usePull = isTiktokPULLFromUrl(mediaUrlAbsolute);
+
+    let publishId = "";
+    let uploadUrl = "";
+
+    if (usePull) {
+      await logPlanner(plannerId, `[Tiktok] Init PULL_FROM_URL para ${mediaUrlAbsolute}`, "info");
+      const init = await createTiktokVideoInit(
+        {
+          accessToken: tokenData.accessToken,
+          title,
+          privacyLevel: tiktokOptions.privacy_level,
+          disableDuet: tiktokOptions.disable_duet,
+          disableStitch: tiktokOptions.disable_stitch,
+          disableComment: tiktokOptions.disable_comment,
+          videoCoverTimestampMs: tiktokOptions.video_cover_timestamp_ms,
+          brandContentToggle: tiktokOptions.brand_content_toggle,
+          brandOrganicToggle: tiktokOptions.brand_organic_toggle,
+          source: { source: "PULL_FROM_URL", video_url: mediaUrlAbsolute },
+        },
+        proxyUrl
+      );
+      publishId = init.publishId;
+      uploadUrl = init.uploadUrl; // pode ser vazio em PULL
+    } else {
+      // FILE_UPLOAD: ler arquivo local, calcular chunks
+      const file = await readLocalUploadFile(mediaUrl, TIKTOK_MAX_FILE_BYTES);
+      const videoSize = file.buffer.length;
+      const chunkSize = TIKTOK_CHUNK_SIZE;
+      const totalChunkCount = Math.ceil(videoSize / chunkSize);
+      await logPlanner(plannerId, `[Tiktok] Init FILE_UPLOAD size=${videoSize} chunk=${chunkSize} chunks=${totalChunkCount}`, "info");
+      const init = await createTiktokVideoInit(
+        {
+          accessToken: tokenData.accessToken,
+          title,
+          privacyLevel: tiktokOptions.privacy_level,
+          disableDuet: tiktokOptions.disable_duet,
+          disableStitch: tiktokOptions.disable_stitch,
+          disableComment: tiktokOptions.disable_comment,
+          videoCoverTimestampMs: tiktokOptions.video_cover_timestamp_ms,
+          brandContentToggle: tiktokOptions.brand_content_toggle,
+          brandOrganicToggle: tiktokOptions.brand_organic_toggle,
+          source: { source: "FILE_UPLOAD", video_size: videoSize, chunk_size: chunkSize, total_chunk_count: totalChunkCount },
+        },
+        proxyUrl
+      );
+      publishId = init.publishId;
+      uploadUrl = init.uploadUrl;
+      if (!publishId || !uploadUrl) throw new Error("TikTok não retornou publish_id/upload_url para FILE_UPLOAD");
+      // M13: re-checa antes do upload chunked
+      if (!(await isPostStillInFlight(post.id))) {
+        await logPlanner(plannerId, `[Tiktok] Post ${post.id} cancelado antes do upload — nada foi enviado`, "warning").catch(() => {});
+        return;
+      }
+      await logPlanner(plannerId, `[Tiktok] Upload chunks para ${publishId} (${totalChunkCount} chunks)`, "info");
+      await uploadTiktokChunks(uploadUrl, file.buffer, chunkSize, proxyUrl);
+    }
+
+    // Poll status 3x backoff 2s
+    let lastStatus = "";
+    let published = false;
+    let failedReasonPt: string | null = null;
+    let videoIdOrUrl: string | null = null;
+    for (let attempt = 0; attempt < TIKTOK_POLL_ATTEMPTS; attempt++) {
+      // M13: re-checa antes de cada poll
+      if (!(await isPostStillInFlight(post.id))) {
+        await logPlanner(plannerId, `[Tiktok] Post ${post.id} cancelado durante polling — abortando`, "warning").catch(() => {});
+        return;
+      }
+      // Backoff 2s após primeiro attempt (spec: poll status 3x backoff 2s)
+      if (attempt > 0) await new Promise((r) => setTimeout(r, TIKTOK_POLL_BACKOFF_MS));
+      // Verifica orçamento do tick antes de poll (evita estourar MAX_EXEC_MS)
+      if (Date.now() - startTime > maxExecMs - 3000) {
+        await logPlanner(plannerId, `[Tiktok] Orçamento do tick esgotado antes do poll ${attempt + 1} — retry no próximo ciclo`, "warning").catch(() => {});
+        throw new Error("Orçamento do tick esgotado durante polling do TikTok — retry no próximo ciclo");
+      }
+      try {
+        const statusRes = await fetchTiktokPublishStatus(publishId, tokenData.accessToken, proxyUrl);
+        lastStatus = statusRes.status;
+        const s = statusRes.status.toUpperCase();
+        if (s.includes("PUBLISHED") || s.includes("SUCCESS") || s === "PUBLISH_COMPLETE" || s === "PUBLISHED_SUCCESS") {
+          published = true;
+          videoIdOrUrl = statusRes.videoId || statusRes.publicUrl || publishId;
+          break;
+        }
+        if (s.includes("FAILED") || s.includes("FAIL") || s === "ERROR") {
+          failedReasonPt = statusRes.failReason ? mapTiktokErrorToPortuguese(statusRes.failReason) : "Falha ao publicar no TikTok";
+          break;
+        }
+        // PROCESSING / PUBLISHING -> continua polling
+        await logPlanner(plannerId, `[Tiktok] Status poll ${attempt + 1}/${TIKTOK_POLL_ATTEMPTS}: ${s}`, "info").catch(() => {});
+      } catch (e: unknown) {
+        // Se falhar o fetch status com 429/5xx, tenta novamente no próximo loop (já tem backoff)
+        const isLast = attempt === TIKTOK_POLL_ATTEMPTS - 1;
+        if (isLast) throw e;
+        await logPlanner(plannerId, `[Tiktok] Poll ${attempt + 1} falhou (tentando novamente): ${e instanceof Error ? e.message : String(e)}`, "warning").catch(() => {});
+      }
+    }
+
+    if (failedReasonPt) {
+      const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+        status: "failed",
+        error_message: failedReasonPt,
+        failed_reason: "Publishing Failed",
+        tiktok_publish_id: publishId,
+      });
+      if (!wrote) return;
+      results.errors++;
+      await logPlanner(plannerId, `[Tiktok] Post ${post.id} falhou: ${failedReasonPt} (publish_id=${publishId})`, "error");
+      await notifyPostFailed(post as RetryablePost, failedReasonPt);
+      return;
+    }
+
+    if (published) {
+      const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+        status: "published",
+        published_at: now,
+        tiktok_post_id: videoIdOrUrl || publishId,
+        tiktok_publish_id: publishId,
+      });
+      if (!wrote) return;
+      results.published++;
+      await logPlanner(plannerId, `[Tiktok] Post ${post.id} publicado (publish_id=${publishId} ${videoIdOrUrl ? `video=${videoIdOrUrl}` : ""})`, "info");
+      return;
+    }
+
+    // Ainda PROCESSING após 3 polls -> deixa em pending para retry próximo tick (transient)
+    throw new Error(`TikTok ainda em processamento após ${TIKTOK_POLL_ATTEMPTS} polls (último status: ${lastStatus || "UNKNOWN"})`);
+  } catch (e: unknown) {
+    const rawMsg = e instanceof Error ? e.message : String(e ?? "Unknown error");
+    const status = e instanceof TiktokApiError ? e.status : 0;
+    const kind = e instanceof Error && e.message.includes("Malformed") ? "definitive" : classifyTiktokError(e, status);
+    const ptMsg = mapTiktokErrorToPortuguese(rawMsg);
+
+    if (kind === "rate-limited") {
+      await handleRetryableFailure({
+        post: post as unknown as RetryablePost,
+        errMsg: `Rate limited (429): ${ptMsg}`,
+        revertToStatus: "pending",
+        countAs: "rate_limited",
+        plannerId,
+        now,
+        results,
+      });
+      return;
+    }
+    if (kind === "transient") {
+      await handleRetryableFailure({
+        post: post as unknown as RetryablePost,
+        errMsg: ptMsg,
+        revertToStatus: "pending",
+        plannerId,
+        now,
+        results,
+      });
+      return;
+    }
+    // Erro definitivo
+    await logPlanner(plannerId, `[Tiktok] Erro definitivo post=${post.id}: ${ptMsg}`, "error");
+    const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+      status: "failed",
+      error_message: ptMsg,
+      failed_reason: e instanceof Error && /Malformed/i.test(e.message) ? "Malformed Data" : "Publishing Failed",
+    });
+    if (!wrote) return;
+    results.errors++;
+    await notifyPostFailed(post as RetryablePost, ptMsg);
+  }
+}
+
 
 // ─── YouTube (Shorts + Comunidade) ──────────────────────────────────────
 
@@ -1814,6 +2167,23 @@ async function handler(request: Request) {
 					// tem youtube_type. O pre-flight deixa passar (só texto/YT
 					// sem mídia) e o publishYoutubePost falha com a mensagem certa
 					// (ex.: "Canal YouTube sem sessão vinculada").
+					// ─── TikTok: publicação Direct Post (FILE_UPLOAD / PULL_FROM_URL) ───
+					if (post.channel?.platform === "tiktok" || !!(post as unknown as { tiktok_type?: string | null }).tiktok_type) {
+						await publishTiktokPost({
+							post: post as unknown as TiktokPublishPost,
+							plannerId,
+							now,
+							results,
+							startTime,
+							maxExecMs: MAX_EXEC_MS,
+						});
+						if (Date.now() - startTime > MAX_EXEC_MS) {
+							results.timeout = true;
+							break;
+						}
+						continue;
+					}
+
 					if (post.channel?.platform === "youtube" || !!post.youtube_type) {
 						await publishYoutubePost({
 							post,
