@@ -10,6 +10,7 @@ import React, {
 	useMemo,
 } from "react";
 import { createVideoThumbnailFile } from "@/lib/video-thumbnail";
+import { readFolderCaptions } from "@/lib/folder-captions";
 
 export type UploadStatus =
 	| "pending"
@@ -31,7 +32,9 @@ export interface UploadTask {
 	tags: string[];
 	parentId?: string | null; // DB parent_id for carousel_item
 	forceType?: string | null; // e.g. 'carousel_item'
-	caption?: string | null; // caption from .txt file
+	caption?: string | null; // caption from generic .txt file
+	captionYoutube?: string | null; // caption from youtube.txt (F4 dual captions)
+	captionInstagram?: string | null; // caption from instagram.txt (F4 dual captions)
 	errorMessage?: string;
 	chunkSize: number;
 	totalChunks: number;
@@ -55,6 +58,8 @@ interface UploadOpts {
 	tags?: string[];
 	forceType?: string | null;
 	caption?: string | null;
+	captionYoutube?: string | null;
+	captionInstagram?: string | null;
 }
 
 interface UploadActions {
@@ -369,6 +374,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 				parentId: opts.folderId ?? null,
 				forceType: opts.forceType ?? null,
 				caption: opts.caption ?? null,
+				captionYoutube: opts.captionYoutube ?? null,
+				captionInstagram: opts.captionInstagram ?? null,
 				chunkSize: CHUNK_SIZE,
 				totalChunks: Math.ceil(file.size / CHUNK_SIZE),
 				currentChunk: 0,
@@ -468,17 +475,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 			for (const [folderKey, groupFiles] of folderGroups) {
 				// DB name = the folder's base segment (keys may contain a nested path).
 				const folderName = folderKey.split("/").pop() || folderKey;
-				let folderCaption = "";
-				const txtFile = groupFiles.find((f) =>
-					f.name.toLowerCase().endsWith(".txt"),
-				);
-				if (txtFile) {
-					try {
-						folderCaption = await txtFile.text();
-					} catch (e) {
-						console.error("Error reading .txt file:", e);
-					}
-				}
+				// F4 dual captions: youtube.txt/instagram.txt (nome exato,
+				// case-insensitive) → captions por plataforma; QUALQUER outro
+				// .txt → caption genérica (fallback p/ ambas). Helper puro em
+				// lib/folder-captions (mesmo usado pelo smoke test).
+				const { caption: folderCaption, captionYoutube: folderCaptionYoutube, captionInstagram: folderCaptionInstagram } =
+					await readFolderCaptions(groupFiles);
 
 				const mediaFiles = groupFiles.filter(
 					(f) => !f.name.toLowerCase().endsWith(".txt"),
@@ -493,7 +495,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 						{
 							folderId: parentFolderId,
 							tags,
-							caption: folderCaption || null,
+							caption: folderCaption,
+							captionYoutube: folderCaptionYoutube,
+							captionInstagram: folderCaptionInstagram,
 						},
 					);
 				} else {
@@ -510,6 +514,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 								type: "carousel_folder",
 								parent_id: parentFolderId,
 								caption: folderCaption || null,
+								caption_youtube: folderCaptionYoutube || null,
+								caption_instagram: folderCaptionInstagram || null,
 								...(tags.length > 0 ? { tags: JSON.stringify(tags) } : {}),
 							}),
 						});
@@ -536,7 +542,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 								{
 									folderId: parentFolderId,
 									tags,
-									caption: folderCaption || null,
+									caption: folderCaption,
+									captionYoutube: folderCaptionYoutube,
+									captionInstagram: folderCaptionInstagram,
 								},
 							);
 						}
@@ -840,6 +848,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 				if (task.tags.length > 0)
 					formData.append("tags", JSON.stringify(task.tags));
 				if (task.caption) formData.append("caption", task.caption);
+				if (task.captionYoutube)
+					formData.append("captionYoutube", task.captionYoutube);
+				if (task.captionInstagram)
+					formData.append("captionInstagram", task.captionInstagram);
 				if (thumbFile) formData.append("thumbnail", thumbFile);
 
 				const metaRes = await finalizeWithRetry(formData, controller.signal);
