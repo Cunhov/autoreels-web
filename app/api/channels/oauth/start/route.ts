@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getSessionUserId } from "@/lib/api";
-import { getInstagramOAuthConfig, getPublicOrigin, signOAuthState } from "@/lib/instagram";
+import {
+    getInstagramOAuthConfig,
+    getPublicOrigin,
+    signOAuthState,
+} from "@/lib/instagram";
 
 export async function GET(req: Request) {
     const session = await getServerSession(authOptions);
@@ -29,8 +33,14 @@ export async function GET(req: Request) {
             url: `https://www.instagram.com/oauth/authorize?${params.toString()}`,
         });
     } catch (error: unknown) {
-        return NextResponse.json({
-            error: error instanceof Error ? error.message : "Could not start Instagram OAuth.",
-        }, { status: 400 });
+        return NextResponse.json(
+            {
+                error:
+                    error instanceof Error
+                        ? error.message
+                        : "Could not start Instagram OAuth.",
+            },
+            { status: 400 },
+        );
     }
 }

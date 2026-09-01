@@ -65,8 +65,12 @@ export async function fetchWithTimeout(
 				// proxy helper not available
 			}
 		}
-		const fetchOpts: RequestInit & { dispatcher?: unknown } = { ...options, signal: controller.signal };
-		if (dispatcher) (fetchOpts as RequestInit & { dispatcher: unknown }).dispatcher = dispatcher;
+		const fetchOpts: RequestInit & { dispatcher?: unknown } = {
+			...options,
+			signal: controller.signal,
+		};
+		if (dispatcher)
+			(fetchOpts as RequestInit & { dispatcher: unknown }).dispatcher = dispatcher;
 		return await fetch(url, fetchOpts as RequestInit);
 	} finally {
 		clearTimeout(timer);
@@ -133,7 +137,13 @@ export async function resolveAccessToken(tokenOrKey: string | null) {
  * Sem isso o Instagram devolve "Invalid redirect_uri" e o callback redireciona para 0.0.0.0.
  */
 export function getPublicOrigin(req?: Request): string {
-	const envOrigin = (process.env.NEXTAUTH_URL || process.env.PUBLIC_BASE_URL || "").trim().replace(/\/$/, "");
+	const envOrigin = (
+		process.env.NEXTAUTH_URL ||
+		process.env.PUBLIC_BASE_URL ||
+		""
+	)
+		.trim()
+		.replace(/\/$/, "");
 	if (envOrigin) return envOrigin;
 	if (!req) return "http://localhost:3000";
 	const xfProto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
@@ -159,7 +169,11 @@ export function getInstagramOAuthConfig(origin: string, req?: Request) {
 		"";
 	const clientSecret = process.env.INSTAGRAM_CLIENT_SECRET || "";
 	// Origem canônica: prefere env (NEXTAUTH_URL) para não cair em 0.0.0.0 atrás do proxy
-	const canonicalOrigin = (process.env.NEXTAUTH_URL || process.env.PUBLIC_BASE_URL || "").trim().replace(/\/$/, "") || (req ? getPublicOrigin(req) : origin.replace(/\/$/, ""));
+	const canonicalOrigin =
+		(process.env.NEXTAUTH_URL || process.env.PUBLIC_BASE_URL || "")
+			.trim()
+			.replace(/\/$/, "") ||
+		(req ? getPublicOrigin(req) : origin.replace(/\/$/, ""));
 	const redirectUri =
 		process.env.INSTAGRAM_REDIRECT_URI?.trim() ||
 		`${canonicalOrigin}/api/channels/oauth/callback`;
@@ -263,7 +277,10 @@ export async function exchangeInstagramCode(code: string, origin: string) {
 	};
 }
 
-export async function refreshInstagramToken(accessToken: string, proxyUrl?: string | null) {
+export async function refreshInstagramToken(
+	accessToken: string,
+	proxyUrl?: string | null,
+) {
 	const token = cleanToken(accessToken);
 	if (token.startsWith("IG")) {
 		const res = await fetchWithTimeout(
@@ -324,7 +341,10 @@ export async function refreshInstagramToken(accessToken: string, proxyUrl?: stri
 	}
 }
 
-export async function fetchInstagramProfile(accessToken: string, proxyUrl?: string | null) {
+export async function fetchInstagramProfile(
+	accessToken: string,
+	proxyUrl?: string | null,
+) {
 	const token = cleanToken(accessToken);
 	const baseUrl = getGraphBaseUrl(token);
 	const res = await fetchWithTimeout(

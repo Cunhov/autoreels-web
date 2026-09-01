@@ -20,7 +20,8 @@ export async function GET(req: Request) {
     }
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
-    const error = url.searchParams.get("error") || url.searchParams.get("error_message");
+    const error =
+        url.searchParams.get("error") || url.searchParams.get("error_message");
     const redirect = new URL("/channels", publicOrigin);
 
     if (error) {
@@ -31,7 +32,10 @@ export async function GET(req: Request) {
 
     if (!code || !state) {
         redirect.searchParams.set("connect", "error");
-        redirect.searchParams.set("message", "Missing Instagram authorization code.");
+        redirect.searchParams.set(
+            "message",
+            "Missing Instagram authorization code.",
+        );
         return NextResponse.redirect(redirect);
     }
 
@@ -40,7 +44,8 @@ export async function GET(req: Request) {
         const tokenData = await exchangeInstagramCode(code, publicOrigin);
         const profile = await fetchInstagramProfile(tokenData.token);
         const accountId = profile.id || tokenData.instagramUserId;
-        if (!accountId) throw new Error("Instagram account id was not returned.");
+        if (!accountId)
+            throw new Error("Instagram account id was not returned.");
 
         const expiresAt = new Date(Date.now() + tokenData.expiresIn * 1000);
         await prisma.channel.upsert({
@@ -79,7 +84,10 @@ export async function GET(req: Request) {
         return NextResponse.redirect(redirect);
     } catch (err: unknown) {
         redirect.searchParams.set("connect", "error");
-        redirect.searchParams.set("message", err instanceof Error ? err.message : "Instagram connection failed.");
+        redirect.searchParams.set(
+            "message",
+            err instanceof Error ? err.message : "Instagram connection failed.",
+        );
         return NextResponse.redirect(redirect);
     }
 }

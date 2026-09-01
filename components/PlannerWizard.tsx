@@ -691,20 +691,42 @@ export default function PlannerWizard({
 			setYoutubeProductsError("Informe IDs ou termos para buscar produtos.");
 			return;
 		}
-		// videoId é obrigatório pela API de produtos; tenta usar o título como hint, senão placeholder
-		const videoId = youtubeTitle.trim() ? youtubeTitle.trim().slice(0, 50) : "search";
+		// videoId é obrigatório pela API de produtos — tenta derivar de conteúdo selecionado ou título
+		let videoId = youtubeTitle.trim().slice(0, 50);
+		if (!videoId) {
+			try {
+				const sel = (selectedContentIds[0] || "") as string;
+				if (sel) videoId = sel.slice(0, 50);
+			} catch (err) {
+				console.warn("[PlannerWizard] falha ao derivar videoId de selectedContentIds", err);
+			}
+		}
+		if (!videoId) {
+			setYoutubeProductsError("Informe o Título do Short ou selecione um vídeo para buscar produtos (videoId obrigatório).");
+			return;
+		}
 		setYoutubeProductsLoading(true);
 		setYoutubeProductsError("");
 		try {
 			const params = new URLSearchParams({ channelId, videoId, query, suggestions: "false", limit: "20" });
 			const res = await fetch(`/api/youtube/products?${params.toString()}`);
-			const data = await res.json();
+			let data: Record<string, unknown> | null = null;
+			const ct = res.headers.get("content-type") || "";
+			if (ct.includes("application/json")) {
+				data = await res.json();
+			} else {
+				const text = await res.text();
+				if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
+					throw new Error(res.status === 401 ? "Sessão expirada — faça login novamente." : `Erro ${res.status}: resposta não-JSON do servidor. Verifique se o canal YouTube está conectado.`);
+				}
+									try { data = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error(text.slice(0, 200) || `Erro ${res.status}`); }
+			}
 			if (!res.ok) {
-				setYoutubeProductsError(data?.error || "Falha ao buscar produtos");
+				setYoutubeProductsError((data?.error as string) || `Falha ao buscar produtos (${res.status})`);
 				setYoutubeProductsResults([]);
 				return;
 			}
-			const products = Array.isArray(data.products) ? data.products : [];
+			const products = data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).products) ? (data as Record<string, unknown>).products as unknown[] : [];
 			setYoutubeProductsResults(products);
 			if (products.length === 0) setYoutubeProductsError("Nenhum produto encontrado.");
 		} catch (e) {
@@ -1458,6 +1480,7 @@ export default function PlannerWizard({
 									)}
 								</div>
 
+								{!onlyYoutubeSelected && (
 								<div>
 									<div className="flex justify-between items-center mb-1.5">
 										<label className="text-xs font-medium text-ios-text block">
@@ -1488,8 +1511,9 @@ export default function PlannerWizard({
 										placeholder="Write a caption... Use tags for dynamic content."
 									/>
 								</div>
+								)}
 
-								{/* Caption Templates */}
+								{!onlyYoutubeSelected && (
 								<div className="space-y-3 pt-4 border-t border-ios-separator">
 									<div className="flex items-center justify-between">
 										<label className="text-xs font-medium text-ios-text block">
@@ -1555,7 +1579,9 @@ export default function PlannerWizard({
 										selected content has tags.
 									</p>
 								</div>
+								)}
 
+								{!onlyYoutubeSelected && (
 								<div className="space-y-4 pt-4 border-t border-ios-separator">
 									<div>
 										<label className="text-xs font-medium text-ios-text mb-1.5 block">
@@ -1594,6 +1620,7 @@ export default function PlannerWizard({
 										/>
 									</div>
 								</div>
+								)}
 
 								<div className="space-y-4">
 									{!onlyYoutubeSelected && (
@@ -1710,8 +1737,8 @@ export default function PlannerWizard({
 													<div className="mt-2 bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 max-h-32 overflow-y-auto">
 														<p className="text-[11px] font-medium mb-1">{youtubeProductsResults.length} produto(s) encontrado(s):</p>
 														<ul className="text-xs space-y-1">
-															{(youtubeProductsResults as any[]).map((pr: any, idx: number) => (
-																<li key={idx} className="truncate">{JSON.stringify(pr).slice(0,120)}</li>
+															{(youtubeProductsResults as unknown[]).map((pr: unknown, idx: number) => (
+																<li key={idx} className="truncate">{JSON.stringify(pr as Record<string, unknown>).slice(0,120)}</li>
 															))}
 														</ul>
 													</div>
@@ -1722,7 +1749,7 @@ export default function PlannerWizard({
 													<label className="text-xs font-medium text-ios-text mb-1.5 block">Privacidade</label>
 													<select
 														value={youtubePrivacy}
-														onChange={(e) => setYoutubePrivacy(e.target.value as any)}
+														onChange={(e) => setYoutubePrivacy(e.target.value as typeof youtubePrivacy)}
 														className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm"
 													>
 														<option value="PUBLIC">Público</option>
