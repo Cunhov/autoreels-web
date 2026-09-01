@@ -46,17 +46,64 @@ function isMissingProxyColumnError(e: unknown): boolean {
     return /no such column.*proxy|Unknown.*proxy|proxy_url/i.test(msg);
 }
 
+function sanitizeSettings(settings: unknown): Record<string, unknown> | null {
+    if (typeof settings !== "string" || !settings.trim()) return null;
+    try {
+        const parsed = JSON.parse(settings) as Record<string, unknown>;
+        const safe: Record<string, unknown> = { ...parsed };
+        const hasTiktokToken = Boolean(typeof parsed.tiktok_access_token === "string" && (parsed.tiktok_access_token as string).trim());
+        if (hasTiktokToken) {
+            delete safe.tiktok_access_token;
+            delete safe.tiktok_refresh_token;
+        }
+        // Return safe object for client introspection (optional) — caller can JSON.stringify if needed
+        // We keep tiktok_open_id but will mask elsewhere; here we keep it masked visibility via has_tiktok_token
+        return safe;
+    } catch {
+        return null;
+    }
+}
+
+function maskTiktokOpenIdLocal(openId: string | null | undefined): string {
+    if (!openId || typeof openId !== "string" || !openId.trim()) return "";
+    const o = openId.trim();
+    if (o.length <= 6) return "***";
+    return `${o.slice(0, 3)}***${o.slice(-3)}`;
+}
+
 function toSafeChannel(channel: {
     access_token?: string | null;
     token_source?: string | null;
     proxy_url?: string | null;
     proxy_enabled?: boolean | null;
+    settings?: string | null;
     [key: string]: unknown;
 }) {
-    const { access_token, proxy_url, proxy_enabled, ...safeChannel } = channel;
+    const { access_token, proxy_url, proxy_enabled, settings, ...safeChannel } = channel;
     const rest = safeChannel as Record<string, unknown>;
+    // Sanitize settings: nunca expor tiktok_access_token / refresh_token cru ao client
+    let safeSettings: Record<string, unknown> | null = null;
+    let has_tiktok_token = false;
+    let tiktok_open_id_masked: string | null = null;
+    if (typeof settings === "string" && settings.trim()) {
+        try {
+            const parsed = JSON.parse(settings) as Record<string, unknown>;
+            has_tiktok_token = Boolean(typeof parsed.tiktok_access_token === "string" && (parsed.tiktok_access_token as string).trim());
+            const openId = typeof parsed.tiktok_open_id === "string" ? (parsed.tiktok_open_id as string) : "";
+            if (openId) tiktok_open_id_masked = maskTiktokOpenIdLocal(openId);
+            safeSettings = { ...parsed };
+            if (has_tiktok_token) {
+                delete safeSettings.tiktok_access_token;
+                delete safeSettings.tiktok_refresh_token;
+            }
+        } catch {
+            safeSettings = null;
+        }
+    }
     return {
         ...rest,
+        // Preserve sanitized settings for client if originally present (safe to send)
+        ...(settings !== undefined ? { settings: safeSettings ? JSON.stringify(safeSettings) : null, settings_safe: safeSettings } : {}),
         has_token: Boolean(access_token),
         token_source: access_token?.startsWith("token_")
             ? "redis"
@@ -64,6 +111,8 @@ function toSafeChannel(channel: {
         has_proxy: Boolean(proxy_url),
         proxy_url_masked: proxy_url ? maskProxyUrl(proxy_url) : null,
         proxy_enabled: proxy_enabled ?? true,
+        has_tiktok_token,
+        tiktok_open_id_masked,
     };
 }
 
