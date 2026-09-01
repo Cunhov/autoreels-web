@@ -25,20 +25,42 @@ const channelSelect = {
     proxy_enabled: true,
 };
 
+const channelSelectFallback = {
+    id: true,
+    name: true,
+    platform: true,
+    account_id: true,
+    username: true,
+    profile_picture_url: true,
+    status: true,
+    token_source: true,
+    token_expires_at: true,
+    token_refreshed_at: true,
+    created_at: true,
+    access_token: true,
+};
+
+function isMissingProxyColumnError(e: unknown): boolean {
+    const msg = e instanceof Error ? e.message : String(e ?? "");
+    return /no such column.*proxy|Unknown.*proxy|proxy_url/i.test(msg);
+}
+
 function toSafeChannel(channel: {
     access_token?: string | null;
     token_source?: string | null;
     proxy_url?: string | null;
+    proxy_enabled?: boolean | null;
     [key: string]: unknown;
 }) {
-    const { access_token, proxy_url, ...safeChannel } = channel;
+    const { access_token, proxy_url, proxy_enabled, ...safeChannel } = channel;
+    const rest = safeChannel as Record<string, unknown>;
     return {
-        ...safeChannel,
+        ...rest,
         has_token: Boolean(access_token),
-        token_source: access_token?.startsWith("token_") ? "redis" : (safeChannel as any).token_source,
+        token_source: access_token?.startsWith("token_") ? "redis" : (rest.token_source as string | undefined),
         has_proxy: Boolean(proxy_url),
         proxy_url_masked: proxy_url ? maskProxyUrl(proxy_url) : null,
-        proxy_enabled: (safeChannel as any).proxy_enabled ?? true,
+        proxy_enabled: proxy_enabled ?? true,
     };
 }
 
@@ -49,17 +71,25 @@ export async function GET() {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const channels = await prisma.channel.findMany({
-        where: {
-            user_id: userId,
-        },
-        select: channelSelect,
-        orderBy: {
-            created_at: "desc",
-        },
-    });
+    let channels: unknown[];
+    try {
+        channels = await prisma.channel.findMany({
+            where: { user_id: userId },
+            select: channelSelect,
+            orderBy: { created_at: "desc" },
+        });
+    } catch (e: unknown) {
+        if (isMissingProxyColumnError(e)) {
+            console.warn("[channels] proxy columns missing in DB — falling back without proxy (rode a migration 0008)");
+            channels = await prisma.channel.findMany({
+                where: { user_id: userId },
+                select: channelSelectFallback,
+                orderBy: { created_at: "desc" },
+            });
+        } else throw e;
+    }
 
-    return NextResponse.json(channels.map(toSafeChannel));
+    return NextResponse.json((channels as Parameters<typeof toSafeChannel>[0][]).map(toSafeChannel));
 }
 
 export async function POST(req: Request) {
@@ -96,7 +126,7 @@ export async function POST(req: Request) {
         if (data.name !== undefined && typeof data.name === "string" && !data.name.trim()) {
             return NextResponse.json({ error: "Channel name cannot be empty or whitespace" }, { status: 400 });
         }
-        let channelName = data.name ? escapeHtml(String(data.name).trim().slice(0,80)) : (profile?.username ? escapeHtml(profile.username.slice(0,80)) : `Instagram ${accountId}`);
+        const channelName = data.name ? escapeHtml(String(data.name).trim().slice(0,80)) : (profile?.username ? escapeHtml(profile.username.slice(0,80)) : `Instagram ${accountId}`);
 
         // Proxy por canal (opcional): valida formato http(s)://user:pass@host:porta
         let proxyUrl: string | null = null;
@@ -108,25 +138,65 @@ export async function POST(req: Request) {
             proxyUrl = rawProxy;
         }
 
-        const channel = await prisma.channel.create({
-            data: {
-                user_id: userId,
-                name: channelName,
-                platform: "instagram",
-                account_id: accountId,
-                username: profile?.username || data.username || null,
-                profile_picture_url: profile?.profilePictureUrl || data.profile_picture_url || null,
-                access_token: accessToken || null,
-                token_source: tokenSource,
-                token_expires_at: expiresAt,
-                token_refreshed_at: refreshedAt,
-                status: data.status || "active",
-                proxy_url: proxyUrl,
-                proxy_enabled: data.proxy_enabled !== undefined ? Boolean(data.proxy_enabled) : true,
-            },
-            select: channelSelect,
-        });
-        return NextResponse.json(toSafeChannel(channel));
+        let channel: unknown;
+        try {
+            channel = await prisma.channel.create({
+                data: {
+                    user_id: userId,
+                    name: channelName,
+                    platform: "instagram",
+                    account_id: accountId,
+                    username: profile?.username || data.username || null,
+                    profile_picture_url: profile?.profilePictureUrl || data.profile_picture_url || null,
+                    access_token: accessToken || null,
+                    token_source: tokenSource,
+                    token_expires_at: expiresAt,
+                    token_refreshed_at: refreshedAt,
+                    status: data.status || "active",
+                    proxy_url: proxyUrl,
+                    proxy_enabled: data.proxy_enabled !== undefined ? Boolean(data.proxy_enabled) : true,
+                },
+                select: channelSelect,
+            });
+        } catch (e: unknown) {
+            if (isMissingProxyColumnError(e) && proxyUrl !== null) {
+                console.warn("[channels] proxy columns missing — creating channel without proxy");
+                channel = await prisma.channel.create({
+                    data: {
+                        user_id: userId,
+                        name: channelName,
+                        platform: "instagram",
+                        account_id: accountId,
+                        username: profile?.username || data.username || null,
+                        profile_picture_url: profile?.profilePictureUrl || data.profile_picture_url || null,
+                        access_token: accessToken || null,
+                        token_source: tokenSource,
+                        token_expires_at: expiresAt,
+                        token_refreshed_at: refreshedAt,
+                        status: data.status || "active",
+                    },
+                    select: channelSelectFallback,
+                });
+            } else if (isMissingProxyColumnError(e)) {
+                channel = await prisma.channel.create({
+                    data: {
+                        user_id: userId,
+                        name: channelName,
+                        platform: "instagram",
+                        account_id: accountId,
+                        username: profile?.username || data.username || null,
+                        profile_picture_url: profile?.profilePictureUrl || data.profile_picture_url || null,
+                        access_token: accessToken || null,
+                        token_source: tokenSource,
+                        token_expires_at: expiresAt,
+                        token_refreshed_at: refreshedAt,
+                        status: data.status || "active",
+                    },
+                    select: channelSelectFallback,
+                });
+            } else throw e;
+        }
+        return NextResponse.json(toSafeChannel(channel as Parameters<typeof toSafeChannel>[0]));
     } catch (error: unknown) {
         return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
     }

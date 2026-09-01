@@ -25,20 +25,43 @@ const channelSelect = {
     settings: true,
 };
 
+const channelSelectFallback = {
+    id: true,
+    name: true,
+    platform: true,
+    account_id: true,
+    username: true,
+    profile_picture_url: true,
+    status: true,
+    token_source: true,
+    token_expires_at: true,
+    token_refreshed_at: true,
+    created_at: true,
+    access_token: true,
+    settings: true,
+};
+
+function isMissingProxyColumnError(e: unknown): boolean {
+    const msg = e instanceof Error ? e.message : String(e ?? "");
+    return /no such column.*proxy|Unknown.*proxy|proxy_url/i.test(msg);
+}
+
 function toSafeChannel(channel: {
     access_token?: string | null;
     token_source?: string | null;
     proxy_url?: string | null;
+    proxy_enabled?: boolean | null;
     [key: string]: unknown;
 }) {
-    const { access_token, proxy_url, ...safeChannel } = channel;
+    const { access_token, proxy_url, proxy_enabled, ...safeChannel } = channel;
+    const rest = safeChannel as Record<string, unknown>;
     return {
-        ...safeChannel,
+        ...rest,
         has_token: Boolean(access_token),
-        token_source: access_token?.startsWith("token_") ? "redis" : (safeChannel as any).token_source,
+        token_source: access_token?.startsWith("token_") ? "redis" : (rest.token_source as string | undefined),
         has_proxy: Boolean(proxy_url),
         proxy_url_masked: proxy_url ? maskProxyUrl(proxy_url) : null,
-        proxy_enabled: (safeChannel as any).proxy_enabled ?? true,
+        proxy_enabled: proxy_enabled ?? true,
     };
 }
 
@@ -53,19 +76,27 @@ export async function GET(
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const channel = await prisma.channel.findUnique({
-        where: {
-            id,
-            user_id: userId,
-        },
-        select: channelSelect,
-    });
+    let channel: unknown;
+    try {
+        channel = await prisma.channel.findUnique({
+            where: { id, user_id: userId },
+            select: channelSelect,
+        });
+    } catch (e: unknown) {
+        if (isMissingProxyColumnError(e)) {
+            console.warn("[channels/[id]] proxy columns missing — falling back without proxy");
+            channel = await prisma.channel.findUnique({
+                where: { id, user_id: userId },
+                select: channelSelectFallback,
+            });
+        } else throw e;
+    }
 
     if (!channel) {
         return NextResponse.json({ error: "Channel not found" }, { status: 404 });
     }
 
-    return NextResponse.json(toSafeChannel(channel));
+    return NextResponse.json(toSafeChannel(channel as Parameters<typeof toSafeChannel>[0]));
 }
 
 export async function PATCH(
