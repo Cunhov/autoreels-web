@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, Instagram, Link as LinkIcon, ShieldCheck, Youtube, ClipboardPaste, Download, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
+import { X, Instagram, Link as LinkIcon, ShieldCheck, Youtube, Music2, ClipboardPaste, Download, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import { useSession } from 'next-auth/react';
 
@@ -72,7 +72,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     // ── YouTube ──
-    const [platform, setPlatform] = useState<'instagram' | 'youtube'>('instagram');
+    const [platform, setPlatform] = useState<'instagram' | 'youtube' | 'tiktok'>('instagram');
     const [ytTab, setYtTab] = useState<'cookies' | 'import'>('cookies');
     const [ytLabel, setYtLabel] = useState('');
     const [cookies, setCookies] = useState<Record<string, string>>({});
@@ -96,7 +96,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
             setAccessToken('');
             setProfilePictureUrl(channel.profile_picture_url || '');
             setMode('manual');
-            setPlatform(channel.platform === 'youtube' ? 'youtube' : 'instagram');
+            setPlatform(channel.platform === 'youtube' ? 'youtube' : channel.platform === 'tiktok' ? 'tiktok' : 'instagram');
             setProxyUrl('');
             setProxyEnabled(channel.proxy_enabled ?? true);
             setProxyMasked(channel.proxy_url_masked || null);
@@ -223,6 +223,66 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
         }
     };
 
+    /** S1: inicia o OAuth TikTok (app/api/tiktok/oauth/start). O callback cria/atualiza
+     *  o Channel com platform="tiktok" e persiste tokens em Channel.settings.tiktok_*. */
+    const startTiktokOAuth = async () => {
+        setLoading(true);
+        setError('');
+        try {
+            const res = await fetch('/api/tiktok/oauth/start');
+            const data = await res.json();
+            if (!res.ok || !data.url) throw new Error(data.error || 'Could not start TikTok OAuth');
+            window.location.href = data.url;
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Could not connect TikTok');
+            setLoading(false);
+        }
+    };
+
+    /** Salva proxy de canal em edição (YouTube e TikTok usam o mesmo fluxo). */
+    const saveProxyEdit = async () => {
+        setLoading(true);
+        setError('');
+        try {
+            if (!channel) return;
+            if (proxyUrl.trim()) {
+                try {
+                    const u = new URL(proxyUrl.trim());
+                    if ((u.protocol !== 'http:' && u.protocol !== 'https:') || !u.hostname || !u.port) throw new Error();
+                } catch {
+                    throw new Error('Proxy inválido. Use http://user:pass@host:porta');
+                }
+            }
+            const payload: Record<string, unknown> = {};
+            if (proxyMasked === null && !proxyUrl.trim()) {
+                // usuário clicou "Remover" (proxyMasked null) e não digitou novo
+                payload.proxy_url = null;
+            } else if (proxyUrl.trim()) {
+                payload.proxy_url = proxyUrl.trim();
+            }
+            // proxyMasked && !proxyUrl → manter proxy existente: não envia nada
+            payload.proxy_enabled = proxyEnabled;
+            if (Object.keys(payload).length === 0) {
+                setError('Nenhuma alteração de proxy.');
+                setLoading(false);
+                return;
+            }
+            const res = await fetch(`/api/channels/${channel.id}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'Falha ao salvar proxy');
+            onSuccess();
+            onClose();
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : 'Falha ao salvar proxy');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     /** Aba "Colar cookies": valida os 4 campos e chama POST /api/youtube/connect. */
     const handleYoutubeConnect = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -336,7 +396,9 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                             ? 'Adicionar canal'
                             : platform === 'youtube'
                                 ? 'Canal do YouTube'
-                                : 'Edit Channel'}
+                                : platform === 'tiktok'
+                                    ? 'Canal do TikTok'
+                                    : 'Edit Channel'}
                     </h2>
                     <button onClick={onClose} className="p-1 rounded-full hover:bg-black/5 text-ios-secondary transition-colors">
                         <X size={20} />
@@ -346,7 +408,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                 {/* Escolha de plataforma (somente na criação) */}
                 {!channel && (
                     <div className="px-6 pt-4 bg-ios-background/50">
-                        <div className="grid grid-cols-2 gap-2 p-1 bg-ios-separator/50 rounded-xl">
+                        <div className="grid grid-cols-3 gap-2 p-1 bg-ios-separator/50 rounded-xl">
                             <button
                                 type="button"
                                 onClick={() => setPlatform('instagram')}
@@ -360,6 +422,13 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                                 className={`py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-1.5 ${platform === 'youtube' ? 'bg-ios-card text-ios-red shadow-sm' : 'text-ios-secondary'}`}
                             >
                                 <Youtube size={16} /> YouTube
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setPlatform('tiktok')}
+                                className={`py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-1.5 ${platform === 'tiktok' ? 'bg-ios-card text-ios-text shadow-sm' : 'text-ios-secondary'}`}
+                            >
+                                <Music2 size={15} /> TikTok
                             </button>
                         </div>
                     </div>
@@ -523,6 +592,41 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                     </form>
                 )}
 
+                {/* ── Fluxo TikTok (criação): OAuth ─────────────────────────── */}
+                {!channel && platform === 'tiktok' && (
+                    <form
+                        onSubmit={(e) => { e.preventDefault(); startTiktokOAuth(); }}
+                        className="p-6 space-y-4 bg-ios-background/50 overflow-y-auto custom-scrollbar"
+                    >
+                        <div className="p-4 rounded-xl bg-ios-card border border-ios-separator">
+                            <div className="w-10 h-10 rounded-full bg-black text-white flex items-center justify-center mb-3">
+                                <Music2 size={20} />
+                            </div>
+                            <h3 className="font-semibold text-ios-text">Conectar via TikTok OAuth</h3>
+                            <p className="text-[13px] text-ios-secondary mt-1.5">
+                                Autorize a conta uma única vez. O AutoReels guarda o token de acesso e refresh em{' '}
+                                <span className="font-mono">Channel.settings.tiktok_*</span> e renova automaticamente.
+                            </p>
+                        </div>
+                        <IOSButton
+                            variant="primary"
+                            type="submit"
+                            disabled={loading}
+                            className="w-full justify-center !py-3.5 !text-[17px]"
+                        >
+                            {loading ? 'Conectando…' : 'Conectar TikTok'}
+                        </IOSButton>
+                        <p className="text-[11px] text-ios-secondary text-center -mt-1">
+                            Após autorizar, você será redirecionado de volta e o canal aparecerá na lista.
+                        </p>
+                        {error && (
+                            <div className="p-3 bg-red-50 dark:bg-red-900/20 text-ios-red text-sm rounded-xl text-center">
+                                {error}
+                            </div>
+                        )}
+                    </form>
+                )}
+
                 {/* ── Canal YouTube em edição: sem formulário de edição — estado explícito ── */}
                 {channel && platform === 'youtube' && (
                     <div className="p-6 space-y-4 bg-ios-background/50">
@@ -549,35 +653,46 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                         </div>
                         <div className="flex gap-2">
                             <IOSButton variant="secondary" type="button" onClick={onClose} className="flex-1 justify-center !py-3 !text-[15px]">Fechar</IOSButton>
-                            <IOSButton variant="primary" type="button" disabled={loading} onClick={async ()=>{
-                                setLoading(true); setError('');
-                                try{
-                                    // valida
-                                    if(proxyUrl.trim()){
-                                        try{ const u=new URL(proxyUrl.trim()); if((u.protocol!=='http:'&&u.protocol!=='https:')||!u.hostname||!u.port) throw new Error(); }catch{ throw new Error('Proxy inválido. Use http://user:pass@host:porta'); }
-                                    }
-                                    const payload: Record<string, unknown> = {};
-                                    if(proxyMasked && !proxyUrl.trim()){
-                                        // manter proxy existente: não envia
-                                    } else if(proxyUrl.trim()){
-                                        payload.proxy_url = proxyUrl.trim();
-                                    } else if(!proxyMasked && !proxyUrl.trim()){
-                                        payload.proxy_url = null;
-                                    } else if(proxyMasked && proxyUrl==='' && !proxyMasked){
-                                        payload.proxy_url = null;
-                                    }
-                                    // se usuário clicou Remover, proxyMasked é null e proxyUrl ''
-                                    if(proxyMasked===null && !proxyUrl.trim()){
-                                        payload.proxy_url = null;
-                                    }
-                                    payload.proxy_enabled = proxyEnabled;
-                                    if(Object.keys(payload).length===0){ setError('Nenhuma alteração de proxy.'); setLoading(false); return; }
-                                    const res = await fetch(`/api/channels/${channel.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-                                    const data = await res.json().catch(()=>({}));
-                                    if(!res.ok) throw new Error(data.error || 'Falha ao salvar proxy');
-                                    onSuccess(); onClose();
-                                }catch(err: unknown){ setError(err instanceof Error? err.message: 'Falha ao salvar proxy'); } finally{ setLoading(false); }
-                            }} className="flex-1 justify-center !py-3 !text-[15px]">
+                            <IOSButton variant="primary" type="button" disabled={loading} onClick={saveProxyEdit} className="flex-1 justify-center !py-3 !text-[15px]">
+                                {loading ? 'Salvando...' : 'Salvar Proxy'}
+                            </IOSButton>
+                        </div>
+                        {error ? (<div className="p-3 bg-red-50 dark:bg-red-900/20 text-ios-red text-sm rounded-xl text-center">{error}</div>) : null}
+                    </div>
+                )}
+
+                {/* ── Canal TikTok em edição: reconectar via OAuth + proxy ── */}
+                {channel && platform === 'tiktok' && (
+                    <div className="p-6 space-y-4 bg-ios-background/50">
+                        <p className="text-sm text-ios-text-secondary">
+                            Canais TikTok são gerenciados via OAuth. Para trocar a conta, desconecte e reconecte.
+                        </p>
+                        <IOSButton variant="primary" type="button" disabled={loading} onClick={startTiktokOAuth} className="w-full justify-center !py-3 !text-[15px]">
+                            {loading ? 'Conectando…' : 'Reconectar TikTok'}
+                        </IOSButton>
+                        <div className="border-t border-ios-separator pt-4">
+                            <div>
+                                <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">Proxy (opcional)</label>
+                                {proxyMasked && !proxyUrl ? (
+                                    <div className="mb-1.5 px-3 py-2 rounded-xl bg-ios-separator/30 text-[12px] font-mono text-ios-secondary flex items-center justify-between">
+                                        <span className="truncate">Salvo: {proxyMasked}</span>
+                                        <button type="button" onClick={()=>{ setProxyMasked(null); setProxyUrl(''); }} className="ml-2 text-[11px] text-ios-red font-semibold shrink-0">Remover</button>
+                                    </div>
+                                ) : null}
+                                <div className="flex gap-2">
+                                    <input type="text" value={proxyUrl} onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }} placeholder="http://user:pass@host:porta" className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue" />
+                                    <button type="button" onClick={handleTestProxy} disabled={proxyTestStatus==='loading'} className="px-3 py-2 rounded-xl bg-ios-blue/10 text-ios-blue text-[13px] font-semibold hover:bg-ios-blue/20 disabled:opacity-50 shrink-0">{proxyTestStatus==='loading' ? 'Testando...' : 'Testar Proxy'}</button>
+                                </div>
+                                {proxyTestStatus!=='idle' && proxyTestMsg ? (<p className={`text-[12px] mt-1 ${proxyTestStatus==='ok'?'text-ios-green':'text-ios-red'}`}>{proxyTestMsg}</p>) : null}
+                                <label className="flex items-center gap-2 mt-2 text-[13px] text-ios-secondary">
+                                    <input type="checkbox" checked={proxyEnabled} onChange={(e)=>setProxyEnabled(e.target.checked)} className="rounded" />
+                                    Proxy habilitado
+                                </label>
+                            </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <IOSButton variant="secondary" type="button" onClick={onClose} className="flex-1 justify-center !py-3 !text-[15px]">Fechar</IOSButton>
+                            <IOSButton variant="primary" type="button" disabled={loading} onClick={saveProxyEdit} className="flex-1 justify-center !py-3 !text-[15px]">
                                 {loading ? 'Salvando...' : 'Salvar Proxy'}
                             </IOSButton>
                         </div>
