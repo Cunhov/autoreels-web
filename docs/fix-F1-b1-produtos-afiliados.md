@@ -110,3 +110,16 @@ Vírgula no nome do produto / template `{var}` em products quebravam tudo (M22).
   `videoId` real (último Short publicado do canal / sacrifice_video_id).
 - Filtros do `/auto` ficaram com default (todos marketplaces) — expor os filtros na UI
   (min_commission_pct/items_per_product/preço×comissão) é evolução posterior.
+---
+
+## 7. Hardening pós-revisão (agente 2, mesmo bloco): decisão de roteamento extraída + teste commitado
+
+**GAP encontrado na revisão:** o relatório §"Como testar" citava "verificado por teste de roteamento 8/8 casos", mas **nenhum teste existia no repositório** — a decisão (~80 linhas inline em `app/api/cron/publisher/route.ts`) era intocável por teste e as 3 cópias mentais da regra (publisher/comentário/relatório) podiam divergir.
+
+**O que mudou:**
+- `lib/planner-config.ts` — nova **`resolveShortProductsRouting(options)`** (L264-348): ÚNICA fonte da regra `/shorts` vs `/shorts/auto` (parsing de `products` JSON string/array/CSV cru legacy, `product_names` array/JSON string, colapso de strings legacy em nomes, descarte de junk `"[object Object]"`, prioridade verbatim com `skippedNames`). Retorna `{route, items, names, skippedNames}`. Comportamento idêntico ao bloco inline (portado 1:1, incl. trims).
+- `app/api/cron/publisher/route.ts` — bloco Short (L1178-1197) agora chama a função e usa `route/items/names/skippedNames`; SKIP-warning usa `skippedNames`. Downstream (`createAutoShort`/`createShort`) inalterado.
+- `scripts/gauntlet/products-routing.mts` — **teste commitado** cobrindo os cenários-chave do contrato (`shorts.py`): verbatim→/shorts com dict preservado; query-only→/auto **NUNCA** /shorts (M4); vírgula no nome intacta (M22); legacy strings/CSV cru→/auto (M1); junk `[object Object]`→descartado; mistura→verbatim ganha + SKIP; vazio→none; `product_names` em array; `toYoutubeProductsJson` separa item/name.
+- Rodar: `npx --no-install tsx scripts/gauntlet/products-routing.mts` → **14/14 passam**.
+
+**Barra:** `npx tsc --noEmit` 0 erros ✅ · `npm run build` ✅ · prisma validate ✅ · teste roteamento 14/14 ✅ (commit `9f1a7c4` prévia/HEAD `60fd763` — branch `feat/yt-products-dual-captions`, sem push).

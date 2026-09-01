@@ -12,6 +12,7 @@ import {
 	classifyTokenRefreshError,
 } from "@/lib/instagram";
 import { runPlannerOnce } from "@/lib/planner-runtime";
+import { resolveShortProductsRouting } from "@/lib/planner-config";
 import { sendNotification } from "@/lib/notify";
 import { normalizeCarouselChild } from "@/lib/carousel-normalize";
 import {
@@ -1179,92 +1180,31 @@ async function publishYoutubePost(opts: {
 		//   product_names = nomes/termos p/ auto-select          -> POST /api/shorts/auto
 		// Decisão de roteamento (fonte: shorts.py da API externa — create_short
 		// tem `products`, /auto tem `product_names`+`filters`; NUNCA os dois na
-		// MESMA chamada):
+		// MESMA chamada) — extraída em resolveShortProductsRouting
+		// (lib/planner-config.ts), única fonte da regra, coberta por testes em
+		// scripts/gauntlet/products-routing.mts.
 		//   - algum item verbatim -> /shorts com products; nomes coexistentes
 		//     viram SKIP com warning (regra segura documentada em
-		//     docs/fix-F1-b1-products.md: item escolhido pelo usuário tem
-		//     prioridade — nomes só viajam sozinhos por /auto);
+		//     docs/fix-F1-b1-produtos-afiliados.md: item escolhido pelo usuário
+		//     tem prioridade — nomes só viajam sozinhos por /auto);
 		//   - só nomes -> /shorts/auto (product_names + filters default);
-		//   - nada -> /shorts sem products ("/").
-		// Legacy: youtube_options.products como '["nome"]' (strings) é colapsado
-		// em namesArr -> /auto (antes a API _parse_products descartava strings
-		// silenciosamente — M1).
-		let itemsArr: unknown[] = [];
-		if (typeof options.products === "string" && options.products.trim()) {
-			try {
-				const parsed = JSON.parse(options.products);
-				if (Array.isArray(parsed)) itemsArr = parsed;
-				else if (typeof parsed === "string" && parsed.trim()) {
-					// CSV cru dentro do JSON (legado): nomes, não itens
-					itemsArr = parsed
-						.split(",")
-						.map((s: string) => s.trim())
-						.filter(Boolean);
-				}
-			} catch {
-				// não-JSON: CSV cru de posts MUITO antigos — nomes, não itens
-				if (options.products.includes(",") || options.products.trim()) {
-					itemsArr = options.products
-						.split(",")
-						.map((s) => s.trim())
-						.filter(Boolean);
-				} else {
-					itemsArr = [];
-				}
-			}
-		} else if (Array.isArray(options.products)) {
-			itemsArr = options.products;
-		}
-
-		let namesArr: string[] = [];
-		if (Array.isArray(options.product_names)) {
-			namesArr = (options.product_names as unknown[])
-				.filter((x): x is string => typeof x === "string" && !!x.trim())
-				.map((s) => s.trim());
-		} else if (
-			typeof options.product_names === "string" &&
-			options.product_names.trim()
-		) {
-			try {
-				const parsed = JSON.parse(options.product_names);
-				if (Array.isArray(parsed)) {
-					namesArr = parsed
-						.filter((x): x is string => typeof x === "string" && !!x.trim())
-						.map((s) => s.trim());
-				} else {
-					namesArr = [options.product_names.trim()];
-				}
-			} catch {
-				namesArr = [];
-			}
-		}
-
-		// itens verbatim = objetos (shape B1 { item } ou shape legacy
-		// {merchant_id,...}); strings legacy viram nomes (auto-select).
-		const verbatimItems = itemsArr.filter(
-			(v): v is Record<string, unknown> =>
-				v != null && typeof v === "object" && !Array.isArray(v),
-		);
-		const legacyNameStrings = itemsArr.filter(
-			(v): v is string => typeof v === "string" && !!v.trim(),
-		);
-		if (legacyNameStrings.length > 0) {
-			namesArr.push(...legacyNameStrings.map((s) => s.trim()));
-		}
-		// lixo de configs pré-B1 (array de objetos virou "[object Object]"):
-		// nunca vira nome de busca — descartado
-		namesArr = namesArr.filter((n) => n !== "[object Object]");
-
-		const proxyForShort = getChannelProxyUrl(post.channel as any);
-		const productsRoute =
-			verbatimItems.length > 0 ? "verbatim" : namesArr.length > 0 ? "auto" : "none";
-		if (productsRoute === "verbatim" && namesArr.length > 0) {
+		//   - nada -> /shorts sem products ("[]").
+		// Legacy: products como '["nome"]' / CSV cru / lixo "[object Object]"
+		// de configs pré-B1 são colapsados em nomes ou descartados pela função
+		// (antes a API _parse_products descartava strings silenciosamente — M1).
+		const productsRouting = resolveShortProductsRouting(options);
+		const productsRoute = productsRouting.route;
+		const verbatimItems = productsRouting.items;
+		const namesArr = productsRouting.names;
+		if (productsRoute === "verbatim" && productsRouting.skippedNames > 0) {
 			await logPlanner(
 				plannerId,
-				`[YouTube] ${namesArr.length} nome(s) de produto ignorado(s) (SKIP) — itens verbatim selecionados têm prioridade; products e product_names nunca são misturados na mesma chamada.`,
+				`[YouTube] ${productsRouting.skippedNames} nome(s) de produto ignorado(s) (SKIP) — itens verbatim selecionados têm prioridade; products e product_names nunca são misturados na mesma chamada.`,
 				"warning",
 			).catch(() => {});
 		}
+
+		const proxyForShort = getChannelProxyUrl(post.channel as any);
 		const short =
 			productsRoute === "auto"
 				? await createAutoShort({

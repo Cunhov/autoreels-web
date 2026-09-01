@@ -255,6 +255,104 @@ export function toYoutubeProductsJson(value: unknown): YoutubeProductsPayload {
     return { names, items, hasNames: names.length > 0, hasItems: items.length > 0 };
 }
 
+/**
+ * B1 — roteamento real de tagging no publisher (lado do Short).
+ * Única fonte da DECISÃO /api/shorts vs /api/shorts/auto (extraída do bloco
+ * inline do publisher para ser testável — cf. scripts/gauntlet/products-routing.mts).
+ * Lê `youtube_options.products` (JSON string | array) e `product_names`
+ * (JSON string | array) do post e devolve o que mandar em cada rota:
+ *   - verbatim: algum item-objeto -> POST /api/shorts com `products`
+ *     (nomes coexistentes viram `skippedNames` — NUNCA misturados na mesma
+ *     chamada; regra segura: item escolhido pelo usuário tem prioridade);
+ *   - auto: só nomes -> POST /api/shorts/auto com `product_names`;
+ *   - none: nada -> /shorts com products vazio.
+ * Legacy (M1/M22): products como '["nome"]' / CSV cru / lixo "[object Object]"
+ * de configs pré-B1 são colapsados em nomes (auto) ou descartados — a API
+ * externa _parse_products descarta strings silenciosamente, então strings
+ * NUNCA voltam para `items`.
+ */
+export interface ShortProductsRouting {
+    route: "verbatim" | "auto" | "none";
+    /** Itens-objeto (dicts) p/ POST /api/shorts — products. */
+    items: unknown[];
+    /** Nomes/termos de busca p/ POST /api/shorts/auto — product_names. */
+    names: string[];
+    /** Nomes ignorados por coexistirem com itens verbatim (SKIP). */
+    skippedNames: number;
+}
+
+export function resolveShortProductsRouting(options: {
+    products?: unknown;
+    product_names?: unknown;
+}): ShortProductsRouting {
+    let itemsArr: unknown[] = [];
+    if (typeof options.products === "string" && options.products.trim()) {
+        try {
+            const parsed = JSON.parse(options.products) as unknown;
+            if (Array.isArray(parsed)) itemsArr = parsed;
+            else if (typeof parsed === "string" && parsed.trim()) {
+                // CSV cru dentro do JSON (legado): nomes, não itens
+                itemsArr = parsed
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+            }
+        } catch {
+            // não-JSON: CSV cru de posts MUITO antigos — nomes, não itens
+            itemsArr = options.products
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean);
+        }
+    } else if (Array.isArray(options.products)) {
+        itemsArr = options.products;
+    }
+
+    let namesArr: string[] = [];
+    if (Array.isArray(options.product_names)) {
+        namesArr = (options.product_names as unknown[])
+            .filter((x): x is string => typeof x === "string" && !!x.trim())
+            .map((s) => s.trim());
+    } else if (typeof options.product_names === "string" && options.product_names.trim()) {
+        try {
+            const parsed = JSON.parse(options.product_names) as unknown;
+            if (Array.isArray(parsed)) {
+                namesArr = (parsed as unknown[])
+                    .filter((x): x is string => typeof x === "string" && !!x.trim())
+                    .map((s) => s.trim());
+            } else {
+                namesArr = [options.product_names.trim()];
+            }
+        } catch {
+            namesArr = [];
+        }
+    }
+
+    // itens verbatim = objetos (shape B1 { item } ou shape legacy
+    // {merchant_id,...}); strings legacy viram nomes (auto-select).
+    const verbatimItems = itemsArr.filter(
+        (v): v is Record<string, unknown> =>
+            v != null && typeof v === "object" && !Array.isArray(v),
+    );
+    const legacyNameStrings = itemsArr.filter(
+        (v): v is string => typeof v === "string" && !!v.trim(),
+    );
+    if (legacyNameStrings.length > 0) namesArr.push(...legacyNameStrings.map((s) => s.trim()));
+    // lixo de configs pré-B1 (array de objetos virou "[object Object]"):
+    // nunca vira nome de busca — descartado
+    namesArr = namesArr.filter((n) => n !== "[object Object]");
+
+    let route: ShortProductsRouting["route"] = "none";
+    if (verbatimItems.length > 0) route = "verbatim";
+    else if (namesArr.length > 0) route = "auto";
+    return {
+        route,
+        items: verbatimItems,
+        names: namesArr,
+        skippedNames: route === "verbatim" ? namesArr.length : 0,
+    };
+}
+
 /** Categorias de vídeo do YouTube (id -> nome) para o dropdown do planner. */
 export const YOUTUBE_CATEGORIES: Record<number, string> = {
     1: "Film & Animation",
