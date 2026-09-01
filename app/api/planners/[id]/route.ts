@@ -81,11 +81,12 @@ export async function PATCH(
                     return NextResponse.json({ error: "One or more channels do not belong to this user" }, { status: 400 });
                 }
             }
-            // Isolation: bloquear planners mistos YT+IG
+            // Isolation: bloquear planners mistos YT+IG / TikTok+outra
             if (channel_ids.length > 1) {
                 const mixCheck = await validatePlannerChannelMix(channel_ids, prisma);
                 if (!mixCheck.ok) {
-                    return NextResponse.json({ error: PLANNER_MIX_ERROR }, { status: 400 });
+                    // TikTok no mix → mensagem dedicada PT-BR (validatePlannerChannelMix já a escolhe)
+                    return NextResponse.json({ error: mixCheck.error || PLANNER_MIX_ERROR }, { status: 400 });
                 }
             }
             safeChannelIds = channel_ids;

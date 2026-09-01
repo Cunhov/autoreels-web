@@ -43,7 +43,8 @@ export async function POST(
         if (channelIds.length > 1) {
             const mixCheck = await validatePlannerChannelMix(channelIds, prisma);
             if (!mixCheck.ok) {
-                return NextResponse.json({ error: PLANNER_MIX_ERROR }, { status: 400 });
+                // TikTok no mix → mensagem dedicada PT-BR (validatePlannerChannelMix já a escolhe)
+                return NextResponse.json({ error: mixCheck.error || PLANNER_MIX_ERROR }, { status: 400 });
             }
         }
 

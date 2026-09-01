@@ -9,6 +9,8 @@ import {
 	Instagram,
 	Check,
 	Youtube,
+	Music,
+	Video,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
 import MediaUploader from "./MediaUploader";
@@ -22,6 +24,18 @@ import {
 } from "@/lib/planner-config";
 
 const PLANNER_MIX_ERROR = "Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
+const PLANNER_TIKTOK_MIX_ERROR = "Planners TikTok não podem misturar canais de outras plataformas.";
+const TIKTOK_PRIVACY_FALLBACK: readonly string[] = [
+	"PUBLIC_TO_EVERYONE",
+	"MUTUAL_FOLLOW_FRIENDS",
+	"SELF_ONLY",
+] as const;
+const TIKTOK_PRIVACY_LABELS: Record<string, string> = {
+	PUBLIC_TO_EVERYONE: "Público para todos",
+	MUTUAL_FOLLOW_FRIENDS: "Amigos mútuos",
+	FOLLOWER_OF_CREATOR: "Seguidores do criador",
+	SELF_ONLY: "Somente eu",
+};
 
 // B1 — produtos afiliados: resultado da busca live (mesmo shape do payload
 // GET /api/youtube/products: { item, title, vendor, price, commission_pct }).
@@ -75,7 +89,9 @@ function plannerMediaLabel(
 	mediaType: string,
 	isCarousel: boolean,
 	youtubeMode: "only" | "mixed" | "none",
+	tiktokMode = false,
 ): string {
+	if (tiktokMode) return "Vídeo TikTok";
 	const igLabel = isCarousel
 		? "Carrossel"
 		: mediaType === "REELS"
@@ -204,6 +220,16 @@ export default function PlannerWizard({
 	const [youtubeMonetizeWithAds, setYoutubeMonetizeWithAds] = useState(false);
 	const [youtubeCategoryId, setYoutubeCategoryId] = useState("");
 	const [youtubePinnedComment, setYoutubePinnedComment] = useState("");
+	// TikTok planner fields (só quando onlyTiktokSelected)
+	const [tiktokCaption, setTiktokCaption] = useState("");
+	const [tiktokPrivacyLevel, setTiktokPrivacyLevel] = useState<string>("SELF_ONLY");
+	const [tiktokPrivacyOptions, setTiktokPrivacyOptions] = useState<string[]>([...TIKTOK_PRIVACY_FALLBACK]);
+	const [tiktokDisableDuet, setTiktokDisableDuet] = useState(false);
+	const [tiktokDisableStitch, setTiktokDisableStitch] = useState(false);
+	const [tiktokDisableComment, setTiktokDisableComment] = useState(false);
+	const [tiktokCoverTimestampMs, setTiktokCoverTimestampMs] = useState("");
+	const [tiktokBrandContentToggle, setTiktokBrandContentToggle] = useState(false);
+	const [tiktokBrandOrganicToggle, setTiktokBrandOrganicToggle] = useState(false);
 	// REGRA ITEM > FIXO (produtos por vídeo na library): mapa itemId → CSV de
 	// nomes dos itens selecionados. Quando um item tem produtos, eles vencem o
 	// youtube_products fixo do planner na publicação — informado na UI.
@@ -265,6 +291,36 @@ export default function PlannerWizard({
 		);
 	}, [youtubeSelected, channels, selectedChannels]);
 
+	const tiktokSelected = useMemo(() => {
+		return selectedChannels.some(
+			(id) => channels.find((c) => c.id === id)?.platform === "tiktok",
+		);
+	}, [channels, selectedChannels]);
+
+	const onlyTiktokSelected = useMemo(() => {
+		return (
+			tiktokSelected &&
+			selectedChannels.length > 0 &&
+			selectedChannels.every(
+				(id) => channels.find((c) => c.id === id)?.platform === "tiktok",
+			)
+		);
+	}, [tiktokSelected, channels, selectedChannels]);
+
+	const onlyInstagramSelected = useMemo(() => {
+		return (
+			selectedChannels.length > 0 &&
+			!youtubeSelected &&
+			!tiktokSelected &&
+			selectedChannels.every(
+				(id) => {
+					const plat = (channels.find((c) => c.id === id)?.platform || "").toLowerCase();
+					return plat === "instagram" || plat === "";
+				},
+			)
+		);
+	}, [selectedChannels, youtubeSelected, tiktokSelected, channels]);
+
 	// Planners com canal YouTube não têm "Story": em planners mistos IG+YT o
 	// post do canal YT seria classificado como Short sem vídeo (falha permanente
 	// no publisher, ciclo após ciclo). Corrige automaticamente para Short.
@@ -272,10 +328,42 @@ export default function PlannerWizard({
 	// marcar aqui faria um save sem edições reais reconstruir todas as entradas
 	// com globalSettings, achatando as configurações por-item preservadas.
 	useEffect(() => {
-		if (youtubeSelected && mediaType === "STORIES") {
+		if ((youtubeSelected || tiktokSelected) && mediaType === "STORIES") {
 			setMediaType("REELS");
 		}
-	}, [youtubeSelected, mediaType]);
+	}, [youtubeSelected, tiktokSelected, mediaType]);
+
+	// TikTok v1: apenas vídeo — força REELS quando só TikTok (IMAGE/CAROUSEL
+	// são bloqueados no submit; aqui a UI já esconde as opções inválidas).
+	useEffect(() => {
+		if (onlyTiktokSelected && (isCarousel || mediaType === "IMAGE" || mediaType === "CAROUSEL")) {
+			setMediaType("REELS");
+			setIsCarousel(false);
+		}
+	}, [onlyTiktokSelected, mediaType, isCarousel]);
+
+	// TikTok: tenta carregar creator_info para popular privacy options
+	useEffect(() => {
+		if (!onlyTiktokSelected || selectedChannels.length === 0) return;
+		const channelId = selectedChannels[0];
+		let cancelled = false;
+		(async () => {
+			try {
+				const res = await fetch(`/api/tiktok/creator-info?channelId=${encodeURIComponent(channelId)}`);
+				if (!res.ok) return;
+				const data = await res.json();
+				const opts = data?.privacy_level_options || data?.privacy_options || data?.options;
+				if (!cancelled && Array.isArray(opts) && opts.length > 0) {
+					setTiktokPrivacyOptions(opts.map((v: unknown) => String(v)));
+					// se o atual não está nas opções, cai para fallback
+					if (!opts.includes(tiktokPrivacyLevel)) {
+						setTiktokPrivacyLevel(String(opts[0]));
+					}
+				}
+			} catch {}
+		})();
+		return () => { cancelled = true; };
+	}, [onlyTiktokSelected, selectedChannels]);
 
 	// Modo YouTube do rótulo de mídia: só-YouTube / misto IG+YT / nenhum.
 	const youtubeMode = useMemo<"only" | "mixed" | "none">(() => {
@@ -283,13 +371,14 @@ export default function PlannerWizard({
 		return onlyYoutubeSelected ? "only" : "mixed";
 	}, [youtubeSelected, onlyYoutubeSelected]);
 
-	// Isolation: tipo do planner e detecção de mix
-	const selectedPlatformType = useMemo<"youtube" | "instagram" | null>(() => {
+	// Isolation: tipo do planner e detecção de mix (3 pilares)
+	const selectedPlatformType = useMemo<"youtube" | "instagram" | "tiktok" | null>(() => {
 		if (selectedChannels.length === 0) return null;
+		if (onlyTiktokSelected) return "tiktok";
 		if (onlyYoutubeSelected) return "youtube";
-		if (!youtubeSelected) return "instagram";
+		if (!youtubeSelected && !tiktokSelected) return "instagram";
 		return null; // nunca misto quando isolamento ativo (bloqueado antes)
-	}, [selectedChannels, onlyYoutubeSelected, youtubeSelected]);
+	}, [selectedChannels, onlyYoutubeSelected, onlyTiktokSelected, youtubeSelected, tiktokSelected]);
 
 	const isChannelDisabled = (channel: Channel) => {
 		if (selectedChannels.length === 0) return false;
@@ -297,6 +386,8 @@ export default function PlannerWizard({
 		const chPlatform = (channel.platform || "").toLowerCase();
 		if (selectedPlatformType === "youtube" && chPlatform !== "youtube") return true;
 		if (selectedPlatformType === "instagram" && chPlatform === "youtube") return true;
+		if (selectedPlatformType === "instagram" && chPlatform === "tiktok") return true;
+		if (selectedPlatformType === "tiktok" && chPlatform !== "tiktok") return true;
 		return false;
 	};
 
@@ -308,6 +399,21 @@ export default function PlannerWizard({
 		);
 		return platforms.size > 1;
 	}, [selectedChannels, channels]);
+
+	const tiktokMixSelected = useMemo(() => {
+		const platforms = new Set(
+			selectedChannels
+				.map((id) => (channels.find((c) => c.id === id)?.platform || "").toLowerCase())
+				.filter(Boolean),
+		);
+		return platforms.has("tiktok") && platforms.size > 1;
+	}, [selectedChannels, channels]);
+
+	// Mensagem de mix PT-BR única para o wizard (TikTok tem aviso dedicado).
+	const mixErrorMessage = useMemo(
+		() => (tiktokMixSelected ? PLANNER_TIKTOK_MIX_ERROR : PLANNER_MIX_ERROR),
+		[tiktokMixSelected],
+	);
 
 	const scheduleSummary = useMemo(() => {
 		const frequency = `${frequencyValue} ${frequencyUnit}`;
@@ -516,6 +622,21 @@ export default function PlannerWizard({
 					setYoutubeMonetizeWithAds(Boolean(config.youtube_monetize_with_ads === true || String(config.youtube_monetize_with_ads).toLowerCase() === "true" || config.youtube_monetize_with_ads === 1));
 					setYoutubeCategoryId(config.youtube_category_id !== undefined && config.youtube_category_id !== null && config.youtube_category_id !== "" ? String(config.youtube_category_id) : "");
 					setYoutubePinnedComment(typeof config.youtube_pinned_comment === "string" ? String(config.youtube_pinned_comment) : typeof config.youtube_pinned_comment_text === "string" ? String(config.youtube_pinned_comment_text) : "");
+					// TikTok fields do config (planner TikTok)
+					const rawTiktokCaption = (config as Record<string, unknown>).tiktok_caption ?? (config as Record<string, unknown>).tiktok_title ?? (config as Record<string, unknown>).tiktok_description;
+					setTiktokCaption(typeof rawTiktokCaption === "string" ? String(rawTiktokCaption) : "");
+					const rawPrivacy = (config as Record<string, unknown>).tiktok_privacy_level ?? (config as Record<string, unknown>).tiktok_privacy ?? (config as Record<string, unknown>).privacy_level;
+					setTiktokPrivacyLevel(typeof rawPrivacy === "string" && rawPrivacy.trim() ? String(rawPrivacy).trim() : "SELF_ONLY");
+					// privacy options: tenta usar creator_info cache se houver, senão fallback
+					const privOpts = Array.isArray((config as Record<string, unknown>).tiktok_privacy_options) ? (config as Record<string, unknown>).tiktok_privacy_options as string[] : null;
+					if (privOpts && privOpts.length > 0) setTiktokPrivacyOptions(privOpts);
+					setTiktokDisableDuet(Boolean((config as Record<string, unknown>).tiktok_disable_duet === true || String((config as Record<string, unknown>).tiktok_disable_duet).toLowerCase() === "true" || (config as Record<string, unknown>).disable_duet === true));
+					setTiktokDisableStitch(Boolean((config as Record<string, unknown>).tiktok_disable_stitch === true || String((config as Record<string, unknown>).tiktok_disable_stitch).toLowerCase() === "true" || (config as Record<string, unknown>).disable_stitch === true));
+					setTiktokDisableComment(Boolean((config as Record<string, unknown>).tiktok_disable_comment === true || String((config as Record<string, unknown>).tiktok_disable_comment).toLowerCase() === "true" || (config as Record<string, unknown>).disable_comment === true));
+					const coverRaw2 = (config as Record<string, unknown>).tiktok_video_cover_timestamp_ms ?? (config as Record<string, unknown>).video_cover_timestamp_ms;
+					setTiktokCoverTimestampMs(coverRaw2 !== undefined && coverRaw2 !== null && coverRaw2 !== "" ? String(coverRaw2) : "");
+					setTiktokBrandContentToggle(Boolean((config as Record<string, unknown>).tiktok_brand_content_toggle === true || String((config as Record<string, unknown>).tiktok_brand_content_toggle).toLowerCase() === "true" || (config as Record<string, unknown>).brand_content_toggle === true));
+					setTiktokBrandOrganicToggle(Boolean((config as Record<string, unknown>).tiktok_brand_organic_toggle === true || String((config as Record<string, unknown>).tiktok_brand_organic_toggle).toLowerCase() === "true" || (config as Record<string, unknown>).brand_organic_toggle === true));
 				} else {
 					setSelectedContentIds([]);
 					setFiles([]);
@@ -563,6 +684,14 @@ export default function PlannerWizard({
 				setYoutubeMonetizeWithAds(false);
 				setYoutubeCategoryId("");
 				setYoutubePinnedComment("");
+				setTiktokCaption("");
+				setTiktokPrivacyLevel("SELF_ONLY");
+				setTiktokDisableDuet(false);
+				setTiktokDisableStitch(false);
+				setTiktokDisableComment(false);
+				setTiktokCoverTimestampMs("");
+				setTiktokBrandContentToggle(false);
+				setTiktokBrandOrganicToggle(false);
 				setFrequencyValue(1);
 				setFrequencyUnit("hours");
 				setTimezone("America/Sao_Paulo");
@@ -613,7 +742,7 @@ export default function PlannerWizard({
 					? data.filter(
 							(c: Channel) =>
 								(c.platform ?? "") !== "" &&
-								["instagram", "youtube"].includes(c.platform as string) &&
+								["instagram", "youtube", "tiktok"].includes((c.platform as string).toLowerCase()) &&
 								c.status === "active",
 						)
 					: [],
@@ -1057,6 +1186,26 @@ export default function PlannerWizard({
 			return;
 		}
 
+		// TikTok v1: apenas vídeo — bloqueia IMAGE/CAROUSEL quando só TikTok
+		if (onlyTiktokSelected) {
+			if (isCarousel || mediaType === "IMAGE") {
+				setFormError("TikTok v1: apenas vídeo é suportado. Imagens e carrosséis serão habilitados na fase 2.");
+				return;
+			}
+			if (!tiktokCaption.trim()) {
+				setFormError("Legenda do TikTok é obrigatória (1..2200 caracteres).");
+				return;
+			}
+			if (tiktokCaption.trim().length > 2200) {
+				setFormError("Legenda do TikTok deve ter no máximo 2200 caracteres.");
+				return;
+			}
+			if (tiktokCoverTimestampMs.trim() && (!Number.isInteger(Number(tiktokCoverTimestampMs)) || Number(tiktokCoverTimestampMs) < 0)) {
+				setFormError("Cover Timestamp deve ser um número inteiro >= 0 (ms).");
+				return;
+			}
+		}
+
 		// Carousel posts are built from FOLDERS only (the cron resolves each
 		// folder's children). Reject non-folder selections early with a clear error.
 		// M10: além disso, cada carrossel exige 2..10 mídias (a API do Instagram
@@ -1164,7 +1313,7 @@ export default function PlannerWizard({
 			const globalSettings = {
 				media_type: isCarousel ? "CAROUSEL" : mediaType,
 				share_to_feed: shareToFeed,
-				caption,
+				caption: onlyTiktokSelected ? tiktokCaption : caption,
 				caption_fallback: captionFallback,
 				title_fallback: titleFallback,
 				location_id: location,
@@ -1193,7 +1342,7 @@ export default function PlannerWizard({
 			const normalizePreservedMediaType = (
 				v: string | undefined,
 			): string | undefined => {
-				if (!youtubeSelected) return v;
+				if (!youtubeSelected && !tiktokSelected) return v;
 				return v === "STORIES" ? "REELS" : v;
 			};
 
@@ -1340,6 +1489,20 @@ export default function PlannerWizard({
 					ytFields.youtube_pinned_comment_text = youtubePinnedComment.trim().slice(0, 10000);
 				}
 			}
+			const tiktokFields: Record<string, unknown> = {};
+			if (onlyTiktokSelected) {
+				if (tiktokCaption.trim()) tiktokFields.tiktok_caption = tiktokCaption.trim().slice(0, 2200);
+				if (tiktokPrivacyLevel) tiktokFields.tiktok_privacy_level = tiktokPrivacyLevel;
+				if (tiktokDisableDuet) tiktokFields.tiktok_disable_duet = true;
+				if (tiktokDisableStitch) tiktokFields.tiktok_disable_stitch = true;
+				if (tiktokDisableComment) tiktokFields.tiktok_disable_comment = true;
+				if (tiktokCoverTimestampMs.trim()) {
+					const n = Number(tiktokCoverTimestampMs.trim());
+					if (Number.isInteger(n) && n >= 0) tiktokFields.tiktok_video_cover_timestamp_ms = n;
+				}
+				if (tiktokBrandContentToggle) tiktokFields.tiktok_brand_content_toggle = true;
+				if (tiktokBrandOrganicToggle) tiktokFields.tiktok_brand_organic_toggle = true;
+			}
 			const plannerConfig = {
 				frequency: {
 					value: freqValue,
@@ -1357,12 +1520,13 @@ export default function PlannerWizard({
 					.filter(Boolean),
 				caption_rotation: captionRotation,
 				...ytFields,
+				...tiktokFields,
 				content,
 			};
 
 			// Isolation: bloquear submit misto no client (defesa além do server 400)
 			if (hasMixSelected) {
-				setFormError(PLANNER_MIX_ERROR);
+				setFormError(tiktokMixSelected ? PLANNER_TIKTOK_MIX_ERROR : PLANNER_MIX_ERROR);
 				setLoading(false);
 				setUploading(false);
 				return;
@@ -1534,7 +1698,7 @@ export default function PlannerWizard({
 											if (disabled) return;
 											toggleChannel(channel.id);
 										}}
-										title={disabled ? PLANNER_MIX_ERROR : undefined}
+										title={disabled ? mixErrorMessage : undefined}
 										aria-disabled={disabled}
 										className={`p-4 rounded-xl border flex items-center gap-4 transition-all ${
 											disabled
@@ -1557,6 +1721,10 @@ export default function PlannerWizard({
 											<div className="w-10 h-10 rounded-full bg-ios-red/10 flex items-center justify-center">
 												<Youtube size={20} className="text-ios-red" />
 											</div>
+										) : channel.platform === "tiktok" ? (
+											<div className="w-10 h-10 rounded-full bg-black flex items-center justify-center">
+												<Music size={20} className="text-white" />
+											</div>
 										) : (
 											<div className="w-10 h-10 rounded-full bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 p-[2px]">
 												<div className="w-full h-full rounded-full bg-white flex items-center justify-center">
@@ -1565,14 +1733,22 @@ export default function PlannerWizard({
 											</div>
 										)}
 										<div>
-											<h4 className="font-semibold text-ios-text">{channel.name}</h4>
+											<h4 className="font-semibold text-ios-text flex items-center gap-2">
+												{channel.name}
+												{channel.platform === "tiktok" && (
+													<span className="text-[9px] font-bold uppercase tracking-wide bg-black text-white px-1.5 py-0.5 rounded-full">TikTok</span>
+												)}
+												{channel.platform === "youtube" && (
+													<span className="text-[9px] font-bold uppercase tracking-wide bg-ios-red/10 text-ios-red px-1.5 py-0.5 rounded-full">YouTube</span>
+												)}
+											</h4>
 											<p className="text-xs text-ios-secondary font-mono">
 												{channel.account_id}
 											</p>
 										</div>
 									{disabled && (
 											<div className="ml-auto text-[10px] text-amber-600 font-medium hidden sm:block">
-												{PLANNER_MIX_ERROR}
+												{mixErrorMessage}
 											</div>
 										)}
 									</div>
@@ -1586,14 +1762,18 @@ export default function PlannerWizard({
 								)}
 								{hasMixSelected && (
 									<div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm">
-										{PLANNER_MIX_ERROR}
+										{mixErrorMessage}
 									</div>
 								)}
 								{selectedChannels.length > 0 && selectedPlatformType && (
 									<div className="text-xs text-ios-secondary">
 										Tipo detectado:{" "}
 										<span className="font-semibold">
-											{selectedPlatformType === "youtube" ? "YouTube" : "Instagram"}
+											{selectedPlatformType === "youtube"
+												? "YouTube"
+												: selectedPlatformType === "tiktok"
+													? "TikTok"
+													: "Instagram"}
 										</span>{" "}
 										— apenas canais desse tipo podem ser adicionados.
 									</div>
@@ -1682,7 +1862,7 @@ export default function PlannerWizard({
 									<h3 className="text-[13px] font-bold text-ios-secondary uppercase tracking-wide">
 										Post Configuration
 									</h3>
-									{files.length + selectedContentIds.length > 1 && (
+									{files.length + selectedContentIds.length > 1 && !onlyTiktokSelected && (
 										<div
 											onClick={() => {
 												const next = !isCarousel;
@@ -1721,21 +1901,27 @@ export default function PlannerWizard({
 											}}
 											className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
 										>
-											<option value="REELS">
-												{onlyYoutubeSelected ? "Short do YouTube" : "Reels"}
-											</option>
-											<option value="IMAGE">
-												{onlyYoutubeSelected ? "Post na Comunidade" : "Post / Image"}
-											</option>
-											<option value="CAROUSEL">
-												{onlyYoutubeSelected
-													? "Carrossel · Post na Comunidade"
-													: "Carousel"}
-											</option>
-											{!youtubeSelected && <option value="STORIES">Story</option>}
+											{onlyTiktokSelected ? (
+												<option value="REELS">Vídeo TikTok</option>
+											) : (
+												<>
+												<option value="REELS">
+													{onlyYoutubeSelected ? "Short do YouTube" : "Reels"}
+												</option>
+												<option value="IMAGE">
+													{onlyYoutubeSelected ? "Post na Comunidade" : "Post / Image"}
+												</option>
+												<option value="CAROUSEL">
+													{onlyYoutubeSelected
+														? "Carrossel · Post na Comunidade"
+														: "Carousel"}
+												</option>
+												{!youtubeSelected && <option value="STORIES">Story</option>}
+												</>
+											)}
 										</select>
 									</div>
-									{mediaType === "REELS" && !isCarousel && !onlyYoutubeSelected && (
+									{mediaType === "REELS" && !isCarousel && !onlyYoutubeSelected && !onlyTiktokSelected && (
 										<div className="flex flex-col justify-center">
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
 												Options
@@ -1758,7 +1944,134 @@ export default function PlannerWizard({
 									)}
 								</div>
 
-								{!onlyYoutubeSelected && (
+								{onlyTiktokSelected && (
+									<div className="space-y-4 p-4 bg-black/[0.03] dark:bg-white/[0.03] rounded-xl border border-ios-separator">
+										<h4 className="text-xs font-bold text-ios-text uppercase tracking-wide flex items-center gap-2">
+											<Music size={14} className="text-black dark:text-white" />
+											Configurações TikTok
+										</h4>
+										<div>
+											<div className="flex justify-between items-center mb-1.5">
+												<label className="text-xs font-medium text-ios-text block">
+													Legenda TikTok <span className="text-ios-red">*</span>
+												</label>
+												<span className="text-[11px] text-gray-400">{tiktokCaption.length}/2200</span>
+											</div>
+											<textarea
+												value={tiktokCaption}
+												onChange={(e) => {
+													setTiktokCaption(e.target.value.slice(0, 2200));
+													setSettingsTouched(true);
+												}}
+												className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm h-28 resize-none focus:border-ios-blue outline-none"
+												placeholder="Escreva a legenda do TikTok (1..2200 caracteres)..."
+												maxLength={2200}
+											/>
+											<div className="flex flex-wrap gap-1 mt-2">
+												{["{post_title}", "{post_caption}", "{date}", "{channel_name}", "{hashtags}"].map((v) => (
+													<button
+														key={v}
+														type="button"
+														onClick={() => setTiktokCaption((prev) => prev + v)}
+														className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
+													>
+														+ {v}
+													</button>
+												))}
+											</div>
+											<p className="text-[10px] text-gray-400 mt-1">
+												Variáveis são resolvidas na publicação; {"{hashtags}"} usa as tags do
+												conteúdo selecionado.
+											</p>
+										</div>
+										<div>
+											<label className="text-xs font-medium text-ios-text mb-1.5 block">
+												Privacy Level
+											</label>
+											<select
+												value={tiktokPrivacyLevel}
+												onChange={(e) => {
+													setTiktokPrivacyLevel(e.target.value);
+													setSettingsTouched(true);
+												}}
+												className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
+											>
+												{tiktokPrivacyOptions.map((opt) => (
+													<option key={opt} value={opt}>
+														{TIKTOK_PRIVACY_LABELS[opt] ?? opt}
+													</option>
+												))}
+											</select>
+											<p className="text-[10px] text-gray-400 mt-1">
+												Opções vindas do creator_info do canal (fallback: Público, Amigos
+												mútuos, Somente eu).
+											</p>
+										</div>
+										<div className="space-y-3">
+											{[
+												{ key: "duet", label: "Desativar Duet", state: tiktokDisableDuet, set: setTiktokDisableDuet },
+												{ key: "stitch", label: "Desativar Stitch", state: tiktokDisableStitch, set: setTiktokDisableStitch },
+												{ key: "comment", label: "Desativar Comentários", state: tiktokDisableComment, set: setTiktokDisableComment },
+											].map((t) => (
+												<div
+													key={t.key}
+													onClick={() => { t.set(!t.state); setSettingsTouched(true); }}
+													className="flex items-center justify-between cursor-pointer"
+												>
+													<span className="text-sm text-ios-text">{t.label}</span>
+													<div className={`w-10 h-6 rounded-full relative transition-colors ${t.state ? "bg-ios-blue" : "bg-gray-300"}`}>
+														<div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${t.state ? "translate-x-5" : "translate-x-1"}`} />
+													</div>
+												</div>
+											))}
+										</div>
+										<div>
+											<label className="text-xs font-medium text-ios-text mb-1.5 block">
+												Cover Timestamp (ms)
+											</label>
+											<input
+												type="number"
+												min={0}
+												value={tiktokCoverTimestampMs}
+												onChange={(e) => {
+													setTiktokCoverTimestampMs(e.target.value);
+													setSettingsTouched(true);
+												}}
+												className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none"
+												placeholder="Ex.: 1000"
+											/>
+											<p className="text-[10px] text-gray-400 mt-1">
+												1000 = 1s. 0 (vazio) = capa automática do TikTok.
+											</p>
+										</div>
+										<div className="space-y-2">
+											<div
+													onClick={() => { setTiktokBrandContentToggle(!tiktokBrandContentToggle); setSettingsTouched(true); }}
+												className="flex items-center justify-between cursor-pointer"
+											>
+												<span className="text-sm text-ios-text">Conteúdo de marca (Brand Content)</span>
+												<div className={`w-10 h-6 rounded-full relative transition-colors ${tiktokBrandContentToggle ? "bg-ios-blue" : "bg-gray-300"}`}>
+													<div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${tiktokBrandContentToggle ? "translate-x-5" : "translate-x-1"}`} />
+												</div>
+											</div>
+											<div
+												onClick={() => { setTiktokBrandOrganicToggle(!tiktokBrandOrganicToggle); setSettingsTouched(true); }}
+												className="flex items-center justify-between cursor-pointer"
+											>
+												<span className="text-sm text-ios-text">Brand Organic</span>
+												<div className={`w-10 h-6 rounded-full relative transition-colors ${tiktokBrandOrganicToggle ? "bg-ios-blue" : "bg-gray-300"}`}>
+													<div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${tiktokBrandOrganicToggle ? "translate-x-5" : "translate-x-1"}`} />
+												</div>
+											</div>
+											<p className="text-[10px] text-gray-400">
+												⚠️ Requer elegibilidade do criador no TikTok — se a publicação falhar, o
+												erro será exibido em PT-BR.
+											</p>
+										</div>
+									</div>
+								)}
+
+								{!onlyYoutubeSelected && !onlyTiktokSelected && (
 								<div>
 									<div className="flex justify-between items-center mb-1.5">
 										<label className="text-xs font-medium text-ios-text block">
@@ -1791,7 +2104,7 @@ export default function PlannerWizard({
 								</div>
 								)}
 
-								{!onlyYoutubeSelected && (
+								{!onlyYoutubeSelected && !onlyTiktokSelected && (
 								<div className="space-y-3 pt-4 border-t border-ios-separator">
 									<div className="flex items-center justify-between">
 										<label className="text-xs font-medium text-ios-text block">
@@ -1859,7 +2172,7 @@ export default function PlannerWizard({
 								</div>
 								)}
 
-								{!onlyYoutubeSelected && (
+								{!onlyYoutubeSelected && !onlyTiktokSelected && (
 								<div className="space-y-4 pt-4 border-t border-ios-separator">
 									<div>
 										<label className="text-xs font-medium text-ios-text mb-1.5 block">
@@ -1901,7 +2214,7 @@ export default function PlannerWizard({
 								)}
 
 								<div className="space-y-4">
-									{!onlyYoutubeSelected && (
+									{!onlyYoutubeSelected && !onlyTiktokSelected && (
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
 												Location ID (Optional)
@@ -1918,7 +2231,7 @@ export default function PlannerWizard({
 										</div>
 									)}
 
-									{mediaType !== "STORIES" && !onlyYoutubeSelected && (
+									{mediaType !== "STORIES" && !onlyYoutubeSelected && !onlyTiktokSelected && (
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
 												Collaborators (Optional)
@@ -1939,7 +2252,7 @@ export default function PlannerWizard({
 									)}
 
 									{(mediaType === "IMAGE" || mediaType === "CAROUSEL") &&
-										!onlyYoutubeSelected && (
+										!onlyYoutubeSelected && !onlyTiktokSelected && (
 											<div>
 												<label className="text-xs font-medium text-ios-text mb-1.5 block">
 													User Tags (Optional)
@@ -2207,7 +2520,7 @@ export default function PlannerWizard({
 											</div>
 										</div>
 									)}
-									{mediaType === "REELS" && !onlyYoutubeSelected && (
+									{mediaType === "REELS" && !onlyYoutubeSelected && !onlyTiktokSelected && (
 										<div className="space-y-3 p-3 bg-ios-gray-6 rounded-xl border border-ios-separator">
 											<span className="text-xs font-semibold text-ios-text block">
 												Meta Audio Settings (Optional)
@@ -2465,8 +2778,8 @@ export default function PlannerWizard({
 									<div className="flex items-center justify-between gap-4">
 										<span className="text-ios-secondary">Media</span>
 										<span className="font-medium text-right">
-											{plannerMediaLabel(mediaType, isCarousel, youtubeMode)}
-											{youtubeMode !== "only" && mediaType === "REELS" && !shareToFeed
+											{plannerMediaLabel(mediaType, isCarousel, youtubeMode, onlyTiktokSelected)}
+											{!onlyTiktokSelected && youtubeMode !== "only" && mediaType === "REELS" && !shareToFeed
 												? " · sem feed"
 												: ""}
 										</span>

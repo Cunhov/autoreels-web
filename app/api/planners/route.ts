@@ -142,11 +142,12 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: channelCheck.error }, { status: 400 });
         }
 
-        // Isolation: bloquear planners mistos YT+IG (criar planners separados)
+        // Isolation: bloquear planners mistos YT+IG / TikTok+outra (criar planners separados)
         if (channelCheck.ids.length > 1) {
             const mixCheck = await validatePlannerChannelMix(channelCheck.ids, prisma);
             if (!mixCheck.ok) {
-                return NextResponse.json({ error: PLANNER_MIX_ERROR }, { status: 400 });
+                // TikTok no mix → mensagem dedicada PT-BR (validatePlannerChannelMix já a escolhe)
+                return NextResponse.json({ error: mixCheck.error || PLANNER_MIX_ERROR }, { status: 400 });
             }
         }
 
