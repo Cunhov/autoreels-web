@@ -12,6 +12,7 @@ import { escapeHtml, sanitizeCaption } from "@/lib/sanitize";
 // path) are excluded to prevent mass assignment / arbitrary file deletion.
 const PATCH_ALLOWED_FIELDS = [
     "name", "title", "caption", "caption_youtube", "caption_instagram",
+    "youtube_products",
     "tags", "type", "size", "duration",
     "parent_id", "thumbnail_url", "url",
 ] as const;
@@ -149,6 +150,14 @@ export async function PATCH(
         }
         if (payload.caption_instagram !== undefined && payload.caption_instagram !== null) {
             payload.caption_instagram = sanitizeCaption(payload.caption_instagram);
+        }
+        // Produtos afiliados por vídeo (decisão do dono): CSV de NOMES no item.
+        // Mesma regra do POST: trim + limite 5000; vírgula separa itens; nomes
+        // não passam por escapeHtml (termo do catálogo, não texto de post).
+        if (payload.youtube_products !== undefined && payload.youtube_products !== null) {
+            let p = String(payload.youtube_products).trim();
+            if (p.length > 5000) p = p.slice(0, 5000);
+            payload.youtube_products = p || null;
         }
         if (payload.title !== undefined && payload.title !== null) {
             let t = String(payload.title).trim();

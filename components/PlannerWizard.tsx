@@ -204,6 +204,25 @@ export default function PlannerWizard({
 	const [youtubeMonetizeWithAds, setYoutubeMonetizeWithAds] = useState(false);
 	const [youtubeCategoryId, setYoutubeCategoryId] = useState("");
 	const [youtubePinnedComment, setYoutubePinnedComment] = useState("");
+	// REGRA ITEM > FIXO (produtos por vídeo na library): mapa itemId → CSV de
+	// nomes dos itens selecionados. Quando um item tem produtos, eles vencem o
+	// youtube_products fixo do planner na publicação — informado na UI.
+	const [selectedItemProducts, setSelectedItemProducts] = useState<Record<string, string>>({});
+	const [selectedItemProductsLoaded, setSelectedItemProductsLoaded] = useState(false);
+	// REGRA ITEM > FIXO: produtos NÃO-duplicados de TODOS os itens selecionados
+	// (usado no aviso da UI). O runtime mesmo resolve por item na publicação.
+	const finalSelectedItemProducts = useMemo(() => {
+		const out: string[] = [];
+		for (const id of selectedContentIds) {
+			const csv = selectedItemProducts[String(id)];
+			if (!csv) continue;
+			for (const p of csv.split(",")) {
+				const clean = p.trim();
+				if (clean && !out.includes(clean)) out.push(clean);
+			}
+		}
+		return out;
+	}, [selectedItemProducts, selectedContentIds]);
 	const [formError, setFormError] = useState("");
 	// Count of existing content items that the UI cannot represent (legacy direct
 	// uploads). They are preserved as-is on save so editing a planner never loses them.
@@ -879,6 +898,47 @@ export default function PlannerWizard({
 			}
 		};
 	}, []);
+
+	// REGRA ITEM > FIXO: popula o mapa itemId → youtube_products dos itens
+	// selecionados (mesma fonte do runtime: GET /api/content-items). Mostra o
+	// aviso "este vídeo tem N produto(s)" na seção Produtos Afiliados e deixa
+	// claro que a publicação usa os produtos do vídeo.
+	useEffect(() => {
+		let active = true;
+		if (selectedContentIds.length === 0) {
+			setSelectedItemProducts({});
+			setSelectedItemProductsLoaded(true);
+			return () => {
+				active = false;
+			};
+		}
+		setSelectedItemProductsLoaded(false);
+		(async () => {
+			try {
+				const params = new URLSearchParams({ limit: "500" });
+				const res = await fetch(`/api/content-items?${params.toString()}`);
+				if (!res.ok) return;
+				const payload = await res.json();
+				const items: { id?: string; youtube_products?: string | null }[] =
+					Array.isArray(payload) ? payload : payload.items || [];
+				const map: Record<string, string> = {};
+				for (const it of items) {
+					const id = String(it.id || "");
+					if (id && typeof it.youtube_products === "string" && it.youtube_products.trim()) {
+						map[id] = it.youtube_products.trim();
+					}
+				}
+				if (active) setSelectedItemProducts(map);
+			} catch {
+				// fallback: sem aviso (não bloqueia o save)
+			} finally {
+				if (active) setSelectedItemProductsLoaded(true);
+			}
+		})();
+		return () => {
+			active = false;
+		};
+	}, [selectedContentIds]);
 
 	/**
 	 * O item de biblioteca tem nome/título que o buildPostData usaria como
@@ -1968,6 +2028,15 @@ export default function PlannerWizard({
 											</div>
 											<div>
 												<label className="text-xs font-medium text-ios-text mb-1.5 block">Produtos Afiliados</label>
+												{finalSelectedItemProducts.length > 0 && (
+													<div className="mb-1.5 p-2 rounded-lg bg-ios-blue/5 border border-ios-blue/20">
+														<p className="text-[11px] text-ios-blue">
+															✨ Este vídeo tem {finalSelectedItemProducts.length} produto(s) marcado(s)
+															na biblioteca — serão usados na publicação (prioridade do vídeo sobre
+															este fixo).
+														</p>
+													</div>
+												)}
 												<div className="flex justify-end mb-1.5">
 													<button
 														type="button"
@@ -1979,7 +2048,7 @@ export default function PlannerWizard({
 												</div>
 												{youtubeProductDrafts.length === 0 && (
 													<p className="text-[10px] text-gray-400 mb-1">
-														Nenhum produto. Adicione para buscar no catálogo do canal ou deixar
+														Nenhum produto fixo. Adicione para buscar no catálogo do canal ou deixar
 														só o nome (auto-seleção na publicação).
 													</p>
 												)}

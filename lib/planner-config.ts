@@ -238,6 +238,28 @@ export interface YoutubeProductsPayload {
  * no nome do produto (M22): o nome viaja intacto em `names` e cada `item` é
  * preservado verbatim. Entrada com item -> items (não vira name).
  */
+/** Forma bruta aceita como fonte de produtos (CSV de nomes, array de
+ * {query,item?}, ou null/undefined = sem produtos). */
+export type YoutubeProductsSource = string | unknown[] | null | undefined;
+
+/**
+ * REGRA ITEM > FIXO (decisão do dono — produtos por vídeo na library):
+ * devolve a fonte de produtos que vence: o CSV de nomes do ContentItem
+ * (quando não-vazio) preferido ao youtube_products fixo do config do planner.
+ * Função PURA (testável) — o runtime a usa em buildYoutubeOptionsForPost e
+ * propagação; a UI a espelha para o aviso "este vídeo tem N produto(s)".
+ */
+export function resolveYoutubeProductsSource(
+	itemProducts: YoutubeProductsSource,
+	configProducts: YoutubeProductsSource,
+): YoutubeProductsSource {
+	if (typeof itemProducts === "string" && itemProducts.trim()) {
+		// Não normaliza aqui: toYoutubeProductsJson faz a separação nomes/verbatim.
+		return itemProducts;
+	}
+	return configProducts;
+}
+
 export function toYoutubeProductsJson(value: unknown): YoutubeProductsPayload {
     const entries = normalizeYoutubeProductsList(value) ?? [];
     const names: string[] = [];

@@ -237,6 +237,24 @@ export async function GET(
         youtube_monetize_with_ads: plannerConfig.youtube_monetize_with_ads ?? null,
         youtube_category_id: plannerConfig.youtube_category_id ?? null,
         youtube_pinned_comment: typeof (plannerConfig.youtube_pinned_comment ?? plannerConfig.youtube_pinned_comment_text) === "string" ? String(plannerConfig.youtube_pinned_comment ?? plannerConfig.youtube_pinned_comment_text) : null,
+        // REGRA ITEM > FIXO: produtos do item selecionado (por vídeo na library),
+        // quando presente vencem o fixo do config. O runtime resolve o spill por
+        // post; aqui expomos o do item corrente para o preview/editor.
+        item_youtube_products: (() => {
+            const sel = runtime.selectedContent as
+                | { id?: string; folder_id?: string }
+                | null
+                | undefined;
+            const libId = sel?.id || sel?.folder_id;
+            if (!libId) return null;
+            return prisma.contentItem
+                .findFirst({
+                    where: { id: libId, user_id: userId },
+                    select: { youtube_products: true },
+                })
+                .then((it) => it?.youtube_products || null)
+                .catch(() => null);
+        })(),
     };
 
     // Isolation: detectar planners mistos (grandfathered) — não bloqueia preview, mas expõe warning

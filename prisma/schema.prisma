@@ -149,6 +149,7 @@ model ContentItem {
   caption     String?
   caption_youtube String?  // caption específica do YouTube (arquivo youtube.txt na pasta)
   caption_instagram String? // caption específica do Instagram (arquivo instagram.txt na pasta)
+  youtube_products String?  // CSV de NOMES de produtos afiliados do YouTube (por vídeo; vence o fixo do planner)
   created_at  DateTime @default(now())
 
   user        User      @relation(fields: [user_id], references: [id], onDelete: Cascade)

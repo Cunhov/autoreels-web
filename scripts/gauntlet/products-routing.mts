@@ -131,3 +131,53 @@ import { toYoutubeProductsJson } from "../../lib/planner-config";
 
 console.log(`\nroteamento F1-B1: ${passed} passaram, ${failures} falharam`);
 if (failures > 0) process.exit(1);
+// ─── REGRA ITEM > FIXO (funcionalidade nova — produtos por vídeo na library) ──
+// resolveYoutubeProductsSource: CSV de nomes do ContentItem vence o
+// youtube_products fixo do config quando NÃO-vazio; senão usa o config.
+import { resolveYoutubeProductsSource } from "../../lib/planner-config";
+
+// 11. item com produtos CSV -> item vence o fixo do planner
+{
+  const src = resolveYoutubeProductsSource(
+    "Smartwatch, Mousepad",
+    "produto fixo do planner",
+  );
+  check("ITEM>FIXO: item não-vazio vence o fixo (string CSV preservada)",
+    src === "Smartwatch, Mousepad");
+  const payload = toYoutubeProductsJson(src);
+  check("ITEM>FIXO: CSV do item vira nomes (auto-select /shorts/auto)",
+    payload.hasNames && payload.names[0] === "Smartwatch" &&
+    payload.names.length === 2 && !payload.hasItems);
+}
+
+// 12. item vazio/null -> usa o fixo do planner
+{
+  const src = resolveYoutubeProductsSource(null, "produto fixo do planner");
+  check("ITEM>FIXO: item null -> fixo do planner",
+    src === "produto fixo do planner");
+}
+
+// 13. item strings-only (espaços) -> considera vazio -> fixo
+{
+  const src = resolveYoutubeProductsSource("   ", "fixo");
+  check("ITEM>FIXO: item só-espaços -> fixo", src === "fixo");
+}
+
+// 14. item não-string (ex.: array legacy no item?) -> não é CSV -> fixo
+{
+  const src = resolveYoutubeProductsSource(["x"], "fixo");
+  check("ITEM>FIXO: item array (não-CSV) -> fixo (item guarda só string)",
+    src === "fixo");
+}
+
+// 15. routing final com item: nomes do item -> /auto (nunca /shorts verbatim)
+{
+  const r = resolveShortProductsRouting({
+    product_names: JSON.stringify(["Smartwatch", "Mousepad"]),
+  });
+  check("ITEM>FIXO: nomes do vídeo vão a /shorts/auto",
+    r.route === "auto" && r.names.length === 2 && r.items.length === 0);
+}
+
+console.log(`\nroteamento F1-B1 + ITEM>FIXO: ${passed} passaram, ${failures} falharam`);
+if (failures > 0) process.exit(1);

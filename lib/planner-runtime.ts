@@ -46,6 +46,7 @@ type PlannerContentItem = {
 	caption_fallback?: string;
 	title_fallback?: string;
 	title?: string; // legacy — metadados de upload direto (sem row no banco)
+	youtube_products?: string | null; // CSV de nomes — item > fixo do planner
 	location_id?: string | null;
 	share_to_feed?: boolean | null;
 	thumbnail_url?: string;
@@ -460,6 +461,8 @@ async function buildYoutubeOptionsForPost(opts: {
 	const { config, selectedContent } = opts;
 	const selected = selectedContent as PlannerContentItem | null | undefined;
 	const cfg = config as Record<string, unknown>;
+	// SAFETY: selected veio de PlannerContentItem (= config.content já parseado defensivamente);
+	// o cast gera o acesso genérico usado pela herança config>item>youtube_options.
 	const selAny = selected as unknown as Record<string, unknown> | null | undefined;
 
 	// Resolve youtube_title/description templates (se contiver {var}). `{date}`
@@ -498,7 +501,7 @@ async function buildYoutubeOptionsForPost(opts: {
 				itemName = libItem?.name
 					? String(libItem.name).replace(/\.[A-Za-z0-9]+$/, "")
 					: "";
-			} catch {}
+			} catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
 		}
 	}
 
@@ -559,7 +562,7 @@ async function buildYoutubeOptionsForPost(opts: {
 				) {
 					youtubePrivacy = String(parsed.privacy).toUpperCase();
 				}
-			} catch {}
+			} catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
 		}
 	}
 	// made_for_kids / monetize: config > item > youtube_options
@@ -578,7 +581,7 @@ async function buildYoutubeOptionsForPost(opts: {
 						: (rawYtOpt as Record<string, unknown>);
 				if (parsed.made_for_kids !== undefined)
 					madeForKids = toStrictBool(parsed.made_for_kids);
-			} catch {}
+			} catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
 		}
 	}
 	let monetizeWithAds: boolean | null = null;
@@ -596,7 +599,7 @@ async function buildYoutubeOptionsForPost(opts: {
 						: (rawYtOpt as Record<string, unknown>);
 				if (parsed.monetize_with_ads !== undefined)
 					monetizeWithAds = toStrictBool(parsed.monetize_with_ads);
-			} catch {}
+			} catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
 		}
 	}
 
@@ -605,7 +608,30 @@ async function buildYoutubeOptionsForPost(opts: {
 	// com products). NUNCA aplicar template {var} nem split por vírgula em
 	// nomes de produto (M22) — produto não é caption, e vírgula pode ser parte
 	// do nome. CSV legacy é normalizado para {query}.
-	const productsPayload = toYoutubeProductsJson(cfg["youtube_products"]);
+	//
+	// REGRA ITEM > FIXO (decisão do dono — produtos por vídeo na library):
+	// se o item de biblioteca referenciado por selectedContent tem
+	// youtube_products (CSV de nomes) NÃO-VAZIO, ele vence o youtube_products
+	// fixo do config. Planner só usa o fixo quando o item está vazio/ausente.
+	// A busca pelo slash: buildPostData e propagação passam pelo MESMO caminho
+	// (seleciona o item por id/folder_id, IDOR-safe).
+	let itemProductSource: unknown = cfg["youtube_products"];
+	const itemLibId = selected?.id || selected?.folder_id;
+	if (itemLibId) {
+		try {
+			const libItemProducts = await opts.prisma.contentItem.findFirst({
+				where: { id: itemLibId, user_id: opts.planner.user_id },
+				select: { youtube_products: true },
+			});
+			const raw = libItemProducts?.youtube_products;
+			if (typeof raw === "string" && raw.trim()) {
+				itemProductSource = raw;
+				// Productos do item só podem ser NOMES (CSV) — a UI da library
+				// não monta {query,item?} verbatim; resolução fiel no routing.
+			}
+		} catch { /* SAFETY: best-effort opcional — item inexistente cai no fixo do planner */ }
+	}
+	const productsPayload = toYoutubeProductsJson(itemProductSource);
 	let productsJson: string | null = null;
 	let productNamesJson: string | null = null;
 	if (productsPayload.hasItems) {
@@ -864,7 +890,7 @@ export async function propagatePlannerConfigToPendingPosts(
         select: { id: true, name: true, platform: true },
       });
       for (const ch of channels) channelMap.set(String(ch.id), { name: (ch.name as string) || null, platform: (ch.platform as string) || null });
-    } catch {}
+    } catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
   }
 
   let updated = 0;
@@ -885,7 +911,7 @@ export async function propagatePlannerConfigToPendingPosts(
         channelName = (ch?.name as string) || "";
         channelPlatform = (ch?.platform as string) || null;
         if (ch) channelMap.set(channelId, { name: channelName, platform: channelPlatform });
-      } catch {}
+      } catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
     }
 
     // Heurística para selectedContent: tenta casar post com entrada do content
@@ -960,7 +986,7 @@ export async function propagatePlannerConfigToPendingPosts(
         // pendente e a falha real (se houver) será de publicação, não de
         // propagação silenciosa.
         if (rebuilt !== null) newYoutubeOptions = rebuilt;
-      } catch {}
+      } catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
     } else if (isYtChannel && ytType === "community") {
       // Comunidade não tem youtube_options (usa caption); não reescreve
       // youtube_options — propagação só toca caption nesses posts.
@@ -1009,7 +1035,7 @@ export async function propagatePlannerConfigToPendingPosts(
           details: JSON.stringify({ updated, total: posts.length, now: now.toISOString() }),
         },
       } as unknown);
-    } catch {}
+    } catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
   }
 
   return { updated, total: posts.length };
@@ -1440,7 +1466,9 @@ export async function runPlannerOnce(
 	// BK-04: state update com where last_run esperado evita clobber em edicao concorrente
 	const expectedLastRun = now;
 	ops.push(
-		prisma.planner.updateMany({
+		// SAFETY: PrismaPromise exigido pelo $transaction; PrismaLike tipa o
+	// prisma como interface mínima — o cast mantém o contrato de transação.
+	prisma.planner.updateMany({
 			where: { id: planner.id, last_run: expectedLastRun },
 			data: { state: JSON.stringify(nextState) },
 		}) as unknown as Prisma.PrismaPromise<unknown>,
@@ -1448,6 +1476,8 @@ export async function runPlannerOnce(
 
 	try {
 		// BK-06: sempre transacionado; fallback tambem usa transaction
+		// SAFETY: os ops são arrays de PrismaPromise já tipados; o $transaction do
+		// PrismaLike é exposto via cast porque a interface mínima não o declara.
 		await (prisma as unknown as { $transaction: (ops: unknown[]) => Promise<unknown[]> }).$transaction(ops.filter(Boolean) as never);
 	} catch (err: unknown) {
 		// A criação falhou depois do claim: reverta o claim (condicional) para não "comer" o

@@ -14,6 +14,7 @@ interface ContentItem {
 	name: string;
 	title?: string;
 	caption?: string;
+	youtube_products?: string | null;
 	tags?: string[] | string;
 	type: string;
 	url?: string;
@@ -64,6 +65,7 @@ export default function EditContentModal({
 	const [name, setName] = useState("");
 	const [title, setTitle] = useState("");
 	const [caption, setCaption] = useState("");
+	const [youtubeProducts, setYoutubeProducts] = useState("");
 	const [tags, setTags] = useState<string[]>([]);
 	const [tagInput, setTagInput] = useState("");
 
@@ -95,12 +97,14 @@ export default function EditContentModal({
 				setName("");
 				setTitle("");
 				setCaption("");
+				setYoutubeProducts("");
 			} else {
 				// Single item - prefill
 				const item = itemsToEdit[0];
 				setName(item.name || "");
 				setTitle(item.title || "");
 				setCaption(item.caption || "");
+				setYoutubeProducts(item.youtube_products || "");
 				setTags(normalizeTags(item.tags));
 				setVideoDuration(item.duration || 0);
 				setThumbTime(0.5);
@@ -174,6 +178,8 @@ export default function EditContentModal({
 					if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
 					updates.caption = escapeHtml(cap);
 				}
+				if (youtubeProducts.trim())
+					updates.youtube_products = youtubeProducts.trim().slice(0, 5000);
 				if (tags.length > 0)
 					updates.tags = tags
 						.map((t) => escapeHtml(t.trim()).slice(0, 50))
@@ -186,6 +192,17 @@ export default function EditContentModal({
 				let cap = caption.trim();
 				if (cap.length > CAPTION_MAX) cap = cap.slice(0, CAPTION_MAX);
 				updates.caption = escapeHtml(cap);
+				// Produtos do item: só envia se o usuário digitou (bulk vazio = manter).
+				// No modo individual, campo vazio LIMPA o item (updates.youtube_products = null)
+				// — decisão: remover produto marcado é ação explícita no modal.
+				if (isBulk) {
+					if (youtubeProducts.trim())
+						updates.youtube_products = youtubeProducts.trim().slice(0, 5000);
+				} else {
+					updates.youtube_products = youtubeProducts.trim()
+						? youtubeProducts.trim().slice(0, 5000)
+						: null;
+				}
 				updates.tags = tags
 					.map((t) => escapeHtml(t.trim()).slice(0, 50))
 					.filter(Boolean);

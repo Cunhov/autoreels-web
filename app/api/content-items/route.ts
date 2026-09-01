@@ -12,6 +12,7 @@ import { escapeHtml, sanitizeCaption } from "@/lib/sanitize";
 // (id, user_id, created_at, path) are excluded to prevent mass assignment.
 const POST_ALLOWED_FIELDS = [
     "name", "title", "caption", "caption_youtube", "caption_instagram",
+    "youtube_products",
     "tags", "type", "size", "duration",
     "parent_id", "url", "thumbnail_url",
 ] as const;
@@ -207,6 +208,16 @@ export async function POST(req: Request) {
         }
         if (payload.caption_instagram !== undefined && payload.caption_instagram !== null) {
             payload.caption_instagram = sanitizeCaption(payload.caption_instagram);
+        }
+        // Produtos afiliados por vídeo (decisão do dono): CSV de NOMES no item
+        // (ex.: "Cadeira Gamer, Mousepad"). Nomes NÃO passam por escapeHtml
+        // (não é texto de post — é termo do catálogo YouTube Shopping). Aplica
+        // trim + limite de segurança. Vírgula separa itens (nomes com vírgula
+        // não são suportados — mesma regra do formato legado do planner).
+        if (payload.youtube_products !== undefined && payload.youtube_products !== null) {
+            let p = String(payload.youtube_products).trim();
+            if (p.length > 5000) p = p.slice(0, 5000);
+            payload.youtube_products = p || null;
         }
         if (payload.title !== undefined && payload.title !== null) {
             let t = String(payload.title).trim();
