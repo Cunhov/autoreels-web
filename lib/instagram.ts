@@ -51,11 +51,23 @@ export async function fetchWithTimeout(
 	url: string,
 	options: RequestInit = {},
 	timeoutMs = 15_000,
+	proxyUrl?: string | null,
 ) {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		return await fetch(url, { ...options, signal: controller.signal });
+		let dispatcher: unknown | undefined;
+		if (proxyUrl) {
+			try {
+				const { getProxyDispatcher } = await import("@/lib/proxy");
+				dispatcher = getProxyDispatcher(proxyUrl);
+			} catch {
+				// proxy helper not available
+			}
+		}
+		const fetchOpts: RequestInit & { dispatcher?: unknown } = { ...options, signal: controller.signal };
+		if (dispatcher) (fetchOpts as any).dispatcher = dispatcher;
+		return await fetch(url, fetchOpts as RequestInit);
 	} finally {
 		clearTimeout(timer);
 	}
@@ -224,7 +236,7 @@ export async function exchangeInstagramCode(code: string, origin: string) {
 	};
 }
 
-export async function refreshInstagramToken(accessToken: string) {
+export async function refreshInstagramToken(accessToken: string, proxyUrl?: string | null) {
 	const token = cleanToken(accessToken);
 	if (token.startsWith("IG")) {
 		const res = await fetchWithTimeout(
@@ -234,6 +246,7 @@ export async function refreshInstagramToken(accessToken: string) {
 			}).toString()}`,
 			{},
 			30_000,
+			proxyUrl ?? null,
 		);
 		const data = await res.json();
 		if (!res.ok || data.error || !data.access_token) {
@@ -267,6 +280,7 @@ export async function refreshInstagramToken(accessToken: string) {
 			).toString()}`,
 			{},
 			30_000,
+			proxyUrl ?? null,
 		);
 		const data = await res.json();
 		if (!res.ok || data.error || !data.access_token) {
@@ -283,13 +297,14 @@ export async function refreshInstagramToken(accessToken: string) {
 	}
 }
 
-export async function fetchInstagramProfile(accessToken: string) {
+export async function fetchInstagramProfile(accessToken: string, proxyUrl?: string | null) {
 	const token = cleanToken(accessToken);
 	const baseUrl = getGraphBaseUrl(token);
 	const res = await fetchWithTimeout(
 		`${baseUrl}/${GRAPH_API_VERSION}/me?fields=id,user_id,username,profile_picture_url&access_token=${encodeURIComponent(token)}`,
 		{},
 		15_000,
+		proxyUrl ?? null,
 	);
 	const data = await res.json();
 	if (!res.ok || data.error) {

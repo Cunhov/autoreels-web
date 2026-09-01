@@ -24,7 +24,8 @@
     "react-easy-crop": "^5.5.6",
     "react-virtualized-auto-sizer": "^2.0.3",
     "react-window": "^2.2.7",
-    "sharp": "^0.34.4"
+    "sharp": "^0.34.4",
+    "undici": "^8.10.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

@@ -7,6 +7,7 @@ import {
 	recordYoutubeSessionOwner,
 	youtubeErrorMessage,
 } from "@/lib/youtube-channel";
+import { isValidProxyUrl } from "@/lib/proxy";
 import {
 	createSession,
 	deleteSession,
@@ -24,6 +25,8 @@ const REQUIRED_COOKIES = [
 interface ConnectBody {
 	cookies?: Record<string, string>;
 	label?: string;
+	proxy_url?: string;
+	proxy_enabled?: boolean;
 }
 
 /**
@@ -58,6 +61,15 @@ export async function POST(req: Request) {
 		cookies[key] = value;
 	}
 	const label = String(body?.label || "").trim();
+	let proxyUrl: string | null = null;
+	if (body?.proxy_url !== undefined && body.proxy_url !== null && String(body.proxy_url).trim() !== "") {
+		const raw = String(body.proxy_url).trim();
+		if (!isValidProxyUrl(raw)) {
+			return NextResponse.json({ error: "Proxy inválido. Use http://user:pass@host:porta" }, { status: 400 });
+		}
+		proxyUrl = raw;
+	}
+	const proxyEnabled = body?.proxy_enabled !== undefined ? Boolean(body.proxy_enabled) : true;
 
 	// Sessão recém-criada na API externa. Enquanto o Channel local não for
 	// gravado, ela é uma sessão "órfã" (sem dono no app) — qualquer falha
@@ -145,6 +157,8 @@ export async function POST(req: Request) {
 						token_source: "youtube_session",
 						token_refreshed_at: new Date(),
 						token_expires_at: null,
+						proxy_url: proxyUrl,
+						proxy_enabled: proxyEnabled,
 					},
 				})
 			: await prisma.channel.create({
@@ -158,6 +172,8 @@ export async function POST(req: Request) {
 						settings,
 						token_source: "youtube_session",
 						token_refreshed_at: new Date(),
+						proxy_url: proxyUrl,
+						proxy_enabled: proxyEnabled,
 					},
 				});
 

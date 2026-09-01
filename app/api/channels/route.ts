@@ -5,8 +5,10 @@ import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { fetchInstagramProfile, refreshInstagramToken } from "@/lib/instagram";
 import { escapeHtml } from "@/lib/sanitize";
+import { isValidProxyUrl, maskProxyUrl } from "@/lib/proxy";
 
 const channelSelect = {
+    // proxy não exposto cru ao client — somente has_proxy/masked no toSafeChannel
     id: true,
     name: true,
     platform: true,
@@ -19,18 +21,24 @@ const channelSelect = {
     token_refreshed_at: true,
     created_at: true,
     access_token: true,
+    proxy_url: true,
+    proxy_enabled: true,
 };
 
 function toSafeChannel(channel: {
     access_token?: string | null;
     token_source?: string | null;
+    proxy_url?: string | null;
     [key: string]: unknown;
 }) {
-    const { access_token, ...safeChannel } = channel;
+    const { access_token, proxy_url, ...safeChannel } = channel;
     return {
         ...safeChannel,
         has_token: Boolean(access_token),
-        token_source: access_token?.startsWith("token_") ? "redis" : safeChannel.token_source,
+        token_source: access_token?.startsWith("token_") ? "redis" : (safeChannel as any).token_source,
+        has_proxy: Boolean(proxy_url),
+        proxy_url_masked: proxy_url ? maskProxyUrl(proxy_url) : null,
+        proxy_enabled: (safeChannel as any).proxy_enabled ?? true,
     };
 }
 
@@ -70,13 +78,14 @@ export async function POST(req: Request) {
         let refreshedAt: Date | null = null;
 
         if (tokenSource === "manual" && accessToken) {
-            const refreshed = await refreshInstagramToken(accessToken).catch(() => null);
+            const proxyForToken = typeof data.proxy_url === "string" ? String(data.proxy_url).trim() || null : null;
+            const refreshed = await refreshInstagramToken(accessToken, proxyForToken).catch(() => null);
             if (refreshed) {
                 accessToken = refreshed.token;
                 expiresAt = new Date(Date.now() + refreshed.expiresIn * 1000);
                 refreshedAt = new Date();
             }
-            profile = await fetchInstagramProfile(accessToken).catch(() => null);
+            profile = await fetchInstagramProfile(accessToken, proxyForToken).catch(() => null);
         }
 
         const accountId = String(data.account_id || profile?.id || "").trim();
@@ -88,6 +97,16 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Channel name cannot be empty or whitespace" }, { status: 400 });
         }
         let channelName = data.name ? escapeHtml(String(data.name).trim().slice(0,80)) : (profile?.username ? escapeHtml(profile.username.slice(0,80)) : `Instagram ${accountId}`);
+
+        // Proxy por canal (opcional): valida formato http(s)://user:pass@host:porta
+        let proxyUrl: string | null = null;
+        if (data.proxy_url !== undefined && data.proxy_url !== null && String(data.proxy_url).trim() !== "") {
+            const rawProxy = String(data.proxy_url).trim();
+            if (!isValidProxyUrl(rawProxy)) {
+                return NextResponse.json({ error: "Proxy inválido. Use o formato http://user:pass@host:porta ou http://host:porta" }, { status: 400 });
+            }
+            proxyUrl = rawProxy;
+        }
 
         const channel = await prisma.channel.create({
             data: {
@@ -102,6 +121,8 @@ export async function POST(req: Request) {
                 token_expires_at: expiresAt,
                 token_refreshed_at: refreshedAt,
                 status: data.status || "active",
+                proxy_url: proxyUrl,
+                proxy_enabled: data.proxy_enabled !== undefined ? Boolean(data.proxy_enabled) : true,
             },
             select: channelSelect,
         });

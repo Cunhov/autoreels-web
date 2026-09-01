@@ -82,6 +82,8 @@ model Channel {
   profile_picture_url String?
   status              String   @default("active")
   settings            String?  // JSON: per-channel settings (e.g. max_posts_per_hour)
+  proxy_url           String?  // HTTP/HTTPS proxy por canal (http://user:pass@host:porta)
+  proxy_enabled       Boolean? @default(true)
   created_at          DateTime @default(now())
 
   user     User      @relation(fields: [user_id], references: [id], onDelete: Cascade)

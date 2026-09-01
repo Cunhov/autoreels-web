@@ -13,6 +13,9 @@ interface Channel {
     access_token?: string;
     token_source?: string;
     profile_picture_url?: string;
+    has_proxy?: boolean;
+    proxy_url_masked?: string | null;
+    proxy_enabled?: boolean;
 }
 
 interface RemoteSession {
@@ -79,6 +82,11 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
     const [sessionsLoading, setSessionsLoading] = useState(false);
     const [sessionsError, setSessionsError] = useState('');
     const [linkingId, setLinkingId] = useState<string | null>(null);
+    const [proxyUrl, setProxyUrl] = useState('');
+    const [proxyEnabled, setProxyEnabled] = useState(true);
+    const [proxyTestStatus, setProxyTestStatus] = useState<'idle'|'loading'|'ok'|'error'>('idle');
+    const [proxyTestMsg, setProxyTestMsg] = useState('');
+    const [proxyMasked, setProxyMasked] = useState<string | null>(null);
     const { data: session } = useSession();
 
     useEffect(() => {
@@ -89,6 +97,10 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
             setProfilePictureUrl(channel.profile_picture_url || '');
             setMode('manual');
             setPlatform(channel.platform === 'youtube' ? 'youtube' : 'instagram');
+            setProxyUrl('');
+            setProxyEnabled(channel.proxy_enabled ?? true);
+            setProxyMasked(channel.proxy_url_masked || null);
+            setProxyTestStatus('idle'); setProxyTestMsg('');
         } else if (isOpen && !channel) {
             // Reset for create mode
             setName('');
@@ -102,6 +114,10 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
             setCookies({});
             setShowCookie({});
             setYtSubmitted(false);
+            setProxyUrl('');
+            setProxyEnabled(true);
+            setProxyMasked(null);
+            setProxyTestStatus('idle'); setProxyTestMsg('');
         }
         setError('');
         setSessionsError('');
@@ -139,15 +155,26 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
         try {
             if (!session) throw new Error('You must be logged in.');
 
-            const channelData = {
+            // Validação local de proxy (formato)
+            if (proxyUrl.trim()) {
+                const proxyValid = /^https?:\/\/.+:\d+$/.test(proxyUrl.trim()) && (()=>{ try{ const u=new URL(proxyUrl.trim()); return (u.protocol==='http:'||u.protocol==='https:') && !!u.hostname && !!u.port;}catch{ return false;}})();
+                if (!proxyValid) throw new Error('Proxy inválido. Use http://user:pass@host:porta ou http://host:porta');
+            }
+            const channelData: Record<string, unknown> = {
                 name: name.trim().slice(0,80),
                 platform: 'instagram',
                 account_id: accountId,
                 ...(accessToken ? { access_token: accessToken } : {}),
                 token_source: 'manual',
                 profile_picture_url: profilePictureUrl,
-                status: 'active'
+                status: 'active',
+                ...(proxyUrl.trim() ? { proxy_url: proxyUrl.trim() } : (channel && !proxyUrl.trim() && proxyMasked ? {} : { proxy_url: null })),
+                proxy_enabled: proxyEnabled,
             };
+            // Se edição e campo proxy vazio e havia proxy salvo, não envia proxy_url para manter existente (exceto se usuário limpou explicitamente)
+            if (channel && !proxyUrl.trim() && proxyMasked) {
+                delete (channelData as any).proxy_url;
+            }
 
             let res;
 
@@ -212,12 +239,17 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
         }
         setLoading(true);
         try {
+            // inclui proxy se preenchido
+            if (proxyUrl.trim()) {
+                try { const u=new URL(proxyUrl.trim()); if((u.protocol!=='http:'&&u.protocol!=='https:')||!u.hostname||!u.port) throw new Error(); } catch { setError('Proxy inválido. Use http://user:pass@host:porta'); setLoading(false); return; }
+            }
             const res = await fetch('/api/youtube/connect', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     cookies: Object.fromEntries(COOKIE_FIELDS.map((f) => [f.key, cookies[f.key].trim()])),
                     label: ytLabel.trim(),
+                    ...(proxyUrl.trim() ? { proxy_url: proxyUrl.trim(), proxy_enabled: proxyEnabled } : {}),
                 }),
             });
             const data = await res.json().catch(() => ({}));
@@ -231,6 +263,46 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
             setLoading(false);
         }
     };
+
+    const handleTestProxy = async () => {
+        const raw = proxyUrl.trim();
+        // Se edição e campo vazio mas há proxy salvo, testa o salvo (GET checkProxy)
+        if (!raw && channel?.id && proxyMasked) {
+            setProxyTestStatus('loading'); setProxyTestMsg('');
+            try {
+                const res = await fetch(`/api/channels/${channel.id}/test?checkProxy=true`);
+                const data = await res.json().catch(()=>({}));
+                if (!res.ok || data.ok === false) throw new Error(data.error || 'Falha no teste do proxy');
+                setProxyTestStatus('ok'); setProxyTestMsg(`Proxy OK: ${data.proxy || ''}`);
+            } catch (err: unknown) {
+                setProxyTestStatus('error'); setProxyTestMsg(err instanceof Error ? err.message : 'Falha ao testar proxy');
+            }
+            return;
+        }
+        if (!raw) { setProxyTestStatus('error'); setProxyTestMsg('Informe a URL do proxy.'); return; }
+        // Valida formato
+        try { const u=new URL(raw); if((u.protocol!=='http:'&&u.protocol!=='https:')||!u.hostname||!u.port) throw new Error(); } catch { setProxyTestStatus('error'); setProxyTestMsg('Formato inválido. Use http://user:pass@host:porta'); return; }
+        setProxyTestStatus('loading'); setProxyTestMsg('');
+        try {
+            let res: Response;
+            if (channel?.id) {
+                // Testa via endpoint do canal (POST com proxy_url)
+                res = await fetch(`/api/channels/${channel.id}/test`, { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ proxy_url: raw }) });
+            } else {
+                // Sem canal ainda: testa formato localmente via validação + tentativa fetch (sem servidor) — apenas valida
+                // Como não há canal, fazemos validação e tentamos HEAD via proxy não persistido usando endpoint genérico? Falha: sem id não há rota.
+                // Fallback: apenas valida e mostra OK de formato
+                setProxyTestStatus('ok'); setProxyTestMsg('Formato válido. Salve o canal e teste novamente para verificar conectividade.');
+                return;
+            }
+            const data = await res.json().catch(()=>({}));
+            if (!res.ok || data.ok === false) throw new Error(data.error || 'Falha no teste do proxy');
+            setProxyTestStatus('ok'); setProxyTestMsg(`Proxy OK: ${data.proxy || maskProxy(raw)}`);
+        } catch (err: unknown) {
+            setProxyTestStatus('error'); setProxyTestMsg(err instanceof Error ? err.message : 'Falha ao testar proxy');
+        }
+    };
+    function maskProxy(url: string){ try{ const u=new URL(url); if(u.password) u.password='***'; return u.toString(); }catch{ return '***'; } }
 
     /** Aba "Importar sessão": vincula uma sessão existente da API externa. */
     const handleLinkSession = async (sessionId: string) => {
@@ -363,6 +435,16 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                                         </div>
                                     </div>
                                 )})}
+                                {/* Proxy YouTube (criação) */}
+                                <div className="pt-2 border-t border-ios-separator mt-2">
+                                    <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">Proxy (opcional)</label>
+                                    <div className="flex gap-2">
+                                        <input type="text" value={proxyUrl} onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }} placeholder="http://user:pass@host:porta" className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue" />
+                                        <button type="button" onClick={handleTestProxy} disabled={proxyTestStatus==='loading'} className="px-3 py-2 rounded-xl bg-ios-blue/10 text-ios-blue text-[13px] font-semibold hover:bg-ios-blue/20 disabled:opacity-50 shrink-0">{proxyTestStatus==='loading' ? 'Testando...' : 'Testar'}</button>
+                                    </div>
+                                    <p className="text-[11px] text-ios-secondary mt-1 px-1">Proxy HTTP/HTTPS usado nas chamadas YouTube API deste canal.</p>
+                                    {proxyTestStatus!=='idle' && proxyTestMsg ? (<p className={`text-[12px] mt-1 px-1 ${proxyTestStatus==='ok'?'text-ios-green':'text-ios-red'}`}>{proxyTestMsg}</p>) : null}
+                                </div>
                             </>
                         )}
 
@@ -445,11 +527,61 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                 {channel && platform === 'youtube' && (
                     <div className="p-6 space-y-4 bg-ios-background/50">
                         <p className="text-sm text-ios-text-secondary">
-                            A edição direta de canais YouTube não é suportada. Desconecte o canal e reconecte-o com cookies atualizados para alterar a sessão.
+                            Canais YouTube só permitem editar o proxy. Desconecte e reconecte para alterar cookies/sessão.
                         </p>
-                        <IOSButton variant="secondary" type="button" onClick={onClose} className="w-full justify-center !py-3 !text-[15px]">
-                            Fechar
-                        </IOSButton>
+                        <div>
+                            <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">Proxy (opcional)</label>
+                            {proxyMasked && !proxyUrl ? (
+                                <div className="mb-1.5 px-3 py-2 rounded-xl bg-ios-separator/30 text-[12px] font-mono text-ios-secondary flex items-center justify-between">
+                                    <span className="truncate">Salvo: {proxyMasked}</span>
+                                    <button type="button" onClick={()=>{ setProxyMasked(null); setProxyUrl(''); }} className="ml-2 text-[11px] text-ios-red font-semibold shrink-0">Remover</button>
+                                </div>
+                            ) : null}
+                            <div className="flex gap-2">
+                                <input type="text" value={proxyUrl} onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }} placeholder="http://user:pass@host:porta" className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue" />
+                                <button type="button" onClick={handleTestProxy} disabled={proxyTestStatus==='loading'} className="px-3 py-2 rounded-xl bg-ios-blue/10 text-ios-blue text-[13px] font-semibold hover:bg-ios-blue/20 disabled:opacity-50 shrink-0">{proxyTestStatus==='loading' ? 'Testando...' : 'Testar Proxy'}</button>
+                            </div>
+                            {proxyTestStatus!=='idle' && proxyTestMsg ? (<p className={`text-[12px] mt-1 ${proxyTestStatus==='ok'?'text-ios-green':'text-ios-red'}`}>{proxyTestMsg}</p>) : null}
+                            <label className="flex items-center gap-2 mt-2 text-[13px] text-ios-secondary">
+                                <input type="checkbox" checked={proxyEnabled} onChange={(e)=>setProxyEnabled(e.target.checked)} className="rounded" />
+                                Proxy habilitado
+                            </label>
+                        </div>
+                        <div className="flex gap-2">
+                            <IOSButton variant="secondary" type="button" onClick={onClose} className="flex-1 justify-center !py-3 !text-[15px]">Fechar</IOSButton>
+                            <IOSButton variant="primary" type="button" disabled={loading} onClick={async ()=>{
+                                setLoading(true); setError('');
+                                try{
+                                    // valida
+                                    if(proxyUrl.trim()){
+                                        try{ const u=new URL(proxyUrl.trim()); if((u.protocol!=='http:'&&u.protocol!=='https:')||!u.hostname||!u.port) throw new Error(); }catch{ throw new Error('Proxy inválido. Use http://user:pass@host:porta'); }
+                                    }
+                                    const payload: Record<string, unknown> = {};
+                                    if(proxyMasked && !proxyUrl.trim()){
+                                        // manter proxy existente: não envia
+                                    } else if(proxyUrl.trim()){
+                                        payload.proxy_url = proxyUrl.trim();
+                                    } else if(!proxyMasked && !proxyUrl.trim()){
+                                        payload.proxy_url = null;
+                                    } else if(proxyMasked && proxyUrl==='' && !proxyMasked){
+                                        payload.proxy_url = null;
+                                    }
+                                    // se usuário clicou Remover, proxyMasked é null e proxyUrl ''
+                                    if(proxyMasked===null && !proxyUrl.trim()){
+                                        payload.proxy_url = null;
+                                    }
+                                    payload.proxy_enabled = proxyEnabled;
+                                    if(Object.keys(payload).length===0){ setError('Nenhuma alteração de proxy.'); setLoading(false); return; }
+                                    const res = await fetch(`/api/channels/${channel.id}`, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+                                    const data = await res.json().catch(()=>({}));
+                                    if(!res.ok) throw new Error(data.error || 'Falha ao salvar proxy');
+                                    onSuccess(); onClose();
+                                }catch(err: unknown){ setError(err instanceof Error? err.message: 'Falha ao salvar proxy'); } finally{ setLoading(false); }
+                            }} className="flex-1 justify-center !py-3 !text-[15px]">
+                                {loading ? 'Salvando...' : 'Salvar Proxy'}
+                            </IOSButton>
+                        </div>
+                        {error ? (<div className="p-3 bg-red-50 dark:bg-red-900/20 text-ios-red text-sm rounded-xl text-center">{error}</div>) : null}
                     </div>
                 )}
 
@@ -566,6 +698,45 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                                 <p className="text-[11px] text-ios-secondary mt-1.5 px-1">
                                     Paste the Meta Business access token. Existing Redis keys that start with token_ still work for legacy channels.
                                 </p>
+                            </div>
+                            {/* ── Proxy por canal (Instagram) ── */}
+                            <div>
+                                <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
+                                    Proxy (opcional)
+                                </label>
+                                {proxyMasked && !proxyUrl ? (
+                                    <div className="mb-1.5 px-3 py-2 rounded-xl bg-ios-separator/30 text-[12px] font-mono text-ios-secondary flex items-center justify-between">
+                                        <span className="truncate">Salvo: {proxyMasked}</span>
+                                        <button type="button" onClick={()=>{ setProxyMasked(null); setProxyUrl(''); }} className="ml-2 text-[11px] text-ios-red font-semibold shrink-0">Remover</button>
+                                    </div>
+                                ) : null}
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={proxyUrl}
+                                        onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }}
+                                        placeholder="http://user:pass@host:porta"
+                                        className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue transition-all"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={handleTestProxy}
+                                        disabled={proxyTestStatus==='loading'}
+                                        className="px-3 py-2 rounded-xl bg-ios-blue/10 text-ios-blue text-[13px] font-semibold hover:bg-ios-blue/20 disabled:opacity-50 shrink-0"
+                                    >
+                                        {proxyTestStatus==='loading' ? 'Testando...' : 'Testar Proxy'}
+                                    </button>
+                                </div>
+                                <p className="text-[11px] text-ios-secondary mt-1 px-1">
+                                    HTTP/HTTPS por canal, usado em Instagram Graph e YouTube API. Formato: <span className="font-mono">http://user:pass@host:porta</span>
+                                </p>
+                                {proxyTestStatus!=='idle' && proxyTestMsg ? (
+                                    <p className={`text-[12px] mt-1 px-1 ${proxyTestStatus==='ok'?'text-ios-green':'text-ios-red'}`}>{proxyTestMsg}</p>
+                                ) : null}
+                                <label className="flex items-center gap-2 mt-2 text-[13px] text-ios-secondary">
+                                    <input type="checkbox" checked={proxyEnabled} onChange={(e)=>setProxyEnabled(e.target.checked)} className="rounded" />
+                                    Proxy habilitado
+                                </label>
                             </div>
                         </div>
                         )}

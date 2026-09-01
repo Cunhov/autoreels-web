@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { fetchInstagramProfile, refreshInstagramToken } from "@/lib/instagram";
 import { deleteSession, getYoutubeSessionId } from "@/lib/youtube";
+import { isValidProxyUrl, maskProxyUrl } from "@/lib/proxy";
 
 const channelSelect = {
     id: true,
@@ -19,18 +20,25 @@ const channelSelect = {
     token_refreshed_at: true,
     created_at: true,
     access_token: true,
+    proxy_url: true,
+    proxy_enabled: true,
+    settings: true,
 };
 
 function toSafeChannel(channel: {
     access_token?: string | null;
     token_source?: string | null;
+    proxy_url?: string | null;
     [key: string]: unknown;
 }) {
-    const { access_token, ...safeChannel } = channel;
+    const { access_token, proxy_url, ...safeChannel } = channel;
     return {
         ...safeChannel,
         has_token: Boolean(access_token),
-        token_source: access_token?.startsWith("token_") ? "redis" : safeChannel.token_source,
+        token_source: access_token?.startsWith("token_") ? "redis" : (safeChannel as any).token_source,
+        has_proxy: Boolean(proxy_url),
+        proxy_url_masked: proxy_url ? maskProxyUrl(proxy_url) : null,
+        proxy_enabled: (safeChannel as any).proxy_enabled ?? true,
     };
 }
 
@@ -82,32 +90,64 @@ export async function PATCH(
         if (!existing) {
             return NextResponse.json({ error: "Channel not found" }, { status: 404 });
         }
-        if (existing.platform === "youtube") {
-            return NextResponse.json(
-                { error: "Canais YouTube não suportam edição direta — desconecte o canal e reconecte com cookies atualizados." },
-                { status: 400 },
-            );
-        }
-
         const data = await req.json();
-        const updateData: Record<string, unknown> = {
-            name: data.name,
-            account_id: data.account_id,
-            username: data.username,
-            profile_picture_url: data.profile_picture_url,
-            status: data.status,
-            token_source: data.token_source,
-        };
+        // Para YouTube, só permite editar proxy (demais campos são derivados da sessão)
+        const isYoutube = existing.platform === "youtube";
+        if (isYoutube) {
+            const allowedKeys = new Set(["proxy_url", "proxy_enabled"]);
+            const hasOnlyProxy = Object.keys(data).every((k) => allowedKeys.has(k));
+            if (!hasOnlyProxy) {
+                return NextResponse.json(
+                    { error: "Canais YouTube só permitem editar o proxy — desconecte e reconecte para alterar outros dados." },
+                    { status: 400 },
+                );
+            }
+        }
+        const updateData: Record<string, unknown> = isYoutube
+            ? {}
+            : {
+                  name: data.name,
+                  account_id: data.account_id,
+                  username: data.username,
+                  profile_picture_url: data.profile_picture_url,
+                  status: data.status,
+                  token_source: data.token_source,
+              };
+        // Proxy por canal — validação sempre permitida (inclusive YouTube)
+        if (data.proxy_url !== undefined) {
+            const raw = data.proxy_url === null || String(data.proxy_url).trim() === "" ? null : String(data.proxy_url).trim();
+            if (raw !== null && !isValidProxyUrl(raw)) {
+                return NextResponse.json({ error: "Proxy inválido. Use o formato http://user:pass@host:porta ou http://host:porta" }, { status: 400 });
+            }
+            updateData.proxy_url = raw;
+        }
+        if (data.proxy_enabled !== undefined) {
+            updateData.proxy_enabled = Boolean(data.proxy_enabled);
+        }
+        // Se for YouTube e só proxy, já temos updateData pronto
+        if (isYoutube && Object.keys(updateData).length === 0) {
+            return NextResponse.json({ error: "Nenhum campo para atualizar." }, { status: 400 });
+        }
 
         if (typeof data.access_token === "string" && data.access_token.trim()) {
             let accessToken = data.access_token.trim();
-            const refreshed = await refreshInstagramToken(accessToken).catch(() => null);
+            // proxy pode vir do payload ou do canal existente
+            let proxyForRefresh: string | null = null;
+            if (typeof data.proxy_url === "string" && String(data.proxy_url).trim()) proxyForRefresh = String(data.proxy_url).trim();
+            else {
+                const ch = await prisma.channel.findUnique({ where: { id, user_id: userId }, select: { proxy_url: true, proxy_enabled: true } });
+                if (ch?.proxy_url && ch.proxy_enabled !== false) {
+                    const { isValidProxyUrl: _valid } = await import("@/lib/proxy");
+                    if (_valid(ch.proxy_url)) proxyForRefresh = ch.proxy_url;
+                }
+            }
+            const refreshed = await refreshInstagramToken(accessToken, proxyForRefresh).catch(() => null);
             if (refreshed) {
                 accessToken = refreshed.token;
                 updateData.token_expires_at = new Date(Date.now() + refreshed.expiresIn * 1000);
                 updateData.token_refreshed_at = new Date();
             }
-            const profile = await fetchInstagramProfile(accessToken).catch(() => null);
+            const profile = await fetchInstagramProfile(accessToken, proxyForRefresh).catch(() => null);
             if (profile) {
                 updateData.account_id = data.account_id || profile.id;
                 updateData.username = profile.username || null;
