@@ -14,9 +14,40 @@ import IOSButton from "@/components/IOSButton";
 import MediaUploader from "./MediaUploader";
 import ContentLibrary from "./ContentLibrary";
 import { useUploadActions } from "@/contexts/UploadContext";
-import { resolveCaptionTextForWizard } from "@/lib/planner-config";
+import {
+	normalizeYoutubeProductsList,
+	resolveCaptionTextForWizard,
+	serializeYoutubeProducts,
+	type YoutubeProductEntry,
+} from "@/lib/planner-config";
 
 const PLANNER_MIX_ERROR = "Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
+
+// B1 — produtos afiliados: resultado da busca live (mesmo shape do payload
+// GET /api/youtube/products: { item, title, vendor, price, commission_pct }).
+interface YoutubeProductSearchResult {
+	item?: unknown;
+	title?: string;
+	vendor?: string;
+	price?: string;
+	commission_pct?: number;
+	[key: string]: unknown;
+}
+
+// Entrada da lista dinâmica: digita nome (status name/searching) OU fixa um
+// item verbatim da busca (status selected -> config.youtube_products {query,item}).
+interface YoutubeProductDraft {
+	key: string;
+	query: string;
+	status: "idle" | "searching" | "selected" | "name" | "error";
+	item?: unknown;
+	title?: string;
+	vendor?: string;
+	price?: string;
+	commissionPct?: number;
+	results: YoutubeProductSearchResult[];
+	error?: string;
+}
 
 interface Channel {
 	id: string;
@@ -163,15 +194,16 @@ export default function PlannerWizard({
 	// YouTube planner fields (só quando onlyYoutubeSelected)
 	const [youtubeTitle, setYoutubeTitle] = useState("");
 	const [youtubeDescription, setYoutubeDescription] = useState("");
-	const [youtubeProducts, setYoutubeProducts] = useState("");
+	// B1: produtos afiliados — lista dinâmica de {query, item?} (nunca CSV cru)
+	const [youtubeProductDrafts, setYoutubeProductDrafts] = useState<YoutubeProductDraft[]>([]);
+	const youtubeProductKeyRef = useRef(1);
+	// timers de debounce por entrada (busca live ~600ms)
+	const youtubeProductTimersRef = useRef<Record<string, number>>({});
 	const [youtubePrivacy, setYoutubePrivacy] = useState<"PUBLIC"|"PRIVATE"|"UNLISTED">("PUBLIC");
 	const [youtubeMadeForKids, setYoutubeMadeForKids] = useState(false);
 	const [youtubeMonetizeWithAds, setYoutubeMonetizeWithAds] = useState(false);
 	const [youtubeCategoryId, setYoutubeCategoryId] = useState("");
 	const [youtubePinnedComment, setYoutubePinnedComment] = useState("");
-	const [youtubeProductsLoading, setYoutubeProductsLoading] = useState(false);
-	const [youtubeProductsResults, setYoutubeProductsResults] = useState<unknown[]>([]);
-	const [youtubeProductsError, setYoutubeProductsError] = useState("");
 	const [formError, setFormError] = useState("");
 	// Count of existing content items that the UI cannot represent (legacy direct
 	// uploads). They are preserved as-is on save so editing a planner never loses them.
@@ -459,14 +491,12 @@ export default function PlannerWizard({
 					// YouTube fields do config (planner YT)
 					setYoutubeTitle(typeof config.youtube_title === "string" ? String(config.youtube_title) : typeof config.youtube_title === "number" ? String(config.youtube_title) : "");
 					setYoutubeDescription(typeof config.youtube_description === "string" ? String(config.youtube_description) : "");
-					setYoutubeProducts(typeof config.youtube_products === "string" ? String(config.youtube_products) : Array.isArray(config.youtube_products) ? (config.youtube_products as unknown[]).join(",") : "");
+					loadYoutubeProductsFromConfig(config.youtube_products);
 					setYoutubePrivacy(["PUBLIC","PRIVATE","UNLISTED"].includes(String(config.youtube_privacy || "").toUpperCase()) ? String(config.youtube_privacy).toUpperCase() as "PUBLIC"|"PRIVATE"|"UNLISTED" : "PUBLIC");
 					setYoutubeMadeForKids(Boolean(config.youtube_made_for_kids === true || String(config.youtube_made_for_kids).toLowerCase() === "true" || config.youtube_made_for_kids === 1));
 					setYoutubeMonetizeWithAds(Boolean(config.youtube_monetize_with_ads === true || String(config.youtube_monetize_with_ads).toLowerCase() === "true" || config.youtube_monetize_with_ads === 1));
 					setYoutubeCategoryId(config.youtube_category_id !== undefined && config.youtube_category_id !== null && config.youtube_category_id !== "" ? String(config.youtube_category_id) : "");
 					setYoutubePinnedComment(typeof config.youtube_pinned_comment === "string" ? String(config.youtube_pinned_comment) : typeof config.youtube_pinned_comment_text === "string" ? String(config.youtube_pinned_comment_text) : "");
-					setYoutubeProductsResults([]);
-					setYoutubeProductsError("");
 				} else {
 					setSelectedContentIds([]);
 					setFiles([]);
@@ -489,14 +519,12 @@ export default function PlannerWizard({
 					setVideoVolume(20);
 					setYoutubeTitle("");
 					setYoutubeDescription("");
-					setYoutubeProducts("");
+					setYoutubeProductDrafts([]);
 					setYoutubePrivacy("PUBLIC");
 					setYoutubeMadeForKids(false);
 					setYoutubeMonetizeWithAds(false);
 					setYoutubeCategoryId("");
 					setYoutubePinnedComment("");
-					setYoutubeProductsResults([]);
-					setYoutubeProductsError("");
 				}
 			} else {
 				// Full reset for new planner
@@ -510,14 +538,12 @@ export default function PlannerWizard({
 				setSettingsTouched(false);
 				setYoutubeTitle("");
 				setYoutubeDescription("");
-				setYoutubeProducts("");
+				setYoutubeProductDrafts([]);
 				setYoutubePrivacy("PUBLIC");
 				setYoutubeMadeForKids(false);
 				setYoutubeMonetizeWithAds(false);
 				setYoutubeCategoryId("");
 				setYoutubePinnedComment("");
-				setYoutubeProductsResults([]);
-				setYoutubeProductsError("");
 				setFrequencyValue(1);
 				setFrequencyUnit("hours");
 				setTimezone("America/Sao_Paulo");
@@ -635,61 +661,212 @@ export default function PlannerWizard({
 		return uploadedItems;
 	};
 
-	async function handleSearchYoutubeProducts() {
-		if (!onlyYoutubeSelected || selectedChannels.length === 0) {
-			setYoutubeProductsError("Selecione um canal YouTube primeiro.");
-			return;
-		}
-		const channelId = selectedChannels[0];
-		const query = youtubeProducts.trim();
+	// ── Produtos afiliados (B1): lista dinâmica + busca live debounce ────────
+
+	const updateYoutubeProductDraft = (key: string, patch: Partial<YoutubeProductDraft>) => {
+		setYoutubeProductDrafts((prev) =>
+			prev.map((d) => (d.key === key ? { ...d, ...patch } : d)),
+		);
+	};
+
+	const addYoutubeProduct = () => {
+		const key = `yp-${youtubeProductKeyRef.current++}`;
+		setYoutubeProductDrafts((prev) => [
+			...prev,
+			{ key, query: "", status: "idle", results: [], error: undefined },
+		]);
+	};
+
+	const removeYoutubeProduct = (key: string) => {
+		const timer = youtubeProductTimersRef.current[key];
+		if (timer) window.clearTimeout(timer);
+		delete youtubeProductTimersRef.current[key];
+		setYoutubeProductDrafts((prev) => prev.filter((d) => d.key !== key));
+	};
+
+	/** Busca live no catálogo do canal. videoId fica VAZIO nesta fase (F1) — a
+	 *  resolução real (último Short publicado / vídeo isca) chega na fase F3
+	 *  (B3); se 400, mensagem amigável e a entrada continua como nome p/ auto-
+	 *  select na publicação. */
+	const searchYoutubeProduct = async (key: string, rawQuery: string) => {
+		const query = rawQuery.trim();
 		if (!query) {
-			setYoutubeProductsError("Informe IDs ou termos para buscar produtos.");
+			updateYoutubeProductDraft(key, { status: "idle", results: [], error: undefined });
 			return;
 		}
-		// videoId é obrigatório pela API de produtos — tenta derivar de conteúdo selecionado ou título
-		let videoId = youtubeTitle.trim().slice(0, 50);
-		if (!videoId) {
-			try {
-				const sel = (selectedContentIds[0] || "") as string;
-				if (sel) videoId = sel.slice(0, 50);
-			} catch (err) {
-				console.warn("[PlannerWizard] falha ao derivar videoId de selectedContentIds", err);
-			}
-		}
-		if (!videoId) {
-			setYoutubeProductsError("Informe o Título do Short ou selecione um vídeo para buscar produtos (videoId obrigatório).");
+		if (!onlyYoutubeSelected || selectedChannels.length === 0) {
+			updateYoutubeProductDraft(key, {
+				status: "error",
+				error: "Selecione um canal YouTube primeiro.",
+			});
 			return;
 		}
-		setYoutubeProductsLoading(true);
-		setYoutubeProductsError("");
+		updateYoutubeProductDraft(key, { status: "searching", error: undefined });
 		try {
-			const params = new URLSearchParams({ channelId, videoId, query, suggestions: "false", limit: "20" });
+			const params = new URLSearchParams({
+				channelId: selectedChannels[0],
+				query,
+				suggestions: "false",
+				limit: "20",
+			});
 			const res = await fetch(`/api/youtube/products?${params.toString()}`);
 			let data: Record<string, unknown> | null = null;
 			const ct = res.headers.get("content-type") || "";
 			if (ct.includes("application/json")) {
-				data = await res.json();
+				data = (await res.json()) as Record<string, unknown>;
 			} else {
 				const text = await res.text();
-				if (text.trim().startsWith("<!DOCTYPE") || text.trim().startsWith("<html")) {
-					throw new Error(res.status === 401 ? "Sessão expirada — faça login novamente." : `Erro ${res.status}: resposta não-JSON do servidor. Verifique se o canal YouTube está conectado.`);
+				if (
+					text.trim().startsWith("<!DOCTYPE") ||
+					text.trim().startsWith("<html")
+				) {
+					throw new Error(
+						res.status === 401
+							? "Sessão expirada — faça login novamente."
+							: `Erro ${res.status}: resposta não-JSON do servidor. Verifique se o canal YouTube está conectado.`,
+					);
 				}
-									try { data = JSON.parse(text) as Record<string, unknown>; } catch { throw new Error(text.slice(0, 200) || `Erro ${res.status}`); }
+				try {
+					data = JSON.parse(text) as Record<string, unknown>;
+				} catch {
+					throw new Error(text.slice(0, 200) || `Erro ${res.status}`);
+				}
 			}
 			if (!res.ok) {
-				setYoutubeProductsError((data?.error as string) || `Falha ao buscar produtos (${res.status})`);
-				setYoutubeProductsResults([]);
+				// B1/F1: nesta fase videoId é vazio e a rota responde 400
+				// ("videoId é obrigatório") — deixa a entrada como NOME p/ auto-
+				// select na publicação (POST /api/shorts/auto busca no momento).
+				if (res.status === 400) {
+					updateYoutubeProductDraft(key, {
+						status: "name",
+						error:
+							"Publique um Short primeiro para buscar o catálogo. Você ainda pode deixar só o nome — a publicação auto-seleciona o melhor produto.",
+						results: [],
+					});
+					return;
+				}
+				updateYoutubeProductDraft(key, {
+					status: "error",
+					error: (data?.error as string) || `Falha ao buscar produtos (${res.status})`,
+					results: [],
+				});
 				return;
 			}
-			const products = data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).products) ? (data as Record<string, unknown>).products as unknown[] : [];
-			setYoutubeProductsResults(products);
-			if (products.length === 0) setYoutubeProductsError("Nenhum produto encontrado.");
+			const products: YoutubeProductSearchResult[] =
+				data && typeof data === "object" && Array.isArray(data.products)
+					? ((data.products as unknown[]) as YoutubeProductSearchResult[])
+					: [];
+			// guard anti-race: só aplica resultado se o query ainda é o atual
+			setYoutubeProductDrafts((prev) =>
+					prev.map((d) =>
+					d.key === key && d.query.trim() === query
+						? {
+								...d,
+								status: "name",
+								results: products,
+								error:
+									products.length > 0
+										? undefined
+										: "Nenhum produto encontrado para este termo.",
+						  }
+						: d,
+				),
+			);
 		} catch (e) {
-			setYoutubeProductsError(e instanceof Error ? e.message : String(e));
+			updateYoutubeProductDraft(key, {
+				status: "error",
+				error: e instanceof Error ? e.message : String(e),
+			});
 		} finally {
-			setYoutubeProductsLoading(false);
+			// status "searching" → "name"/"error" acima; aqui limpa o timer ref
+			delete youtubeProductTimersRef.current[key];
 		}
-	}
+	};
+
+	/** Input de nome com busca live (debounce ~600ms). Digitar limpa o item fixo. */
+	const handleYoutubeProductQueryChange = (key: string, value: string) => {
+		const trimmed = value.trim();
+		updateYoutubeProductDraft(key, {
+			query: value,
+			item: undefined,
+			title: undefined,
+			vendor: undefined,
+			price: undefined,
+			commissionPct: undefined,
+			status: trimmed ? "searching" : "idle",
+			error: undefined,
+		});
+		const existing = youtubeProductTimersRef.current[key];
+		if (existing) window.clearTimeout(existing);
+		youtubeProductTimersRef.current[key] = window.setTimeout(() => {
+			void searchYoutubeProduct(key, value);
+		}, 600);
+	};
+
+	/** Clicou num resultado: fixa o item verbatim (status selected). */
+	const selectYoutubeProduct = (key: string, product: YoutubeProductSearchResult) => {
+		updateYoutubeProductDraft(key, {
+			status: "selected",
+			item: product.item,
+			title: typeof product.title === "string" ? product.title : undefined,
+			vendor: typeof product.vendor === "string" ? product.vendor : undefined,
+			price: typeof product.price === "string" ? product.price : undefined,
+			commissionPct:
+				typeof product.commission_pct === "number"
+					? product.commission_pct
+					: undefined,
+			results: [],
+			error: undefined,
+		});
+	};
+
+	/** Desfaz a fixação (volta a nome-only — auto-select na publicação). */
+	const unselectYoutubeProduct = (key: string) => {
+		updateYoutubeProductDraft(key, {
+			status: "name",
+			item: undefined,
+			title: undefined,
+			vendor: undefined,
+			price: undefined,
+			commissionPct: undefined,
+			results: [],
+			error: undefined,
+		});
+	};
+
+	/** Load (edição): aceita {query,item?} array, array de strings e CSV legacy. */
+	const loadYoutubeProductsFromConfig = (raw: unknown) => {
+		const entries = normalizeYoutubeProductsList(raw);
+		if (!entries) {
+			setYoutubeProductDrafts([]);
+			return;
+		}
+		setYoutubeProductDrafts(
+			entries.map((e) => ({
+				key: `yp-${youtubeProductKeyRef.current++}`,
+				query: e.query,
+				status: e.item !== undefined ? "selected" : "name",
+				...(e.item !== undefined ? { item: e.item } : {}),
+				...(e.title !== undefined ? { title: e.title } : {}),
+				...(e.vendor !== undefined ? { vendor: e.vendor } : {}),
+				...(e.price !== undefined ? { price: e.price } : {}),
+				...(e.commission_pct !== undefined
+					? { commissionPct: e.commission_pct }
+					: {}),
+				results: [],
+				error: undefined,
+			})),
+		);
+	};
+
+	// limpa timers de busca ao desmontar
+	useEffect(() => {
+		return () => {
+			for (const t of Object.values(youtubeProductTimersRef.current)) {
+				window.clearTimeout(t);
+			}
+		};
+	}, []);
 
 	/**
 	 * O item de biblioteca tem nome/título que o buildPostData usaria como
@@ -1007,10 +1184,21 @@ export default function PlannerWizard({
 			// column (Planner.state) — it is NEVER sent from the client. The
 			// reset_state flag below tells the server to clear it only when the
 			// item composition really changed.
-			// YouTube fields: normaliza produtos CSV (trim, filtra vazios)
-			const normalizedYoutubeProducts = youtubeProducts
-				? youtubeProducts.split(",").map((s) => s.trim()).filter(Boolean).join(",")
-				: "";
+			// YouTube fields: produtos afiliados serializados via helper único
+			// (formato canônico Array<{query,item?}> — B1; nunca CSV).
+			const productEntries: YoutubeProductEntry[] = youtubeProductDrafts
+				.filter((d) => d.query.trim() || d.item !== undefined)
+				.map((d) => ({
+					query: d.query.trim() || String(d.title || "").trim(),
+					...(d.item !== undefined ? { item: d.item } : {}),
+					...(d.title !== undefined ? { title: d.title } : {}),
+					...(d.vendor !== undefined ? { vendor: d.vendor } : {}),
+					...(d.price !== undefined ? { price: d.price } : {}),
+					...(d.commissionPct !== undefined
+						? { commission_pct: d.commissionPct }
+						: {}),
+				}));
+			const serializedProducts = serializeYoutubeProducts(productEntries);
 			const ytFields: Record<string, unknown> = {};
 			if (onlyYoutubeSelected) {
 				if (youtubeTitle.trim()) ytFields.youtube_title = youtubeTitle.trim().slice(0, 100);
@@ -1018,7 +1206,8 @@ export default function PlannerWizard({
 					// só envia se preenchido ou se usuário limpou explicitamente (permite vazio)
 					if (youtubeDescription) ytFields.youtube_description = youtubeDescription.slice(0, 5000);
 				}
-				if (normalizedYoutubeProducts) ytFields.youtube_products = normalizedYoutubeProducts;
+				if (serializedProducts && serializedProducts.length)
+					ytFields.youtube_products = serializedProducts;
 				if (youtubePrivacy) ytFields.youtube_privacy = youtubePrivacy;
 				if (youtubeMadeForKids) ytFields.youtube_made_for_kids = true;
 				else ytFields.youtube_made_for_kids = false;
@@ -1717,35 +1906,131 @@ export default function PlannerWizard({
 												/>
 											</div>
 											<div>
-												<label className="text-xs font-medium text-ios-text mb-1.5 block">Produtos Afiliados (CSV)</label>
-												<div className="flex gap-2">
-													<input
-														value={youtubeProducts}
-														onChange={(e) => setYoutubeProducts(e.target.value)}
-														className="flex-1 bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none"
-														placeholder="IDs separados por vírgula, ex: prod_123,prod_456"
-													/>
+												<label className="text-xs font-medium text-ios-text mb-1.5 block">Produtos Afiliados</label>
+												<div className="flex justify-end mb-1.5">
 													<button
 														type="button"
-														onClick={handleSearchYoutubeProducts}
-														disabled={youtubeProductsLoading}
-														className="px-3 py-2 bg-ios-blue text-white rounded-lg text-xs font-medium disabled:opacity-50 whitespace-nowrap"
+														onClick={addYoutubeProduct}
+														className="text-[11px] text-ios-blue font-medium hover:underline"
 													>
-														{youtubeProductsLoading ? "Buscando..." : "Buscar"}
+														+ Adicionar Produto Afiliado
 													</button>
 												</div>
-												<p className="text-[10px] text-gray-400 mt-1">IDs separados por vírgula, ex: prod_123,prod_456. Clique em Buscar para consultar /api/youtube/products se videoId disponível.</p>
-												{youtubeProductsError && <p className="text-xs text-ios-red mt-1">{youtubeProductsError}</p>}
-												{youtubeProductsResults.length > 0 && (
-													<div className="mt-2 bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 max-h-32 overflow-y-auto">
-														<p className="text-[11px] font-medium mb-1">{youtubeProductsResults.length} produto(s) encontrado(s):</p>
-														<ul className="text-xs space-y-1">
-															{(youtubeProductsResults as unknown[]).map((pr: unknown, idx: number) => (
-																<li key={idx} className="truncate">{JSON.stringify(pr as Record<string, unknown>).slice(0,120)}</li>
-															))}
-														</ul>
-													</div>
+												{youtubeProductDrafts.length === 0 && (
+													<p className="text-[10px] text-gray-400 mb-1">
+														Nenhum produto. Adicione para buscar no catálogo do canal ou deixar
+														só o nome (auto-seleção na publicação).
+													</p>
 												)}
+												<div className="space-y-2">
+													{youtubeProductDrafts.map((draft) => (
+														<div
+															key={draft.key}
+														className="border border-ios-separator rounded-lg p-2 bg-white dark:bg-ios-card"
+														>
+															<div className="flex items-center gap-2">
+																<input
+																	value={draft.query}
+																	onChange={(e) =>
+																		handleYoutubeProductQueryChange(draft.key, e.target.value)
+																	}
+																	className="flex-1 bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none"
+																	placeholder="Nome do produto (ex.: smartwatch)"
+																/>
+																<button
+																	type="button"
+																	onClick={() => removeYoutubeProduct(draft.key)}
+																	className="p-1.5 text-gray-400 hover:text-ios-red"
+																	title="Remover produto"
+																>
+																	<X size={16} />
+																</button>
+															</div>
+															{draft.status === "searching" && (
+																<p className="text-[11px] text-gray-400 mt-1">Buscando...</p>
+															)}
+															{draft.status === "selected" && draft.item !== undefined && (
+																<div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
+																	<Check size={13} className="text-green-600 shrink-0" />
+																	<span className="text-green-700 dark:text-green-400 font-medium truncate">
+																		{draft.title || "Produto selecionado"}
+																	</span>
+																	<span className="text-gray-400 whitespace-nowrap">
+																		{draft.vendor || "?"}
+																		{draft.price ? ` — ${draft.price}` : ""}
+																		{draft.commissionPct != null ? ` · ${draft.commissionPct}%` : ""}
+																	</span>
+																	<button
+																		type="button"
+																		onClick={() => unselectYoutubeProduct(draft.key)}
+																		className="text-ios-blue hover:underline"
+																	>
+																		trocar
+																	</button>
+																</div>
+															)}
+															{draft.status === "name" &&
+																draft.results.length === 0 &&
+																draft.error && (
+																	<p className="text-[11px] text-amber-600 mt-1">{draft.error}</p>
+																)}
+															{draft.status === "error" && draft.error && (
+																<p className="text-[11px] text-ios-red mt-1">{draft.error}</p>
+															)}
+															{(draft.status === "searching" || draft.status === "name") &&
+																draft.results.length > 0 && (
+																	<div className="mt-1.5 border border-ios-separator rounded-lg bg-white dark:bg-ios-card max-h-40 overflow-y-auto">
+																		{draft.results.map((pr, idx) => {
+																			const title =
+																				String(pr.title || "Produto sem título");
+																			const vendor = pr.vendor ? String(pr.vendor) : "";
+																			const price = pr.price ? String(pr.price) : "";
+																			const pct =
+																				typeof pr.commission_pct === "number"
+																					? pr.commission_pct
+																					: null;
+																			return (
+																				<button
+																					key={idx}
+																					type="button"
+																					onClick={() =>
+																						selectYoutubeProduct(draft.key, pr)
+																					}
+																					className="w-full text-left px-2.5 py-1.5 hover:bg-ios-blue/10 border-b border-ios-separator last:border-0 flex items-start justify-between gap-2"
+																				>
+																					<span className="text-[11px] leading-tight">
+																						<span className="font-medium">{title}</span>
+																						{vendor && (
+																							<span className="text-gray-400"> — {vendor}</span>
+																						)}
+																					</span>
+																					<span className="text-[10px] text-gray-400 whitespace-nowrap">
+																						{price || "—"}
+																						{pct != null ? ` · ${pct}%` : ""}
+																					</span>
+																				</button>
+																			);
+																		})}
+																	</div>
+																)}
+																{draft.status === "name" && draft.results.length > 0 && (
+																	<p className="text-[10px] text-gray-400 mt-1">
+																		Selecione um item acima para fixar (verbatim) ou deixe só o nome —
+																		a publicação auto-seleciona o melhor produto.
+																	</p>
+																)}
+																{draft.status === "idle" && (
+																	<p className="text-[10px] text-gray-400 mt-1">
+																		Digite um termo para buscar no catálogo do canal.
+																	</p>
+																)}
+															</div>
+															))}
+												</div>
+												<p className="text-[10px] text-gray-400 mt-1">
+													Item fixado vai verbatim na tagagem (POST /api/shorts); só nome usa
+													auto-select (POST /api/shorts/auto) — sem vírgulas na conta, sem JSON cru.
+												</p>
 											</div>
 											<div className="grid grid-cols-2 gap-3">
 												<div>
