@@ -94,6 +94,9 @@
 
 ## 8. Commit deste bloco
 
-- `app/api/cron/publisher/route.ts` — remoção do import morto `PUBLISHABLE_IN_FLIGHT_STATUSES` (dead code F5; -1 warning, zero runtime).
-- `docs/FIX_FINAL_REPORT.md` — este relatório.
+- `lib/planner-runtime.ts` (`8c946b2`) — **guard M5 na propagação:** quando `buildYoutubeOptionsForPost` retorna `null` (nenhum título resolvível — config patológico legado), a propagação NÃO grava `youtube_options = null` (não apaga products/título existentes do Short pendente); `rebuilt !== null` → aplica, `null` → preserva. Fecha delta de comportamento da unificação F2 vs `buildYoutubeOptionsForPropagation` antigo.
+- `.ai/f2-smoke/smoke.test.mts` (`8c946b2`) — **T7** (regressão do guard): post com `youtube_options` + config sem título resolvível → `data.youtube_options === undefined` (preservado). Smoke F2 salta para 7/7.
+- `app/api/cron/publisher/route.ts` (`4a2ab60`) — remoção do import morto `PUBLISHABLE_IN_FLIGHT_STATUSES` (dead code F5; -1 warning, zero runtime).
+- `docs/FIX_FINAL_REPORT.md` — este relatório (consolidação dos dois agentes do F7).
+- **Barra final** (worktree, os dois commits): tsc 0 erros · build ✓ · prisma validate ✓ · smokes F2 7/7 · F4 8/8 · F4-dual 12/12 · F5-races 11/11 · products-routing 14/14.
 - **NUNCA push** (decisão do dono). Arquivos untracked de outros agentes (`.ai/watcher-audit-baseline.md`, `docs/diagnose-upload-vps.md`) NÃO commitados.
