@@ -441,7 +441,11 @@ async function isChannelThrottled(
 		now.getTime() - lastPublished.published_at.getTime() < minIntervalMs
 	)
 		return true;
-	// BK-03: burst inclui posts em processing/ready (ainda nao publicados mas ja contam no intervalo)
+	// BK-03: burst inclui posts EM VOÔ (processing_*) dentro da janela — já contam
+	// no intervalo mesmo sem published_at. ready_to_publish NÃO entra aqui: posts
+	// enfileirados ainda não publicados não podem travar o próprio canal (senão
+	// nenhum post da fila sai — regressão P7); o throttling pós-publicação é
+	// coberto pelo check de lastPublished acima.
 	const recentProcessing = await prisma.post.count({
 		where: {
 			channel_id: channel.id,
@@ -450,7 +454,6 @@ async function isChannelThrottled(
 					"processing",
 					"processing_upload",
 					"processing_children",
-					"ready_to_publish",
 				],
 			},
 			created_at: { gte: new Date(now.getTime() - minIntervalMs) },
@@ -2812,6 +2815,20 @@ async function handler(request: Request) {
 							return { status: res.status, body: await res.json() };
 						});
 						const statusResults = await Promise.all(statusPromises);
+
+						// Stuck legacy row: child ids stored but NO child urls resolvable
+						// (children_urls null/vazio) → childIds vazio → allFinished() é
+						// vacuously true e montaria um CAROUSEL sem children (404 no IG).
+						// Fica processing_children: o dead-letter 2h (Fase 2.5) converte em
+						// failed/"Processing Timeout" como esperado no P1 do gauntlet.
+						if (childIds.length === 0) {
+							await logPlanner(
+								post.planner_id || "unknown",
+								`Carousel ${post.id}: no child urls stored — waiting (2h dead-letter applies)`,
+								"info",
+							);
+							continue;
+						}
 
 						// Any child still processing → keep waiting. Any child ERROR → fail the post.
 						const errored = statusResults.find(
