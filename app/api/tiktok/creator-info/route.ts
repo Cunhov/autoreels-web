@@ -30,6 +30,8 @@ export async function POST(req: Request) {
 
     const info = await fetchTiktokCreatorInfo(accessToken, proxyUrl);
 
+    // Whitelist explícita — NUNCA repassar o payload cru do TikTok ao client
+    // (regra S4: raw API passthrough proibido; só campos conhecidos e seguros).
     return NextResponse.json({
       privacy_level_options: info.privacy_level_options,
       max_video_post_duration_sec: info.max_video_post_duration_sec,
@@ -39,7 +41,6 @@ export async function POST(req: Request) {
       creator_username: info.creator_username,
       creator_nickname: info.creator_nickname,
       creator_avatar_url: info.creator_avatar_url,
-      raw: info,
     });
   } catch (err: unknown) {
     return NextResponse.json({ error: err instanceof Error ? err.message : "Falha ao consultar creator_info." }, { status: 400 });
