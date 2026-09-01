@@ -105,7 +105,7 @@ function toSafeChannel(channel: {
         ...rest,
         // Preserve sanitized settings for client if originally present (safe to send)
         ...(settings !== undefined ? { settings: safeSettings ? JSON.stringify(safeSettings) : null, settings_safe: safeSettings } : {}),
-        has_token: Boolean(access_token),
+        has_token: Boolean(access_token) || has_tiktok_token,
         token_source: access_token?.startsWith("token_")
             ? "redis"
             : (rest.token_source as string | undefined),

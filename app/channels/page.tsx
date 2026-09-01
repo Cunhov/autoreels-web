@@ -17,6 +17,7 @@ interface Channel {
     account_id: string;
     access_token?: string;
     has_token?: boolean;
+    has_tiktok_token?: boolean;
     token_source?: string;
     token_expires_at?: string;
     token_refreshed_at?: string;
@@ -31,11 +32,26 @@ interface PostData {
     channel_id?: string;
 }
 
-/** Estimate token health: Instagram tokens expire in ~60 days */
+/**
+ * Estimate token health. Thresholds são por plataforma:
+ * - TikTok: token ~24h (sandbox 86400s) → expirado SÓ quando expires_at realmente
+ *   passou; 'expiring' dentro das últimas 2h. O limiar de 1 dia herdado do
+ *   Instagram faria o badge 'Token expired' aparecer em quase TODA a vida do
+ *   token de 24h.
+ * - Instagram/outras: tokens longos (~60 dias) → 1 dia / 14 dias (legado).
+ */
 function tokenHealth(channel: Channel): 'good' | 'expiring' | 'expired' | 'unknown' {
     if (channel.token_source === 'redis') return 'unknown';
-    if (!channel.token_expires_at) return channel.has_token ? 'unknown' : 'expired';
-    const daysLeft = (new Date(channel.token_expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+    if (!channel.token_expires_at) return (channel.has_token || channel.has_tiktok_token) ? 'unknown' : 'expired';
+    const expiresMs = new Date(channel.token_expires_at).getTime();
+    const msLeft = expiresMs - Date.now();
+    const HOUR_MS = 1000 * 60 * 60;
+    if ((channel.platform || '').toLowerCase() === 'tiktok') {
+        if (msLeft <= 0) return 'expired';
+        if (msLeft < 2 * HOUR_MS) return 'expiring';
+        return 'good';
+    }
+    const daysLeft = msLeft / (24 * HOUR_MS);
     if (daysLeft < 1) return 'expired';
     if (daysLeft < 14) return 'expiring';
     return 'good';
