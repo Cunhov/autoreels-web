@@ -58,7 +58,9 @@ function toSafeChannel(channel: {
     return {
         ...rest,
         has_token: Boolean(access_token),
-        token_source: access_token?.startsWith("token_") ? "redis" : (rest.token_source as string | undefined),
+        token_source: access_token?.startsWith("token_")
+            ? "redis"
+            : (rest.token_source as string | undefined),
         has_proxy: Boolean(proxy_url),
         proxy_url_masked: proxy_url ? maskProxyUrl(proxy_url) : null,
         proxy_enabled: proxy_enabled ?? true,
@@ -67,7 +69,7 @@ function toSafeChannel(channel: {
 
 export async function GET(
     req: Request,
-    { params }: { params: Promise<{ id: string }> }
+    { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
     const session = await getServerSession(authOptions);
@@ -84,7 +86,9 @@ export async function GET(
         });
     } catch (e: unknown) {
         if (isMissingProxyColumnError(e)) {
-            console.warn("[channels/[id]] proxy columns missing — falling back without proxy");
+            console.warn(
+                "[channels/[id]] proxy columns missing — falling back without proxy",
+            );
             channel = await prisma.channel.findUnique({
                 where: { id, user_id: userId },
                 select: channelSelectFallback,
@@ -93,15 +97,20 @@ export async function GET(
     }
 
     if (!channel) {
-        return NextResponse.json({ error: "Channel not found" }, { status: 404 });
+        return NextResponse.json(
+            { error: "Channel not found" },
+            { status: 404 },
+        );
     }
 
-    return NextResponse.json(toSafeChannel(channel as Parameters<typeof toSafeChannel>[0]));
+    return NextResponse.json(
+        toSafeChannel(channel as Parameters<typeof toSafeChannel>[0]),
+    );
 }
 
 export async function PATCH(
     req: Request,
-    { params }: { params: Promise<{ id: string }> }
+    { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
     const session = await getServerSession(authOptions);
@@ -119,17 +128,24 @@ export async function PATCH(
             select: { platform: true },
         });
         if (!existing) {
-            return NextResponse.json({ error: "Channel not found" }, { status: 404 });
+            return NextResponse.json(
+                { error: "Channel not found" },
+                { status: 404 },
+            );
         }
         const data = await req.json();
         // Para YouTube, só permite editar proxy (demais campos são derivados da sessão)
         const isYoutube = existing.platform === "youtube";
         if (isYoutube) {
             const allowedKeys = new Set(["proxy_url", "proxy_enabled"]);
-            const hasOnlyProxy = Object.keys(data).every((k) => allowedKeys.has(k));
+            const hasOnlyProxy = Object.keys(data).every((k) =>
+                allowedKeys.has(k),
+            );
             if (!hasOnlyProxy) {
                 return NextResponse.json(
-                    { error: "Canais YouTube só permitem editar o proxy — desconecte e reconecte para alterar outros dados." },
+                    {
+                        error: "Canais YouTube só permitem editar o proxy — desconecte e reconecte para alterar outros dados.",
+                    },
                     { status: 400 },
                 );
             }
@@ -146,9 +162,17 @@ export async function PATCH(
               };
         // Proxy por canal — validação sempre permitida (inclusive YouTube)
         if (data.proxy_url !== undefined) {
-            const raw = data.proxy_url === null || String(data.proxy_url).trim() === "" ? null : String(data.proxy_url).trim();
+            const raw =
+                data.proxy_url === null || String(data.proxy_url).trim() === ""
+                    ? null
+                    : String(data.proxy_url).trim();
             if (raw !== null && !isValidProxyUrl(raw)) {
-                return NextResponse.json({ error: "Proxy inválido. Use o formato http://user:pass@host:porta ou http://host:porta" }, { status: 400 });
+                return NextResponse.json(
+                    {
+                        error: "Proxy inválido. Use o formato http://user:pass@host:porta ou http://host:porta",
+                    },
+                    { status: 400 },
+                );
             }
             updateData.proxy_url = raw;
         }
@@ -157,32 +181,53 @@ export async function PATCH(
         }
         // Se for YouTube e só proxy, já temos updateData pronto
         if (isYoutube && Object.keys(updateData).length === 0) {
-            return NextResponse.json({ error: "Nenhum campo para atualizar." }, { status: 400 });
+            return NextResponse.json(
+                { error: "Nenhum campo para atualizar." },
+                { status: 400 },
+            );
         }
 
         if (typeof data.access_token === "string" && data.access_token.trim()) {
             let accessToken = data.access_token.trim();
             // proxy pode vir do payload ou do canal existente
             let proxyForRefresh: string | null = null;
-            if (typeof data.proxy_url === "string" && String(data.proxy_url).trim()) proxyForRefresh = String(data.proxy_url).trim();
+            if (
+                typeof data.proxy_url === "string" &&
+                String(data.proxy_url).trim()
+            )
+                proxyForRefresh = String(data.proxy_url).trim();
             else {
-                const ch = await prisma.channel.findUnique({ where: { id, user_id: userId }, select: { proxy_url: true, proxy_enabled: true } });
+                const ch = await prisma.channel.findUnique({
+                    where: { id, user_id: userId },
+                    select: { proxy_url: true, proxy_enabled: true },
+                });
                 if (ch?.proxy_url && ch.proxy_enabled !== false) {
-                    const { isValidProxyUrl: _valid } = await import("@/lib/proxy");
+                    const { isValidProxyUrl: _valid } = await import(
+                        "@/lib/proxy"
+                    );
                     if (_valid(ch.proxy_url)) proxyForRefresh = ch.proxy_url;
                 }
             }
-            const refreshed = await refreshInstagramToken(accessToken, proxyForRefresh).catch(() => null);
+            const refreshed = await refreshInstagramToken(
+                accessToken,
+                proxyForRefresh,
+            ).catch(() => null);
             if (refreshed) {
                 accessToken = refreshed.token;
-                updateData.token_expires_at = new Date(Date.now() + refreshed.expiresIn * 1000);
+                updateData.token_expires_at = new Date(
+                    Date.now() + refreshed.expiresIn * 1000,
+                );
                 updateData.token_refreshed_at = new Date();
             }
-            const profile = await fetchInstagramProfile(accessToken, proxyForRefresh).catch(() => null);
+            const profile = await fetchInstagramProfile(
+                accessToken,
+                proxyForRefresh,
+            ).catch(() => null);
             if (profile) {
                 updateData.account_id = data.account_id || profile.id;
                 updateData.username = profile.username || null;
-                updateData.profile_picture_url = profile.profilePictureUrl || null;
+                updateData.profile_picture_url =
+                    profile.profilePictureUrl || null;
                 updateData.name = data.name || profile.username || data.name;
             }
             updateData.access_token = accessToken;
@@ -198,13 +243,16 @@ export async function PATCH(
         });
         return NextResponse.json(toSafeChannel(channel));
     } catch (error: unknown) {
-        return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
+        return NextResponse.json(
+            { error: getErrorMessage(error) },
+            { status: 400 },
+        );
     }
 }
 
 export async function DELETE(
     req: Request,
-    { params }: { params: Promise<{ id: string }> }
+    { params }: { params: Promise<{ id: string }> },
 ) {
     const { id } = await params;
     const session = await getServerSession(authOptions);
@@ -223,8 +271,13 @@ export async function DELETE(
         // bloqueando a vinculação por terceiros.
         const url = new URL(req.url);
         if (url.searchParams.get("deleteRemoteSession") === "true") {
-            const channel = await prisma.channel.findFirst({ where: { id, user_id: userId } });
-            const sessionId = channel?.platform === "youtube" ? getYoutubeSessionId(channel.settings) : "";
+            const channel = await prisma.channel.findFirst({
+                where: { id, user_id: userId },
+            });
+            const sessionId =
+                channel?.platform === "youtube"
+                    ? getYoutubeSessionId(channel.settings)
+                    : "";
             if (sessionId) {
                 await deleteSession(sessionId).catch((err: unknown) => {
                     console.warn(
@@ -243,6 +296,9 @@ export async function DELETE(
         });
         return NextResponse.json({ success: true });
     } catch (error: unknown) {
-        return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
+        return NextResponse.json(
+            { error: getErrorMessage(error) },
+            { status: 400 },
+        );
     }
 }

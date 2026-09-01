@@ -66,7 +66,7 @@ export async function fetchWithTimeout(
 			}
 		}
 		const fetchOpts: RequestInit & { dispatcher?: unknown } = { ...options, signal: controller.signal };
-		if (dispatcher) (fetchOpts as any).dispatcher = dispatcher;
+		if (dispatcher) (fetchOpts as RequestInit & { dispatcher: unknown }).dispatcher = dispatcher;
 		return await fetch(url, fetchOpts as RequestInit);
 	} finally {
 		clearTimeout(timer);
@@ -127,15 +127,42 @@ export async function resolveAccessToken(tokenOrKey: string | null) {
 	return cleanToken(resolvedToken);
 }
 
-export function getInstagramOAuthConfig(origin: string) {
+/**
+ * Origem pública canônica do app (evita https://0.0.0.0:80 atrás do proxy Easypanel).
+ * Prioridade: NEXTAUTH_URL/PUBLIC_BASE_URL (env) > X-Forwarded-* > origin do request.
+ * Sem isso o Instagram devolve "Invalid redirect_uri" e o callback redireciona para 0.0.0.0.
+ */
+export function getPublicOrigin(req?: Request): string {
+	const envOrigin = (process.env.NEXTAUTH_URL || process.env.PUBLIC_BASE_URL || "").trim().replace(/\/$/, "");
+	if (envOrigin) return envOrigin;
+	if (!req) return "http://localhost:3000";
+	const xfProto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+	const xfHost = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+	let fallbackHost = "localhost:3000";
+	let fallbackProto = "https";
+	try {
+		const u = new URL(req.url);
+		fallbackHost = u.host;
+		fallbackProto = u.protocol.replace(":", "");
+	} catch {
+		// req.url inválida — usa fallback + headers
+	}
+	const host = xfHost || req.headers.get("host") || fallbackHost;
+	const proto = xfProto || fallbackProto;
+	return `${proto}://${host}`.replace(/\/$/, "");
+}
+
+export function getInstagramOAuthConfig(origin: string, req?: Request) {
 	const clientId =
 		process.env.INSTAGRAM_CLIENT_ID ||
 		process.env.NEXT_PUBLIC_INSTAGRAM_CLIENT_ID ||
 		"";
 	const clientSecret = process.env.INSTAGRAM_CLIENT_SECRET || "";
+	// Origem canônica: prefere env (NEXTAUTH_URL) para não cair em 0.0.0.0 atrás do proxy
+	const canonicalOrigin = (process.env.NEXTAUTH_URL || process.env.PUBLIC_BASE_URL || "").trim().replace(/\/$/, "") || (req ? getPublicOrigin(req) : origin.replace(/\/$/, ""));
 	const redirectUri =
-		process.env.INSTAGRAM_REDIRECT_URI ||
-		`${origin.replace(/\/$/, "")}/api/channels/oauth/callback`;
+		process.env.INSTAGRAM_REDIRECT_URI?.trim() ||
+		`${canonicalOrigin}/api/channels/oauth/callback`;
 
 	if (!clientId || !clientSecret) {
 		throw new Error(

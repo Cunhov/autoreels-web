@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getSessionUserId } from "@/lib/api";
-import { getInstagramOAuthConfig, signOAuthState } from "@/lib/instagram";
+import { getInstagramOAuthConfig, getPublicOrigin, signOAuthState } from "@/lib/instagram";
 
 export async function GET(req: Request) {
     const session = await getServerSession(authOptions);
@@ -12,8 +12,8 @@ export async function GET(req: Request) {
     }
 
     try {
-        const origin = new URL(req.url).origin;
-        const { clientId, redirectUri } = getInstagramOAuthConfig(origin);
+        const origin = getPublicOrigin(req);
+        const { clientId, redirectUri } = getInstagramOAuthConfig(origin, req);
         const params = new URLSearchParams({
             client_id: clientId,
             redirect_uri: redirectUri,

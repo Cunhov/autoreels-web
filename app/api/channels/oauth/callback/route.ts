@@ -2,16 +2,26 @@ import { NextResponse } from "next/server";
 import {
     exchangeInstagramCode,
     fetchInstagramProfile,
+    getPublicOrigin,
     verifyOAuthState,
 } from "@/lib/instagram";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(req: Request) {
-    const url = new URL(req.url);
+    const publicOrigin = getPublicOrigin(req);
+    let url: URL;
+    try {
+        url = new URL(req.url);
+    } catch {
+        const fallback = new URL("/channels", publicOrigin);
+        fallback.searchParams.set("connect", "error");
+        fallback.searchParams.set("message", "Invalid request URL.");
+        return NextResponse.redirect(fallback);
+    }
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
     const error = url.searchParams.get("error") || url.searchParams.get("error_message");
-    const redirect = new URL("/channels", url.origin);
+    const redirect = new URL("/channels", publicOrigin);
 
     if (error) {
         redirect.searchParams.set("connect", "error");
@@ -27,7 +37,7 @@ export async function GET(req: Request) {
 
     try {
         const { userId } = verifyOAuthState(state);
-        const tokenData = await exchangeInstagramCode(code, url.origin);
+        const tokenData = await exchangeInstagramCode(code, publicOrigin);
         const profile = await fetchInstagramProfile(tokenData.token);
         const accountId = profile.id || tokenData.instagramUserId;
         if (!accountId) throw new Error("Instagram account id was not returned.");

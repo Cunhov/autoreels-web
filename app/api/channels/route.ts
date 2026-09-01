@@ -57,7 +57,9 @@ function toSafeChannel(channel: {
     return {
         ...rest,
         has_token: Boolean(access_token),
-        token_source: access_token?.startsWith("token_") ? "redis" : (rest.token_source as string | undefined),
+        token_source: access_token?.startsWith("token_")
+            ? "redis"
+            : (rest.token_source as string | undefined),
         has_proxy: Boolean(proxy_url),
         proxy_url_masked: proxy_url ? maskProxyUrl(proxy_url) : null,
         proxy_enabled: proxy_enabled ?? true,
@@ -80,7 +82,9 @@ export async function GET() {
         });
     } catch (e: unknown) {
         if (isMissingProxyColumnError(e)) {
-            console.warn("[channels] proxy columns missing in DB — falling back without proxy (rode a migration 0008)");
+            console.warn(
+                "[channels] proxy columns missing in DB — falling back without proxy (rode a migration 0008)",
+            );
             channels = await prisma.channel.findMany({
                 where: { user_id: userId },
                 select: channelSelectFallback,
@@ -89,7 +93,9 @@ export async function GET() {
         } else throw e;
     }
 
-    return NextResponse.json((channels as Parameters<typeof toSafeChannel>[0][]).map(toSafeChannel));
+    return NextResponse.json(
+        (channels as Parameters<typeof toSafeChannel>[0][]).map(toSafeChannel),
+    );
 }
 
 export async function POST(req: Request) {
@@ -102,38 +108,77 @@ export async function POST(req: Request) {
     try {
         const data = await req.json();
         const tokenSource = data.token_source || "manual";
-        let profile: { id: string; username: string; profilePictureUrl: string } | null = null;
-        let accessToken = typeof data.access_token === "string" ? data.access_token.trim() : "";
+        let profile: {
+            id: string;
+            username: string;
+            profilePictureUrl: string;
+        } | null = null;
+        let accessToken =
+            typeof data.access_token === "string"
+                ? data.access_token.trim()
+                : "";
         let expiresAt: Date | null = null;
         let refreshedAt: Date | null = null;
 
         if (tokenSource === "manual" && accessToken) {
-            const proxyForToken = typeof data.proxy_url === "string" ? String(data.proxy_url).trim() || null : null;
-            const refreshed = await refreshInstagramToken(accessToken, proxyForToken).catch(() => null);
+            const proxyForToken =
+                typeof data.proxy_url === "string"
+                    ? String(data.proxy_url).trim() || null
+                    : null;
+            const refreshed = await refreshInstagramToken(
+                accessToken,
+                proxyForToken,
+            ).catch(() => null);
             if (refreshed) {
                 accessToken = refreshed.token;
                 expiresAt = new Date(Date.now() + refreshed.expiresIn * 1000);
                 refreshedAt = new Date();
             }
-            profile = await fetchInstagramProfile(accessToken, proxyForToken).catch(() => null);
+            profile = await fetchInstagramProfile(
+                accessToken,
+                proxyForToken,
+            ).catch(() => null);
         }
 
         const accountId = String(data.account_id || profile?.id || "").trim();
         if (!accountId) {
-            return NextResponse.json({ error: "Instagram Account ID is required." }, { status: 400 });
+            return NextResponse.json(
+                { error: "Instagram Account ID is required." },
+                { status: 400 },
+            );
         }
         // BK-11/BK-18 validar nome não é só espaços, limite 80 e regex
-        if (data.name !== undefined && typeof data.name === "string" && !data.name.trim()) {
-            return NextResponse.json({ error: "Channel name cannot be empty or whitespace" }, { status: 400 });
+        if (
+            data.name !== undefined &&
+            typeof data.name === "string" &&
+            !data.name.trim()
+        ) {
+            return NextResponse.json(
+                { error: "Channel name cannot be empty or whitespace" },
+                { status: 400 },
+            );
         }
-        const channelName = data.name ? escapeHtml(String(data.name).trim().slice(0,80)) : (profile?.username ? escapeHtml(profile.username.slice(0,80)) : `Instagram ${accountId}`);
+        const channelName = data.name
+            ? escapeHtml(String(data.name).trim().slice(0, 80))
+            : profile?.username
+              ? escapeHtml(profile.username.slice(0, 80))
+              : `Instagram ${accountId}`;
 
         // Proxy por canal (opcional): valida formato http(s)://user:pass@host:porta
         let proxyUrl: string | null = null;
-        if (data.proxy_url !== undefined && data.proxy_url !== null && String(data.proxy_url).trim() !== "") {
+        if (
+            data.proxy_url !== undefined &&
+            data.proxy_url !== null &&
+            String(data.proxy_url).trim() !== ""
+        ) {
             const rawProxy = String(data.proxy_url).trim();
             if (!isValidProxyUrl(rawProxy)) {
-                return NextResponse.json({ error: "Proxy inválido. Use o formato http://user:pass@host:porta ou http://host:porta" }, { status: 400 });
+                return NextResponse.json(
+                    {
+                        error: "Proxy inválido. Use o formato http://user:pass@host:porta ou http://host:porta",
+                    },
+                    { status: 400 },
+                );
             }
             proxyUrl = rawProxy;
         }
@@ -147,20 +192,28 @@ export async function POST(req: Request) {
                     platform: "instagram",
                     account_id: accountId,
                     username: profile?.username || data.username || null,
-                    profile_picture_url: profile?.profilePictureUrl || data.profile_picture_url || null,
+                    profile_picture_url:
+                        profile?.profilePictureUrl ||
+                        data.profile_picture_url ||
+                        null,
                     access_token: accessToken || null,
                     token_source: tokenSource,
                     token_expires_at: expiresAt,
                     token_refreshed_at: refreshedAt,
                     status: data.status || "active",
                     proxy_url: proxyUrl,
-                    proxy_enabled: data.proxy_enabled !== undefined ? Boolean(data.proxy_enabled) : true,
+                    proxy_enabled:
+                        data.proxy_enabled !== undefined
+                            ? Boolean(data.proxy_enabled)
+                            : true,
                 },
                 select: channelSelect,
             });
         } catch (e: unknown) {
             if (isMissingProxyColumnError(e) && proxyUrl !== null) {
-                console.warn("[channels] proxy columns missing — creating channel without proxy");
+                console.warn(
+                    "[channels] proxy columns missing — creating channel without proxy",
+                );
                 channel = await prisma.channel.create({
                     data: {
                         user_id: userId,
@@ -168,7 +221,10 @@ export async function POST(req: Request) {
                         platform: "instagram",
                         account_id: accountId,
                         username: profile?.username || data.username || null,
-                        profile_picture_url: profile?.profilePictureUrl || data.profile_picture_url || null,
+                        profile_picture_url:
+                            profile?.profilePictureUrl ||
+                            data.profile_picture_url ||
+                            null,
                         access_token: accessToken || null,
                         token_source: tokenSource,
                         token_expires_at: expiresAt,
@@ -185,7 +241,10 @@ export async function POST(req: Request) {
                         platform: "instagram",
                         account_id: accountId,
                         username: profile?.username || data.username || null,
-                        profile_picture_url: profile?.profilePictureUrl || data.profile_picture_url || null,
+                        profile_picture_url:
+                            profile?.profilePictureUrl ||
+                            data.profile_picture_url ||
+                            null,
                         access_token: accessToken || null,
                         token_source: tokenSource,
                         token_expires_at: expiresAt,
@@ -196,8 +255,13 @@ export async function POST(req: Request) {
                 });
             } else throw e;
         }
-        return NextResponse.json(toSafeChannel(channel as Parameters<typeof toSafeChannel>[0]));
+        return NextResponse.json(
+            toSafeChannel(channel as Parameters<typeof toSafeChannel>[0]),
+        );
     } catch (error: unknown) {
-        return NextResponse.json({ error: getErrorMessage(error) }, { status: 400 });
+        return NextResponse.json(
+            { error: getErrorMessage(error) },
+            { status: 400 },
+        );
     }
 }
