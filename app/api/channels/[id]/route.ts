@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { fetchInstagramProfile, refreshInstagramToken } from "@/lib/instagram";
 import { deleteSession, getYoutubeSessionId } from "@/lib/youtube";
-import { isValidProxyUrl, maskProxyUrl } from "@/lib/proxy";
+import { isValidProxyUrl, maskProxyUrl, getChannelProxyUrl } from "@/lib/proxy";
 
 const channelSelect = {
     id: true,
@@ -279,7 +279,10 @@ export async function DELETE(
                     ? getYoutubeSessionId(channel.settings)
                     : "";
             if (sessionId) {
-                await deleteSession(sessionId).catch((err: unknown) => {
+                // M16: exclui a sessão remota pela MESMA rede do canal (proxy) —
+                // um canal atrás de proxy por bloqueio geográfico/BotGuard não
+                // pode apagar a sessão na chamada direta.
+                await deleteSession(sessionId, getChannelProxyUrl(channel)).catch((err: unknown) => {
                     console.warn(
                         `[Channels] Falha ao excluir sessão remota do YouTube ${sessionId.slice(0, 8)}…:`,
                         err instanceof Error ? err.message : err,

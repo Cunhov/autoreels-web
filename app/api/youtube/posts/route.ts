@@ -4,6 +4,7 @@ import {
 	requireOwnedYoutubeChannel,
 	youtubeErrorMessage,
 } from "@/lib/youtube-channel";
+import { getChannelProxyUrl } from "@/lib/proxy";
 import { deleteCommunityPost } from "@/lib/youtube";
 
 /**
@@ -25,7 +26,14 @@ export async function DELETE(req: Request) {
 	}
 
 	try {
-		await deleteCommunityPost(guard.sessionId, remotePostId);
+		// M16: exclusão de post da Comunidade via proxy do canal — o post foi
+		// publicado pela rede do canal; apagar sem proxy falharia para canais
+		// que dependem dele (bloqueio geográfico/BotGuard).
+		await deleteCommunityPost(
+			guard.sessionId,
+			remotePostId,
+			getChannelProxyUrl(guard.channel),
+		);
 		// Best-effort: limpa a referência local ao post remoto excluído.
 		await prisma.post.updateMany({
 			where: {

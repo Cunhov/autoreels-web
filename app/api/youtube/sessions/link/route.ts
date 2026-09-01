@@ -14,6 +14,7 @@ import {
 	listSessions,
 	withYoutubeSessionId,
 } from "@/lib/youtube";
+import { getChannelProxyUrl } from "@/lib/proxy";
 
 interface LinkBody {
 	sessionId?: string;
@@ -131,7 +132,9 @@ export async function POST(req: Request) {
 		// que ficou órfã numa revinculação (best-effort — não bloqueia a resposta).
 		await recordYoutubeSessionOwner(remote.id, userId).catch(() => {});
 		if (oldSessionId && oldSessionId !== remote.id) {
-			await deleteSession(oldSessionId).catch((err: unknown) => {
+			// M16: a sessão remota anterior pertence a este canal — excluí-la
+			// pela MESMA rede (proxy do canal) usada na publicação.
+			await deleteSession(oldSessionId, getChannelProxyUrl(existing)).catch((err: unknown) => {
 				console.warn(
 					`[YoutubeLink] Falha ao remover sessão remota anterior ${oldSessionId.slice(0, 8)}…:`,
 					err instanceof Error ? err.message : err,

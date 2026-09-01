@@ -4,6 +4,7 @@ import {
 	requireOwnedYoutubeChannel,
 	youtubeErrorMessage,
 } from "@/lib/youtube-channel";
+import { getChannelProxyUrl } from "@/lib/proxy";
 import { refreshSession, withYoutubeSessionId } from "@/lib/youtube";
 
 /**
@@ -19,7 +20,13 @@ export async function POST(
 	if (!guard.ok) return guard.response;
 
 	try {
-		const remote = await refreshSession(guard.sessionId);
+		// M16: refresh da sessão passa pelo proxy do canal (mesmo caminho que o
+		// publisher usa para publicar) — um canal atrás de proxy por bloqueio
+		// geográfico/BotGuard não pode renovar cookies sem ele.
+		const remote = await refreshSession(
+			guard.sessionId,
+			getChannelProxyUrl(guard.channel),
+		);
 
 		await prisma.channel.update({
 			where: { id: guard.channel.id },

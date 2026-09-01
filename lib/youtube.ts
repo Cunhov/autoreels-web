@@ -233,11 +233,20 @@ export async function getSession(sessionId: string, proxyUrl?: string | null): P
 	)) as YoutubeSession;
 }
 
-/** POST /api/session/{id}/refresh — revalida cookies e renova tokens. */
-export async function refreshSession(sessionId: string): Promise<YoutubeSession> {
+/** POST /api/session/{id}/refresh — revalida cookies e renova tokens.
+ * `proxyUrl?` repassa o proxy do canal (Channel.proxy_url) — rotas que têm o
+ * Channel devem passar `getChannelProxyUrl(channel)` (M16, cobertura de
+ * gestão espelhando o publisher).
+ */
+export async function refreshSession(
+	sessionId: string,
+	proxyUrl?: string | null,
+): Promise<YoutubeSession> {
 	return (await youtubeFetch(
 		`/api/session/${encodeURIComponent(sessionId)}/refresh`,
 		{ method: "POST" },
+		15_000,
+		proxyUrl ?? null,
 	)) as YoutubeSession;
 }
 
@@ -245,10 +254,13 @@ export async function refreshSession(sessionId: string): Promise<YoutubeSession>
  * Remove a sessão remota (e posts/webhooks filhos).
  * Path real verificado no projeto da API: DELETE /api/instance/{session_id} (204).
  */
-export async function deleteSession(sessionId: string): Promise<void> {
+export async function deleteSession(
+	sessionId: string,
+	proxyUrl?: string | null,
+): Promise<void> {
 	await youtubeFetch(`/api/instance/${encodeURIComponent(sessionId)}`, {
 		method: "DELETE",
-	});
+	}, 15_000, proxyUrl ?? null);
 }
 
 // ─── Comunidade ───────────────────────────────────────────────────────────────
@@ -359,13 +371,14 @@ export async function createCommunityPostText(input: {
 	return normalizePostResponse(data);
 }
 
-/** DELETE /api/post?session_id=&remote_post_id= */
+/** DELETE /api/post?session_id=&remote_post_id= — `proxyUrl?` do canal (M16). */
 export async function deleteCommunityPost(
 	sessionId: string,
 	remotePostId: string,
+	proxyUrl?: string | null,
 ): Promise<void> {
 	const params = new URLSearchParams({ session_id: sessionId, remote_post_id: remotePostId });
-	await youtubeFetch(`/api/post?${params.toString()}`, { method: "DELETE" });
+	await youtubeFetch(`/api/post?${params.toString()}`, { method: "DELETE" }, 15_000, proxyUrl ?? null);
 }
 
 // ─── Shorts ───────────────────────────────────────────────────────────────────
@@ -534,24 +547,31 @@ export async function getShort(shortId: number | string): Promise<YoutubeShort> 
 
 // ─── Comentários (video_router, prefix /api/videos) ──────────────────────────
 
-/** GET /api/videos/{video_id}/comments?session_id=&limit=20 */
+/** GET /api/videos/{video_id}/comments?session_id=&limit=20 — `proxyUrl?` (M16). */
 export async function listComments(
 	videoId: string,
 	sessionId: string,
 	limit = 20,
+	proxyUrl?: string | null,
 ): Promise<YoutubeCommentItem[]> {
 	const params = new URLSearchParams({ session_id: sessionId, limit: String(limit) });
 	const data = (await youtubeFetch(
 		`/api/videos/${encodeURIComponent(videoId)}/comments?${params.toString()}`,
+		{},
+		15_000,
+		proxyUrl ?? null,
 	)) as { comments?: YoutubeCommentItem[] };
 	return data.comments || [];
 }
 
-/** POST /api/videos/{video_id}/comments — cria comentário, retorna comment_id. */
+/** POST /api/videos/{video_id}/comments — cria comentário, retorna comment_id.
+ * `proxyUrl?` repassa o proxy do canal (M16).
+ */
 export async function createComment(
 	videoId: string,
 	sessionId: string,
 	text: string,
+	proxyUrl?: string | null,
 ): Promise<{ comment_id: string }> {
 	const form = new URLSearchParams({ session_id: sessionId, text });
 	return (await youtubeFetch(
@@ -561,15 +581,20 @@ export async function createComment(
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
 			body: form.toString(),
 		},
+		15_000,
+		proxyUrl ?? null,
 	)) as { comment_id: string };
 }
 
-/** POST /api/videos/{video_id}/comments/actions — like | heart | pin. */
+/** POST /api/videos/{video_id}/comments/actions — like | heart | pin.
+ * `proxyUrl?` repassa o proxy do canal (M16).
+ */
 export async function commentAction(
 	videoId: string,
 	sessionId: string,
 	commentId: string,
 	action: "like" | "heart" | "pin",
+	proxyUrl?: string | null,
 ): Promise<void> {
 	const form = new URLSearchParams({
 		session_id: sessionId,
@@ -583,15 +608,20 @@ export async function commentAction(
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
 			body: form.toString(),
 		},
+		15_000,
+		proxyUrl ?? null,
 	);
 }
 
-/** POST /api/videos/{video_id}/comments/pinned — comenta → coração → fixa. */
+/** POST /api/videos/{video_id}/comments/pinned — comenta → coração → fixa.
+ * `proxyUrl?` repassa o proxy do canal (M16).
+ */
 export async function createPinnedComment(
 	videoId: string,
 	sessionId: string,
 	text: string,
 	opts: { like?: boolean; heart?: boolean } = {},
+	proxyUrl?: string | null,
 ): Promise<Record<string, unknown>> {
 	const form = new URLSearchParams({
 		session_id: sessionId,
@@ -606,6 +636,8 @@ export async function createPinnedComment(
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
 			body: form.toString(),
 		},
+		15_000,
+		proxyUrl ?? null,
 	)) as Record<string, unknown>;
 }
 

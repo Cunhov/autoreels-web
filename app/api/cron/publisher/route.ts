@@ -605,6 +605,9 @@ interface YoutubePublishPost {
 		name?: string | null;
 		settings?: string | null;
 		platform?: string | null;
+		// M16: proxy por canal (Channel.proxy_url) — o include: {channel:true}
+		// já traz a coluna; declarar aqui evita o `as any` no getChannelProxyUrl.
+		proxy_url?: string | null;
 	} | null;
 }
 
@@ -1355,8 +1358,12 @@ async function publishYoutubePost(opts: {
 		// Antes de falhar permanentemente, confirma o estado real da sessão via
 		// GET /api/session/{id}: só trata como expirada se status === "expired".
 		if (YT_SESSION_EXPIRED_RE.test(rawMsg)) {
+			// M16: confirma o estado da sessão pela MESMA rede do canal — um canal
+			// atrás de proxy não enxerga a API na chamada direta (contradição
+			// documentada no audit-track-api F1/F4: L1195-1209 publica via proxy
+			// mas a confirmação de expiração caía na rota sem ele).
 			const sessionStatus = sessionId
-				? await getSession(sessionId)
+				? await getSession(sessionId, getChannelProxyUrl(post.channel))
 						.then((s) => String(s.status || ""))
 						.catch(() => "")
 				: "";

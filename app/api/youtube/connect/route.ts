@@ -7,7 +7,7 @@ import {
 	recordYoutubeSessionOwner,
 	youtubeErrorMessage,
 } from "@/lib/youtube-channel";
-import { isValidProxyUrl } from "@/lib/proxy";
+import { isValidProxyUrl, getChannelProxyUrl } from "@/lib/proxy";
 import {
 	createSession,
 	deleteSession,
@@ -79,7 +79,9 @@ export async function POST(req: Request) {
 		if (!pendingRemoteId) return;
 		const id = pendingRemoteId;
 		pendingRemoteId = "";
-		await deleteSession(id).catch((err: unknown) => {
+		// M16: a sessão órfã foi criada pela rede deste connect (proxy do body) —
+		// removê-la pela mesma rede, se informada (best-effort).
+		await deleteSession(id, proxyUrl).catch((err: unknown) => {
 			console.warn(
 				`[YoutubeConnect] Falha ao remover sessão remota órfã ${id.slice(0, 8)}…:`,
 				err instanceof Error ? err.message : err,
@@ -181,7 +183,9 @@ export async function POST(req: Request) {
 		// que ficou órfã numa reconexão (best-effort).
 		pendingRemoteId = "";
 		if (oldSessionId && oldSessionId !== remote.id) {
-			await deleteSession(oldSessionId).catch((err: unknown) => {
+			// M16: a sessão remota anterior pertence a este canal — excluí-la
+			// pela MESMA rede (proxy do canal) usada na publicação.
+			await deleteSession(oldSessionId, getChannelProxyUrl(existing)).catch((err: unknown) => {
 				console.warn(
 					`[YoutubeConnect] Falha ao remover sessão remota anterior ${oldSessionId.slice(0, 8)}…:`,
 					err instanceof Error ? err.message : err,

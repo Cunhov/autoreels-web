@@ -3,6 +3,7 @@ import {
 	requireOwnedYoutubeChannel,
 	youtubeErrorMessage,
 } from "@/lib/youtube-channel";
+import { getChannelProxyUrl } from "@/lib/proxy";
 import {
 	commentAction,
 	createComment,
@@ -30,7 +31,9 @@ export async function GET(req: Request) {
 	const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 100) : 20;
 
 	try {
-		const comments = await listComments(videoId, guard.sessionId, limit);
+		// M16: proxy do canal — comentários exigem a mesma rede do publisher.
+		const proxy = getChannelProxyUrl(guard.channel);
+		const comments = await listComments(videoId, guard.sessionId, limit, proxy);
 		return NextResponse.json({ video_id: videoId, count: comments.length, comments });
 	} catch (error: unknown) {
 		return NextResponse.json(
@@ -76,6 +79,9 @@ export async function POST(req: Request) {
 		return NextResponse.json({ error: "videoId é obrigatório." }, { status: 400 });
 	}
 	const sessionId = guard.sessionId;
+	// M16: proxy do canal — criação de comentário/ação/fixação na mesma rede do
+	// publisher (comentário fixado é o mesmo POST /pinned do upload do Short).
+	const proxy = getChannelProxyUrl(guard.channel);
 
 	try {
 		if (body.action) {
@@ -88,7 +94,7 @@ export async function POST(req: Request) {
 			if (!["like", "heart", "pin"].includes(body.action)) {
 				return NextResponse.json({ error: "Ação inválida." }, { status: 400 });
 			}
-			await commentAction(videoId, sessionId, body.commentId, body.action);
+			await commentAction(videoId, sessionId, body.commentId, body.action, proxy);
 			return NextResponse.json({
 				ok: true,
 				video_id: videoId,
@@ -116,11 +122,11 @@ export async function POST(req: Request) {
 			const result = await createPinnedComment(videoId, sessionId, text, {
 				like: Boolean(body.like),
 				heart: body.heart !== false,
-			});
+			}, proxy);
 			return NextResponse.json({ ok: true, pinned: true, result }, { status: 201 });
 		}
 
-		const created = await createComment(videoId, sessionId, text);
+		const created = await createComment(videoId, sessionId, text, proxy);
 		return NextResponse.json({ ok: true, ...created }, { status: 201 });
 	} catch (error: unknown) {
 		return NextResponse.json(
