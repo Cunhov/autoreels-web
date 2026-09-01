@@ -210,6 +210,10 @@ export default function PlannerWizard({
 	// YouTube planner fields (só quando onlyYoutubeSelected)
 	const [youtubeTitle, setYoutubeTitle] = useState("");
 	const [youtubeDescription, setYoutubeDescription] = useState("");
+	// F5 — IA via OpenRouter: estado do botão "Gerar título + produtos pela descrição"
+	const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
+	const [aiSuggestError, setAiSuggestError] = useState("");
+	const [aiSuggestOk, setAiSuggestOk] = useState("");
 	// B1: produtos afiliados — lista dinâmica de {query, item?} (nunca CSV cru)
 	const [youtubeProductDrafts, setYoutubeProductDrafts] = useState<YoutubeProductDraft[]>([]);
 	const youtubeProductKeyRef = useRef(1);
@@ -830,6 +834,72 @@ export default function PlannerWizard({
 		if (timer) window.clearTimeout(timer);
 		delete youtubeProductTimersRef.current[key];
 		setYoutubeProductDrafts((prev) => prev.filter((d) => d.key !== key));
+	};
+
+	/**
+	 * F5 — IA via OpenRouter: gera título + produtos afiliados a partir da
+	 * descrição (youtube_description do planner OU caption_youtube da library),
+	 * preenchendo youtube_title e youtube_products. Os produtos entram como
+	 * drafts de nome (auto-seleção na publicação) — o picker existente de busca
+	 * live e o youtube_products fixo continuam intactos.
+	 */
+	const handleAiSuggest = async () => {
+		const source = (youtubeDescription || caption || "").trim();
+		if (!source || aiSuggestLoading) return;
+		setAiSuggestLoading(true);
+		setAiSuggestError("");
+		setAiSuggestOk("");
+		try {
+			const res = await fetch("/api/ai/suggest", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ description: source }),
+			});
+			const data = (await res
+				.json()
+				.catch(() => null)) as { title?: unknown; products?: unknown; error?: unknown } | null;
+			if (!res.ok || !data) {
+				setAiSuggestError(
+					data && typeof data.error === "string"
+						? data.error
+						: `Erro ${res.status}: não foi possível gerar as sugestões.`,
+				);
+				return;
+			}
+			let applied = false;
+			if (typeof data.title === "string" && data.title.trim()) {
+				setYoutubeTitle(data.title.trim().slice(0, 100));
+				applied = true;
+			}
+			const names = Array.isArray(data.products)
+				? data.products
+						.map((p) => String(p).trim().slice(0, 60))
+						.filter(Boolean)
+				: [];
+			if (names.length > 0) {
+				// nomes entram como drafts {query} (status name) — auto-select no publish
+				setYoutubeProductDrafts((prev) => [
+					...prev,
+					...names.slice(0, 5).map((name) => ({
+						key: `yp-${youtubeProductKeyRef.current++}`,
+						query: name,
+						status: "name" as const,
+						results: [],
+						error: undefined,
+					})),
+				]);
+				applied = true;
+			}
+			if (applied) {
+				setAiSuggestOk("Título e produtos preenchidos — revise antes de salvar.");
+			} else {
+				setAiSuggestError("A IA respondeu, mas sem título nem produtos aproveitáveis.");
+			}
+		} catch {
+			setAiSuggestError("Falha de rede ao chamar o gerador — tente novamente.");
+		} finally {
+			setAiSuggestLoading(false);
+		}
 	};
 
 	/** Busca live no catálogo do canal. O videoId NÃO é derivado de título/item
@@ -2339,6 +2409,34 @@ export default function PlannerWizard({
 													maxLength={5000}
 												/>
 											</div>
+											<div className="flex items-center justify-between gap-2">
+												<button
+													type="button"
+													onClick={handleAiSuggest}
+													disabled={
+														aiSuggestLoading || !(youtubeDescription || caption || "").trim()
+													}
+													className="flex-1 text-[11px] font-medium text-ios-blue hover:underline disabled:opacity-40 disabled:hover:no-underline text-left"
+												>
+													{aiSuggestLoading
+														? "✨ Gerando título e produtos…"
+														: "✨ Gerar título + produtos pela descrição"}
+												</button>
+												{!aiSuggestLoading &&
+													!(youtubeDescription || caption || "").trim() && (
+														<span className="text-[10px] text-gray-400 whitespace-nowrap">
+															preencha a descrição acima
+														</span>
+													)}
+											</div>
+											{aiSuggestError && (
+												<p className="text-[11px] text-ios-red mt-1">{aiSuggestError}</p>
+											)}
+											{aiSuggestOk && !aiSuggestError && (
+												<p className="text-[11px] text-green-700 dark:text-green-400 mt-1">
+													{aiSuggestOk}
+												</p>
+											)}
 											<div>
 												<label className="text-xs font-medium text-ios-text mb-1.5 block">Produtos Afiliados</label>
 												{finalSelectedItemProducts.length > 0 && (
