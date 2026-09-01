@@ -57,6 +57,7 @@ export async function youtubeFetch(
 	path: string,
 	init: RequestInit = {},
 	timeoutMs = 15_000,
+	proxyUrl?: string | null,
 ): Promise<unknown> {
 	const { baseUrl, apiKey } = getYoutubeConfig();
 	const res = await fetchWithTimeout(`${baseUrl}${path}`, {
@@ -66,7 +67,7 @@ export async function youtubeFetch(
 			Authorization: apiKey,
 		},
 		signal: init.signal,
-	}, timeoutMs);
+	}, timeoutMs, proxyUrl ?? null);
 
 	if (!res.ok) {
 		let detail = `HTTP ${res.status}`;
@@ -189,9 +190,9 @@ export function withYoutubeSessionId(
 // ─── Health ───────────────────────────────────────────────────────────────────
 
 /** GET /api/health — único endpoint sem auth na API externa. */
-export async function getHealth(): Promise<YoutubeHealth> {
+export async function getHealth(proxyUrl?: string | null): Promise<YoutubeHealth> {
 	const { baseUrl } = getYoutubeConfig();
-	const res = await fetchWithTimeout(`${baseUrl}/api/health`, {}, 10_000);
+	const res = await fetchWithTimeout(`${baseUrl}/api/health`, {}, 10_000, proxyUrl ?? null);
 	if (!res.ok) throw new YoutubeApiError(`HTTP ${res.status}`, res.status);
 	return (await res.json()) as YoutubeHealth;
 }
@@ -202,8 +203,8 @@ export async function getHealth(): Promise<YoutubeHealth> {
 /**
  * GET /api/session — lista todas as sessões da API externa.
  */
-export async function listSessions(): Promise<YoutubeSession[]> {
-	const data = (await youtubeFetch("/api/session")) as {
+export async function listSessions(proxyUrl?: string | null): Promise<YoutubeSession[]> {
+	const data = (await youtubeFetch("/api/session", {}, 15_000, proxyUrl ?? null)) as {
 		sessions?: YoutubeSession[];
 	};
 	return data.sessions || [];
@@ -222,9 +223,10 @@ export async function createSession(
 }
 
 /** GET /api/session/{id} — estado atual de uma sessão (status, canal etc.). */
-export async function getSession(sessionId: string): Promise<YoutubeSession> {
+export async function getSession(sessionId: string, proxyUrl?: string | null): Promise<YoutubeSession> {
 	return (await youtubeFetch(
 		`/api/session/${encodeURIComponent(sessionId)}`,
+		{}, 15_000, proxyUrl ?? null
 	)) as YoutubeSession;
 }
 
@@ -298,6 +300,7 @@ export async function uploadCommunityPost(input: {
 	sessionId: string;
 	message: string;
 	images: { blob: Blob; filename: string; contentType: string }[];
+	proxyUrl?: string | null;
 }): Promise<YoutubePostResponse> {
 	if (input.images.length < 1 || input.images.length > 10) {
 		// YoutubeApiError 4xx → o publisher classifica como DEFINITIVO (sem
@@ -318,6 +321,7 @@ export async function uploadCommunityPost(input: {
 		"/api/post/upload",
 		{ method: "POST", body: form },
 		COMMUNITY_UPLOAD_TIMEOUT_MS,
+		input.proxyUrl ?? null,
 	)) as YoutubePostResponse;
 	return normalizePostResponse(data);
 }
@@ -335,6 +339,7 @@ export async function uploadCommunityPost(input: {
 export async function createCommunityPostText(input: {
 	sessionId: string;
 	message: string;
+	proxyUrl?: string | null;
 }): Promise<YoutubePostResponse> {
 	if (!input.message.trim()) {
 		// YoutubeApiError 4xx → definitivo no publisher (sem retry loop).
@@ -347,7 +352,7 @@ export async function createCommunityPostText(input: {
 			session_id: input.sessionId,
 			message: input.message,
 		}),
-	})) as YoutubePostResponse;
+	}, 15_000, input.proxyUrl ?? null)) as YoutubePostResponse;
 	return normalizePostResponse(data);
 }
 
@@ -380,6 +385,8 @@ export async function createShort(input: {
 	categoryId?: number;
 	monetizeWithAds?: boolean;
 	pinnedCommentText?: string;
+	products?: string;
+	proxyUrl?: string | null;
 }): Promise<YoutubeShort> {
 	const form = new FormData();
 	form.append("session_id", input.sessionId);
@@ -393,7 +400,7 @@ export async function createShort(input: {
 	// sem categoria explícita ia para a seção de Esportes.
 	form.append("category_id", String(input.categoryId ?? 22));
 	form.append("monetize_with_ads", String(input.monetizeWithAds ?? false));
-	form.append("products", "[]");
+	form.append("products", input.products ?? "[]");
 	if (input.pinnedCommentText) {
 		form.append("pinned_comment_text", input.pinnedCommentText);
 	}
@@ -403,6 +410,7 @@ export async function createShort(input: {
 		"/api/shorts",
 		{ method: "POST", body: form },
 		SHORT_UPLOAD_TIMEOUT_MS,
+		input.proxyUrl ?? null,
 	)) as YoutubeShort;
 
 	// A API grava a tentativa e pode responder 201 com status="failed".

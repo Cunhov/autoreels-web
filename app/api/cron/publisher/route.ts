@@ -29,6 +29,7 @@ import {
 	type YoutubeShortOptions,
 } from "@/lib/youtube";
 import { isHostAllowed } from "@/lib/ssrf-guard";
+import { getChannelProxyUrl } from "@/lib/proxy";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -497,7 +498,8 @@ async function refreshDueChannelTokens(
 		// Respect the execution budget even inside the refresh loop
 		if (Date.now() - startTime > maxExecMs) break;
 		try {
-			const tokenData = await refreshInstagramToken(channel.access_token || "");
+			const proxyForRefresh = getChannelProxyUrl(channel as any);
+			const tokenData = await refreshInstagramToken(channel.access_token || "", proxyForRefresh);
 			await prisma.channel.update({
 				where: { id: channel.id },
 				data: {
@@ -943,7 +945,8 @@ async function publishYoutubePost(opts: {
 					`[YouTube] Publicando post na Comunidade (apenas texto) do canal ${post.channel?.name || post.id}`,
 					"info",
 				);
-				created = await createCommunityPostText({ sessionId, message });
+				const ytProxy = getChannelProxyUrl(post.channel as any);
+				created = await createCommunityPostText({ sessionId, message, proxyUrl: ytProxy });
 			} else {
 				// Materializa as imagens EM PARALELO (Promise.allSettled) com
 				// deadline global do tick: o loop sequencial antigo baixava até 10
@@ -1117,6 +1120,7 @@ async function publishYoutubePost(opts: {
 						filename: img.filename,
 						contentType: img.contentType,
 					})),
+					proxyUrl: getChannelProxyUrl(post.channel as any),
 				});
 			}
 			await prisma.post.update({
@@ -1169,6 +1173,26 @@ async function publishYoutubePost(opts: {
 		if (!title) {
 			throw new MalformedDataError("Short do YouTube exige título");
 		}
+		// products: CSV normalizado -> JSON string array via youtube_options (track yt-fields)
+		let productsStr: string | undefined = undefined;
+		if (typeof options.products === "string" && options.products.trim()) {
+			const s = options.products.trim();
+			// se já é JSON array string, usa direto; senão tenta JSON.parse, senão trata como CSV
+			if (s.startsWith("[") ) {
+				productsStr = s;
+			} else {
+				try {
+					const parsed = JSON.parse(s);
+					if (Array.isArray(parsed)) productsStr = JSON.stringify(parsed);
+					else productsStr = JSON.stringify(s.split(",").map((x: string)=>x.trim()).filter(Boolean));
+				} catch {
+					productsStr = JSON.stringify(s.split(",").map((x: string)=>x.trim()).filter(Boolean));
+				}
+			}
+		} else if (Array.isArray(options.products)) {
+			productsStr = JSON.stringify((options.products as unknown[]).map(v=>String(v).trim()).filter(Boolean));
+		}
+		const proxyForShort = getChannelProxyUrl(post.channel as any);
 		const short = await createShort({
 			sessionId,
 			title,
@@ -1179,8 +1203,10 @@ async function publishYoutubePost(opts: {
 			// Ver lib/youtube.ts createShort — 17 é "Sports", default questionável
 			// para conteúdo genérico (não há campo de categoria na UI/planner).
 			categoryId: options.category_id ?? 22,
+			proxyUrl: proxyForShort,
 			monetizeWithAds: options.monetize_with_ads ?? false,
 			pinnedCommentText: options.pinned_comment_text || undefined,
+			products: productsStr ?? "[]",
 			video: {
 				blob: new Blob([bufferView(videoFile.buffer)], {
 					type: videoFile.contentType,
@@ -1792,6 +1818,7 @@ async function handler(request: Request) {
 											"info",
 										);
 
+										const igProxy = getChannelProxyUrl(post.channel as any);
 										const res = await fetchWithTimeout(
 											`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`,
 											{
@@ -1800,6 +1827,7 @@ async function handler(request: Request) {
 												body: childParams.toString(),
 											},
 											300_000,
+											igProxy,
 										); // 5 minutes for large videos
 										const data = await res.json();
 
@@ -1965,6 +1993,7 @@ async function handler(request: Request) {
 						`${baseUrl}/${GRAPH_API_VERSION}/${accountId}/media`,
 						{ method: "POST", headers: igHeaders, body: bodyParams.toString() },
 						300_000,
+						getChannelProxyUrl((post as any).channel as any),
 					); // 5 minutes for large videos
 					lastStatus = apiRes.status;
 					const data = await apiRes.json();
@@ -2147,6 +2176,7 @@ async function handler(request: Request) {
 											body: childParams.toString(),
 										},
 										300_000,
+										getChannelProxyUrl((post as any).channel as any)
 									); // 5 minutes for large videos
 									const data = await res.json();
 									if (data.id) {
@@ -2252,6 +2282,9 @@ async function handler(request: Request) {
 						const statusPromises = childIds.map(async (cid) => {
 							const res = await fetchWithTimeout(
 								`${baseUrl}/${GRAPH_API_VERSION}/${cid}?fields=status_code&access_token=${accessToken}`,
+								{},
+								15_000,
+								getChannelProxyUrl((post as any).channel as any),
 							);
 							return { status: res.status, body: await res.json() };
 						});
@@ -2318,9 +2351,12 @@ async function handler(request: Request) {
 									);
 								}
 							}
+							const igProxyCarousel = getChannelProxyUrl((post as any).channel as any);
 							const res = await fetchWithTimeout(
 								`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media`,
 								{ method: "POST", headers: igHeaders, body: body.toString() },
+								15_000,
+								igProxyCarousel,
 							);
 							lastStatus = res.status;
 							const data = await res.json();
@@ -2343,8 +2379,12 @@ async function handler(request: Request) {
 						}
 					} else {
 						// Single media — check status
+						const igProxyStatus = getChannelProxyUrl((post as any).channel as any);
 						const res = await fetchWithTimeout(
 							`${baseUrl}/${GRAPH_API_VERSION}/${post.instagram_container_id}?fields=status_code&access_token=${accessToken}`,
+							{},
+							15_000,
+							igProxyStatus,
 						);
 						lastStatus = res.status;
 						const data = await res.json();
@@ -2503,6 +2543,7 @@ async function handler(request: Request) {
 					);
 					const baseUrl = getGraphBaseUrl(accessToken);
 
+					const igProxyPublish = getChannelProxyUrl((post as any).channel as any);
 					const res = await fetchWithTimeout(
 						`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media_publish`,
 						{
@@ -2516,6 +2557,8 @@ async function handler(request: Request) {
 								access_token: accessToken,
 							}).toString(),
 						},
+						15_000,
+						igProxyPublish,
 					);
 					lastStatus = res.status;
 					const data = await res.json();

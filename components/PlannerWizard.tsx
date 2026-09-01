@@ -15,6 +15,8 @@ import MediaUploader from "./MediaUploader";
 import ContentLibrary from "./ContentLibrary";
 import { useUploadActions } from "@/contexts/UploadContext";
 
+const PLANNER_MIX_ERROR = "Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
+
 interface Channel {
 	id: string;
 	name: string;
@@ -203,6 +205,18 @@ export default function PlannerWizard({
 	const [audioId, setAudioId] = useState("");
 	const [audioVolume, setAudioVolume] = useState(80);
 	const [videoVolume, setVideoVolume] = useState(20);
+	// YouTube planner fields (só quando onlyYoutubeSelected)
+	const [youtubeTitle, setYoutubeTitle] = useState("");
+	const [youtubeDescription, setYoutubeDescription] = useState("");
+	const [youtubeProducts, setYoutubeProducts] = useState("");
+	const [youtubePrivacy, setYoutubePrivacy] = useState<"PUBLIC"|"PRIVATE"|"UNLISTED">("PUBLIC");
+	const [youtubeMadeForKids, setYoutubeMadeForKids] = useState(false);
+	const [youtubeMonetizeWithAds, setYoutubeMonetizeWithAds] = useState(false);
+	const [youtubeCategoryId, setYoutubeCategoryId] = useState("");
+	const [youtubePinnedComment, setYoutubePinnedComment] = useState("");
+	const [youtubeProductsLoading, setYoutubeProductsLoading] = useState(false);
+	const [youtubeProductsResults, setYoutubeProductsResults] = useState<unknown[]>([]);
+	const [youtubeProductsError, setYoutubeProductsError] = useState("");
 	const [formError, setFormError] = useState("");
 	// Count of existing content items that the UI cannot represent (legacy direct
 	// uploads). They are preserved as-is on save so editing a planner never loses them.
@@ -262,6 +276,32 @@ export default function PlannerWizard({
 		if (!youtubeSelected) return "none";
 		return onlyYoutubeSelected ? "only" : "mixed";
 	}, [youtubeSelected, onlyYoutubeSelected]);
+
+	// Isolation: tipo do planner e detecção de mix
+	const selectedPlatformType = useMemo<"youtube" | "instagram" | null>(() => {
+		if (selectedChannels.length === 0) return null;
+		if (onlyYoutubeSelected) return "youtube";
+		if (!youtubeSelected) return "instagram";
+		return null; // nunca misto quando isolamento ativo (bloqueado antes)
+	}, [selectedChannels, onlyYoutubeSelected, youtubeSelected]);
+
+	const isChannelDisabled = (channel: Channel) => {
+		if (selectedChannels.length === 0) return false;
+		if (selectedChannels.includes(channel.id)) return false;
+		const chPlatform = (channel.platform || "").toLowerCase();
+		if (selectedPlatformType === "youtube" && chPlatform !== "youtube") return true;
+		if (selectedPlatformType === "instagram" && chPlatform === "youtube") return true;
+		return false;
+	};
+
+	const hasMixSelected = useMemo(() => {
+		const platforms = new Set(
+			selectedChannels
+				.map((id) => (channels.find((c) => c.id === id)?.platform || "").toLowerCase())
+				.filter(Boolean),
+		);
+		return platforms.size > 1;
+	}, [selectedChannels, channels]);
 
 	const scheduleSummary = useMemo(() => {
 		const frequency = `${frequencyValue} ${frequencyUnit}`;
@@ -461,6 +501,17 @@ export default function PlannerWizard({
 					setVideoVolume(
 						audioConfig.video_volume !== undefined ? audioConfig.video_volume : 20,
 					);
+					// YouTube fields do config (planner YT)
+					setYoutubeTitle(typeof config.youtube_title === "string" ? String(config.youtube_title) : typeof config.youtube_title === "number" ? String(config.youtube_title) : "");
+					setYoutubeDescription(typeof config.youtube_description === "string" ? String(config.youtube_description) : "");
+					setYoutubeProducts(typeof config.youtube_products === "string" ? String(config.youtube_products) : Array.isArray(config.youtube_products) ? (config.youtube_products as unknown[]).join(",") : "");
+					setYoutubePrivacy(["PUBLIC","PRIVATE","UNLISTED"].includes(String(config.youtube_privacy || "").toUpperCase()) ? String(config.youtube_privacy).toUpperCase() as "PUBLIC"|"PRIVATE"|"UNLISTED" : "PUBLIC");
+					setYoutubeMadeForKids(Boolean(config.youtube_made_for_kids === true || String(config.youtube_made_for_kids).toLowerCase() === "true" || config.youtube_made_for_kids === 1));
+					setYoutubeMonetizeWithAds(Boolean(config.youtube_monetize_with_ads === true || String(config.youtube_monetize_with_ads).toLowerCase() === "true" || config.youtube_monetize_with_ads === 1));
+					setYoutubeCategoryId(config.youtube_category_id !== undefined && config.youtube_category_id !== null && config.youtube_category_id !== "" ? String(config.youtube_category_id) : "");
+					setYoutubePinnedComment(typeof config.youtube_pinned_comment === "string" ? String(config.youtube_pinned_comment) : typeof config.youtube_pinned_comment_text === "string" ? String(config.youtube_pinned_comment_text) : "");
+					setYoutubeProductsResults([]);
+					setYoutubeProductsError("");
 				} else {
 					setSelectedContentIds([]);
 					setFiles([]);
@@ -473,12 +524,24 @@ export default function PlannerWizard({
 					setMediaType("REELS");
 					setShareToFeed(true);
 					setCaption("");
+					setCaptionTemplates("");
+					setCaptionRotation("off");
 					setLocation("");
 					setCollaborators("");
 					setUserTags("");
 					setAudioId("");
 					setAudioVolume(80);
 					setVideoVolume(20);
+					setYoutubeTitle("");
+					setYoutubeDescription("");
+					setYoutubeProducts("");
+					setYoutubePrivacy("PUBLIC");
+					setYoutubeMadeForKids(false);
+					setYoutubeMonetizeWithAds(false);
+					setYoutubeCategoryId("");
+					setYoutubePinnedComment("");
+					setYoutubeProductsResults([]);
+					setYoutubeProductsError("");
 				}
 			} else {
 				// Full reset for new planner
@@ -490,6 +553,16 @@ export default function PlannerWizard({
 				setOriginalContent([]);
 				setOriginalItemSettings({});
 				setSettingsTouched(false);
+				setYoutubeTitle("");
+				setYoutubeDescription("");
+				setYoutubeProducts("");
+				setYoutubePrivacy("PUBLIC");
+				setYoutubeMadeForKids(false);
+				setYoutubeMonetizeWithAds(false);
+				setYoutubeCategoryId("");
+				setYoutubePinnedComment("");
+				setYoutubeProductsResults([]);
+				setYoutubeProductsError("");
 				setFrequencyValue(1);
 				setFrequencyUnit("hours");
 				setTimezone("America/Sao_Paulo");
@@ -606,6 +679,40 @@ export default function PlannerWizard({
 		}
 		return uploadedItems;
 	};
+
+	async function handleSearchYoutubeProducts() {
+		if (!onlyYoutubeSelected || selectedChannels.length === 0) {
+			setYoutubeProductsError("Selecione um canal YouTube primeiro.");
+			return;
+		}
+		const channelId = selectedChannels[0];
+		const query = youtubeProducts.trim();
+		if (!query) {
+			setYoutubeProductsError("Informe IDs ou termos para buscar produtos.");
+			return;
+		}
+		// videoId é obrigatório pela API de produtos; tenta usar o título como hint, senão placeholder
+		const videoId = youtubeTitle.trim() ? youtubeTitle.trim().slice(0, 50) : "search";
+		setYoutubeProductsLoading(true);
+		setYoutubeProductsError("");
+		try {
+			const params = new URLSearchParams({ channelId, videoId, query, suggestions: "false", limit: "20" });
+			const res = await fetch(`/api/youtube/products?${params.toString()}`);
+			const data = await res.json();
+			if (!res.ok) {
+				setYoutubeProductsError(data?.error || "Falha ao buscar produtos");
+				setYoutubeProductsResults([]);
+				return;
+			}
+			const products = Array.isArray(data.products) ? data.products : [];
+			setYoutubeProductsResults(products);
+			if (products.length === 0) setYoutubeProductsError("Nenhum produto encontrado.");
+		} catch (e) {
+			setYoutubeProductsError(e instanceof Error ? e.message : String(e));
+		} finally {
+			setYoutubeProductsLoading(false);
+		}
+	}
 
 	/**
 	 * O item de biblioteca tem nome/título que o buildPostData usaria como
@@ -914,6 +1021,29 @@ export default function PlannerWizard({
 			// column (Planner.state) — it is NEVER sent from the client. The
 			// reset_state flag below tells the server to clear it only when the
 			// item composition really changed.
+			// YouTube fields: normaliza produtos CSV (trim, filtra vazios)
+			const normalizedYoutubeProducts = youtubeProducts
+				? youtubeProducts.split(",").map((s) => s.trim()).filter(Boolean).join(",")
+				: "";
+			const ytFields: Record<string, unknown> = {};
+			if (onlyYoutubeSelected) {
+				if (youtubeTitle.trim()) ytFields.youtube_title = youtubeTitle.trim().slice(0, 100);
+				if (youtubeDescription.trim() || youtubeDescription === "") {
+					// só envia se preenchido ou se usuário limpou explicitamente (permite vazio)
+					if (youtubeDescription) ytFields.youtube_description = youtubeDescription.slice(0, 5000);
+				}
+				if (normalizedYoutubeProducts) ytFields.youtube_products = normalizedYoutubeProducts;
+				if (youtubePrivacy) ytFields.youtube_privacy = youtubePrivacy;
+				if (youtubeMadeForKids) ytFields.youtube_made_for_kids = true;
+				else ytFields.youtube_made_for_kids = false;
+				if (youtubeMonetizeWithAds) ytFields.youtube_monetize_with_ads = true;
+				else ytFields.youtube_monetize_with_ads = false;
+				if (youtubeCategoryId.trim()) ytFields.youtube_category_id = Number(youtubeCategoryId);
+				if (youtubePinnedComment.trim()) {
+					ytFields.youtube_pinned_comment = youtubePinnedComment.trim().slice(0, 10000);
+					ytFields.youtube_pinned_comment_text = youtubePinnedComment.trim().slice(0, 10000);
+				}
+			}
 			const plannerConfig = {
 				frequency: {
 					value: freqValue,
@@ -930,9 +1060,17 @@ export default function PlannerWizard({
 					.map((s) => s.trim())
 					.filter(Boolean),
 				caption_rotation: captionRotation,
+				...ytFields,
 				content,
 			};
 
+			// Isolation: bloquear submit misto no client (defesa além do server 400)
+			if (hasMixSelected) {
+				setFormError(PLANNER_MIX_ERROR);
+				setLoading(false);
+				setUploading(false);
+				return;
+			}
 			// 6. Update or Insert Planner
 			const res = await fetch(
 				plannerId ? `/api/planners/${plannerId}` : "/api/planners",
@@ -1005,12 +1143,29 @@ export default function PlannerWizard({
 				{/* Header */}
 				<div className="px-6 py-4 border-b border-ios-separator flex items-center justify-between bg-ios-background">
 					<div>
-						<h2
-							id="planner-wizard-title"
-							className="text-[17px] font-semibold text-ios-text"
-						>
-							New Planner
-						</h2>
+						<div className="flex items-center gap-2">
+							<h2
+								id="planner-wizard-title"
+								className="text-[17px] font-semibold text-ios-text"
+							>
+								{initialData?.id ? "Editar Planner" : "Novo Planner"}
+							</h2>
+							{selectedPlatformType === "youtube" && (
+								<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-bold uppercase tracking-wide">
+									<Youtube size={10} /> Planner YouTube
+								</span>
+							)}
+							{selectedPlatformType === "instagram" && (
+								<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white text-[10px] font-bold uppercase tracking-wide">
+									<Instagram size={10} /> Planner Instagram
+								</span>
+							)}
+							{hasMixSelected && (
+								<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wide">
+									Misto — bloqueado
+								</span>
+							)}
+						</div>
 						<div className="flex items-center gap-2 text-xs text-ios-secondary mt-1">
 							{STEPS.map((s, idx) => (
 								<div
@@ -1074,14 +1229,23 @@ export default function PlannerWizard({
 					{step === 1 && (
 						<div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
 							<div className="grid grid-cols-1 gap-3">
-								{channels.map((channel) => (
+								{channels.map((channel) => {
+									const disabled = isChannelDisabled(channel);
+									return (
 									<div
 										key={channel.id}
-										onClick={() => toggleChannel(channel.id)}
-										className={`p-4 rounded-xl border flex items-center gap-4 cursor-pointer transition-all ${
-											selectedChannels.includes(channel.id)
-												? "bg-ios-blue/10 border-ios-blue"
-												: "bg-ios-card border-ios-separator hover:border-ios-blue/30"
+										onClick={() => {
+											if (disabled) return;
+											toggleChannel(channel.id);
+										}}
+										title={disabled ? PLANNER_MIX_ERROR : undefined}
+										aria-disabled={disabled}
+										className={`p-4 rounded-xl border flex items-center gap-4 transition-all ${
+											disabled
+												? "bg-gray-100 border-gray-200 opacity-50 cursor-not-allowed"
+												: selectedChannels.includes(channel.id)
+													? "bg-ios-blue/10 border-ios-blue cursor-pointer"
+													: "bg-ios-card border-ios-separator hover:border-ios-blue/30 cursor-pointer"
 										}`}
 									>
 										<div
@@ -1110,12 +1274,32 @@ export default function PlannerWizard({
 												{channel.account_id}
 											</p>
 										</div>
+									{disabled && (
+											<div className="ml-auto text-[10px] text-amber-600 font-medium hidden sm:block">
+												{PLANNER_MIX_ERROR}
+											</div>
+										)}
 									</div>
-								))}
+								);
+								})}
 								{channels.length === 0 && (
 									<div className="text-center py-10 text-ios-secondary">
 										Nenhum canal conectado — adicione uma conta do Instagram ou YouTube em
 										Canais.
+									</div>
+								)}
+								{hasMixSelected && (
+									<div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-sm">
+										{PLANNER_MIX_ERROR}
+									</div>
+								)}
+								{selectedChannels.length > 0 && selectedPlatformType && (
+									<div className="text-xs text-ios-secondary">
+										Tipo detectado:{" "}
+										<span className="font-semibold">
+											{selectedPlatformType === "youtube" ? "YouTube" : "Instagram"}
+										</span>{" "}
+										— apenas canais desse tipo podem ser adicionados.
 									</div>
 								)}
 							</div>
@@ -1470,6 +1654,114 @@ export default function PlannerWizard({
 											</div>
 										)}
 
+									{onlyYoutubeSelected && (
+										<div className="space-y-4 p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-200 dark:border-red-900/30">
+											<h4 className="text-xs font-bold text-ios-text uppercase tracking-wide flex items-center gap-2">
+												<Youtube size={14} className="text-ios-red" />
+												Configurações YouTube
+											</h4>
+											<div>
+												<div className="flex justify-between items-center mb-1.5">
+													<label className="text-xs font-medium text-ios-text block">Título <span className="text-ios-red">*</span></label>
+													<span className="text-[11px] text-gray-400">{youtubeTitle.length}/100</span>
+												</div>
+												<input
+													value={youtubeTitle}
+													onChange={(e) => setYoutubeTitle(e.target.value.slice(0,100))}
+													className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none"
+													placeholder="Título do Short (máx 100 caracteres)"
+													maxLength={100}
+												/>
+											</div>
+											<div>
+												<div className="flex justify-between items-center mb-1.5">
+													<label className="text-xs font-medium text-ios-text block">Descrição</label>
+													<span className="text-[11px] text-gray-400">{youtubeDescription.length}/5000</span>
+												</div>
+												<textarea
+													value={youtubeDescription}
+													onChange={(e) => setYoutubeDescription(e.target.value.slice(0,5000))}
+													className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none"
+													placeholder="Descrição do vídeo (máx 5000 caracteres). Suporta templates {post_title}, {post_caption}..."
+													maxLength={5000}
+												/>
+											</div>
+											<div>
+												<label className="text-xs font-medium text-ios-text mb-1.5 block">Produtos Afiliados (CSV)</label>
+												<div className="flex gap-2">
+													<input
+														value={youtubeProducts}
+														onChange={(e) => setYoutubeProducts(e.target.value)}
+														className="flex-1 bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none"
+														placeholder="IDs separados por vírgula, ex: prod_123,prod_456"
+													/>
+													<button
+														type="button"
+														onClick={handleSearchYoutubeProducts}
+														disabled={youtubeProductsLoading}
+														className="px-3 py-2 bg-ios-blue text-white rounded-lg text-xs font-medium disabled:opacity-50 whitespace-nowrap"
+													>
+														{youtubeProductsLoading ? "Buscando..." : "Buscar"}
+													</button>
+												</div>
+												<p className="text-[10px] text-gray-400 mt-1">IDs separados por vírgula, ex: prod_123,prod_456. Clique em Buscar para consultar /api/youtube/products se videoId disponível.</p>
+												{youtubeProductsError && <p className="text-xs text-ios-red mt-1">{youtubeProductsError}</p>}
+												{youtubeProductsResults.length > 0 && (
+													<div className="mt-2 bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 max-h-32 overflow-y-auto">
+														<p className="text-[11px] font-medium mb-1">{youtubeProductsResults.length} produto(s) encontrado(s):</p>
+														<ul className="text-xs space-y-1">
+															{(youtubeProductsResults as any[]).map((pr: any, idx: number) => (
+																<li key={idx} className="truncate">{JSON.stringify(pr).slice(0,120)}</li>
+															))}
+														</ul>
+													</div>
+												)}
+											</div>
+											<div className="grid grid-cols-2 gap-3">
+												<div>
+													<label className="text-xs font-medium text-ios-text mb-1.5 block">Privacidade</label>
+													<select
+														value={youtubePrivacy}
+														onChange={(e) => setYoutubePrivacy(e.target.value as any)}
+														className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm"
+													>
+														<option value="PUBLIC">Público</option>
+														<option value="UNLISTED">Não listado</option>
+														<option value="PRIVATE">Privado</option>
+													</select>
+												</div>
+												<div>
+													<label className="text-xs font-medium text-ios-text mb-1.5 block">Categoria ID</label>
+													<input
+														value={youtubeCategoryId}
+														onChange={(e) => setYoutubeCategoryId(e.target.value.replace(/[^0-9]/g,""))}
+														className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm"
+														placeholder="22 (People & Blogs)"
+													/>
+												</div>
+											</div>
+											<div className="flex flex-col gap-2">
+												<label className="flex items-center gap-2 cursor-pointer">
+													<input type="checkbox" checked={youtubeMadeForKids} onChange={(e)=>setYoutubeMadeForKids(e.target.checked)} className="rounded" />
+													<span className="text-xs font-medium">Feito para crianças</span>
+												</label>
+												<label className="flex items-center gap-2 cursor-pointer">
+													<input type="checkbox" checked={youtubeMonetizeWithAds} onChange={(e)=>setYoutubeMonetizeWithAds(e.target.checked)} className="rounded" />
+													<span className="text-xs font-medium">Monetizar com anúncios</span>
+												</label>
+											</div>
+											<div>
+												<label className="text-xs font-medium text-ios-text mb-1.5 block">Comentário fixado</label>
+												<textarea
+													value={youtubePinnedComment}
+													onChange={(e)=>setYoutubePinnedComment(e.target.value.slice(0,10000))}
+													className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm h-16 resize-none"
+													placeholder="Texto do comentário fixado (opcional)"
+													maxLength={10000}
+												/>
+											</div>
+										</div>
+									)}
 									{mediaType === "REELS" && !onlyYoutubeSelected && (
 										<div className="space-y-3 p-3 bg-ios-gray-6 rounded-xl border border-ios-separator">
 											<span className="text-xs font-semibold text-ios-text block">

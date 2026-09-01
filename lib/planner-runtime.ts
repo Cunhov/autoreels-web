@@ -26,6 +26,7 @@ import {
 	isSleepingNow,
 	normalizeCollaborators,
 	normalizeUserTags,
+	normalizeYoutubeProductsCsv,
 	parsePlannerConfig,
 	parsePlannerState,
 	validatePlannerConfig,
@@ -324,7 +325,7 @@ export function substituteCaptionTemplate(
 }
 
 /** Aplica templates de legenda e retorna a legenda final. */
-async function applyCaptionTemplate(opts: {
+export async function applyCaptionTemplate(opts: {
 	prisma: PrismaLike;
 	selectedContent: PlannerContentItem | null | undefined;
 	planner: { user_id: string };
@@ -438,18 +439,47 @@ export async function buildPostData(opts: {
 				? String(libItem.name).replace(/\.[A-Za-z0-9]+$/, "")
 				: "";
 		}
+		// Resolve youtube_title/description/products templates (se contiver {var})
+		const cfg = config as Record<string, unknown>;
+		const varsForYt = await resolveCaptionTemplateVars(
+				opts.prisma,
+				selected as PlannerContentItem | null | undefined,
+				opts.planner,
+				config,
+				opts.channel.name || "",
+				opts.now,
+			);
+		const resolveYtTpl = (v: string): string => v.includes("{") ? substituteCaptionTemplate(v, varsForYt) : v;
+		const rawYtTitle = typeof cfg["youtube_title"] === "string" ? resolveYtTpl(String(cfg["youtube_title"])) : "";
+		const rawYtDescTpl = typeof cfg["youtube_description"] === "string" ? resolveYtTpl(String(cfg["youtube_description"])) : "";
+		// Products CSV -> JSON string array via JSON.stringify(csv.split(',').filter(Boolean))
+		const rawProductsCsv = cfg["youtube_products"] as unknown;
+		let productsJson: string | null = null;
+		if (typeof rawProductsCsv === "string" && rawProductsCsv.trim()) {
+			const resolvedCsv = rawProductsCsv.includes("{") ? resolveYtTpl(rawProductsCsv) : rawProductsCsv;
+			const arr = resolvedCsv.split(",").map((s: string) => s.trim()).filter(Boolean);
+			productsJson = JSON.stringify(arr);
+		} else if (Array.isArray(rawProductsCsv)) {
+			const arr = (rawProductsCsv as unknown[]).map(v => String(v).trim()).filter(Boolean);
+			if (arr.length > 0) productsJson = JSON.stringify(arr);
+		}
+		// also check normalized helper for safety
+		if (!productsJson) {
+			const normalized = normalizeYoutubeProductsCsv(rawProductsCsv);
+			if (normalized) productsJson = JSON.stringify(normalized.split(",").filter(Boolean));
+		}
 		const titleCandidate = [
+			rawYtTitle || "",
 			selected?.title || "",
 			selected?.title_fallback || "",
 			caption || "",
 			itemName,
 		]
-			.map((t) => t.trim())
+			.map((t) => String(t).trim())
 			.find(Boolean);
 		if (titleCandidate) {
 			// BK-22 FIX: expandir para salvar youtube_options COMPLETO (privacy/made_for_kids/monetize/description)
 			// antes só salvava {title}. Agora preserva youtube_options quando houver herança de config/conteúdo.
-			const cfg = config as Record<string, unknown>;
 			const selAny = selected as unknown as Record<string, unknown> | null | undefined;
 			// helper strict boolean (BK-21)
 			const toStrictBool = (v: unknown): boolean => {
@@ -503,11 +533,11 @@ export async function buildPostData(opts: {
 					} catch {}
 				}
 			}
-			// categoria e descricao: usar config quando houver, senão defaults
-			const descriptionVal = (typeof cfg["youtube_description"] === "string" ? String(cfg["youtube_description"]) : (caption || "")) as string;
+			// categoria e descricao: usar config quando houver, senão defaults (com template resolvido)
+			const descriptionVal = (rawYtDescTpl ? rawYtDescTpl : (caption || "")) as string;
 			const categoryIdRaw = cfg["youtube_category_id"];
 			const categoryId = categoryIdRaw !== undefined ? Number(categoryIdRaw) : undefined;
-			const pinnedRaw = cfg["youtube_pinned_comment_text"] ?? selAny?.["pinned_comment_text"];
+			const pinnedRaw = (cfg["youtube_pinned_comment"] as unknown) ?? cfg["youtube_pinned_comment_text"] ?? selAny?.["pinned_comment_text"] ?? selAny?.["youtube_pinned_comment"];
 
 			const ytObj: Record<string, unknown> = {
 				title: titleCandidate.slice(0, 100),
@@ -518,6 +548,7 @@ export async function buildPostData(opts: {
 			if (descriptionVal) ytObj.description = String(descriptionVal).slice(0, 5000);
 			if (categoryId !== undefined && Number.isInteger(categoryId)) ytObj.category_id = categoryId;
 			if (typeof pinnedRaw === "string" && pinnedRaw.trim()) ytObj.pinned_comment_text = pinnedRaw.trim().slice(0, 10000);
+			if (productsJson) ytObj.products = productsJson;
 			youtubeOptions = JSON.stringify(ytObj);
 		}
 	}
@@ -558,6 +589,344 @@ export async function buildPostData(opts: {
 		scheduled_at: opts.now,
 		planner_id: opts.planner.id,
 	} as Prisma.PostUncheckedCreateInput;
+}
+
+
+/** Campos do config que impactam caption/youtube_options — usados para detectar diff. */
+const CAPTION_PROPAGATION_KEYS = [
+  "caption",
+  "caption_templates",
+  "caption_rotation",
+  "caption_fallback",
+  "title_fallback",
+  "youtube_title",
+  "youtube_description",
+  "youtube_privacy",
+  "youtube_made_for_kids",
+  "youtube_monetize_with_ads",
+  "youtube_category_id",
+  "youtube_pinned_comment_text",
+  "youtube_products",
+  "collaborators",
+  "user_tags",
+] as const;
+
+/**
+ * Verifica se dois configs diferem em algum campo que afeta posts pendentes.
+ * Usado para evitar propagação desnecessária quando só frequency/sleep mudou.
+ */
+export function shouldPropagateConfig(
+  oldConfig: Record<string, unknown> | null | undefined,
+  newConfig: Record<string, unknown> | null | undefined
+): boolean {
+  if (!oldConfig || !newConfig) return true;
+  for (const k of CAPTION_PROPAGATION_KEYS) {
+    const a = JSON.stringify((oldConfig as Record<string, unknown>)[k] ?? null);
+    const b = JSON.stringify((newConfig as Record<string, unknown>)[k] ?? null);
+    if (a !== b) return true;
+  }
+  // Também detecta mudança no array content[].caption individual (o wizard
+  // duplica a descrição em cada entrada). Compara captions agregados.
+  const oldContent = Array.isArray(oldConfig.content) ? oldConfig.content as unknown[] : [];
+  const newContent = Array.isArray(newConfig.content) ? newConfig.content as unknown[] : [];
+  if (oldContent.length !== newContent.length) {
+    // Só considera diff se houver mudança de caption dentro dos itens
+    const oldCaps = JSON.stringify(oldContent.map((c: unknown) => (c as Record<string, unknown>)?.caption ?? null));
+    const newCaps = JSON.stringify(newContent.map((c: unknown) => (c as Record<string, unknown>)?.caption ?? null));
+    if (oldCaps !== newCaps) return true;
+  } else {
+    for (let i = 0; i < oldContent.length; i++) {
+      const oc = oldContent[i] as Record<string, unknown>;
+      const nc = newContent[i] as Record<string, unknown>;
+      if (JSON.stringify(oc?.caption ?? null) !== JSON.stringify(nc?.caption ?? null)) return true;
+      if (JSON.stringify(oc?.caption_fallback ?? null) !== JSON.stringify(nc?.caption_fallback ?? null)) return true;
+      if (JSON.stringify(oc?.title_fallback ?? null) !== JSON.stringify(nc?.title_fallback ?? null)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Constrói youtube_options JSON para um post de Short a partir do config atualizado
+ * e caption já resolvida. Espelha a lógica de buildPostData para consistência.
+ * Retorna null se não houver título candidato (caption vazia + sem fallbacks).
+ */
+export async function buildYoutubeOptionsForPropagation(opts: {
+  prisma: PrismaLike;
+  planner: { user_id: string };
+  config: PlannerConfig;
+  caption: string;
+  selectedContent: PlannerContentItem | null | undefined;
+}): Promise<string | null> {
+  const selected = opts.selectedContent as PlannerContentItem | null | undefined;
+  let itemName = "";
+  const libId = selected?.id || selected?.folder_id;
+  if (libId) {
+    try {
+      const libItem = await opts.prisma.contentItem.findFirst({
+        where: { id: libId, user_id: opts.planner.user_id },
+        select: { name: true },
+      });
+      itemName = libItem?.name ? String(libItem.name).replace(/\.[A-Za-z0-9]+$/, "") : "";
+    } catch {}
+  }
+  const titleCandidate = [
+    selected?.title || "",
+    selected?.title_fallback || "",
+    opts.caption || "",
+    itemName,
+  ]
+    .map((t) => String(t).trim())
+    .find(Boolean);
+  if (!titleCandidate) return null;
+
+  const cfg = opts.config as Record<string, unknown>;
+  const selAny = selected as unknown as Record<string, unknown> | null | undefined;
+  const toStrictBool = (v: unknown): boolean => {
+    if (typeof v === "boolean") return v;
+    if (typeof v === "string") return v.toLowerCase() === "true";
+    if (typeof v === "number") return v === 1;
+    if (v == null) return false;
+    return String(v).toLowerCase() === "true";
+  };
+  let youtubePrivacy: string = "PUBLIC";
+  const cfgPrivacy = cfg["youtube_privacy"];
+  const selPrivacy = selAny?.["privacy"];
+  if (typeof cfgPrivacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(cfgPrivacy).toUpperCase())) {
+    youtubePrivacy = String(cfgPrivacy).toUpperCase();
+  } else if (typeof selPrivacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(selPrivacy).toUpperCase())) {
+    youtubePrivacy = String(selPrivacy).toUpperCase();
+  } else {
+    const rawYtOpt = selAny?.["youtube_options"];
+    if (rawYtOpt != null) {
+      try {
+        const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
+        if (typeof parsed.privacy === "string" && ["PUBLIC","UNLISTED","PRIVATE"].includes(String(parsed.privacy).toUpperCase())) {
+          youtubePrivacy = String(parsed.privacy).toUpperCase();
+        }
+      } catch {}
+    }
+  }
+  let madeForKids: boolean | null = null;
+  if (cfg["youtube_made_for_kids"] !== undefined) madeForKids = toStrictBool(cfg["youtube_made_for_kids"]);
+  else if (selAny?.["made_for_kids"] !== undefined) madeForKids = toStrictBool(selAny?.["made_for_kids"]);
+  else {
+    const rawYtOpt = selAny?.["youtube_options"];
+    if (rawYtOpt != null) {
+      try {
+        const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
+        if (parsed.made_for_kids !== undefined) madeForKids = toStrictBool(parsed.made_for_kids);
+      } catch {}
+    }
+  }
+  let monetizeWithAds: boolean | null = null;
+  if (cfg["youtube_monetize_with_ads"] !== undefined) monetizeWithAds = toStrictBool(cfg["youtube_monetize_with_ads"]);
+  else if (selAny?.["monetize_with_ads"] !== undefined) monetizeWithAds = toStrictBool(selAny?.["monetize_with_ads"]);
+  else {
+    const rawYtOpt = selAny?.["youtube_options"];
+    if (rawYtOpt != null) {
+      try {
+        const parsed = typeof rawYtOpt === "string" ? JSON.parse(rawYtOpt as string) as Record<string, unknown> : rawYtOpt as Record<string, unknown>;
+        if (parsed.monetize_with_ads !== undefined) monetizeWithAds = toStrictBool(parsed.monetize_with_ads);
+      } catch {}
+    }
+  }
+  const descriptionVal = (typeof cfg["youtube_description"] === "string" ? String(cfg["youtube_description"]) : (opts.caption || "")) as string;
+  const categoryIdRaw = cfg["youtube_category_id"];
+  const categoryId = categoryIdRaw !== undefined ? Number(categoryIdRaw) : undefined;
+  const pinnedRaw = cfg["youtube_pinned_comment_text"] ?? selAny?.["pinned_comment_text"];
+
+  const ytObj: Record<string, unknown> = {
+    title: titleCandidate.slice(0, 100),
+    privacy: youtubePrivacy,
+    ...(madeForKids !== null ? { made_for_kids: madeForKids } : {}),
+    ...(monetizeWithAds !== null ? { monetize_with_ads: monetizeWithAds } : {}),
+  };
+  if (descriptionVal) ytObj.description = String(descriptionVal).slice(0, 5000);
+  if (categoryId !== undefined && Number.isInteger(categoryId)) ytObj.category_id = categoryId;
+  if (typeof pinnedRaw === "string" && (pinnedRaw as string).trim()) ytObj.pinned_comment_text = (pinnedRaw as string).trim().slice(0, 10000);
+  return JSON.stringify(ytObj);
+}
+
+/**
+ * Propaga alterações de config (caption/youtube) para todos os posts
+ * pendentes/scheduled/queued do planner.
+ *
+ * Decisão de produto: sobrescreve caption de TODOS os posts pendentes com a
+ * nova legenda resolvida. Posts sem flag de "customização manual" (o schema
+ * não distingue edição manual vs snapshot do planner) são tratados como
+ * derivados do planner. Usuários que editaram caption manualmente num post
+ * pendente terão a edição sobrescrita — comportamento documentado; alternativa
+ * seria nunca propagar, mas o bug reportado é que editar descrição do planner
+ * NÃO refletia nos posts (expectativa é global).
+ *
+ * Batch: atualiza em lotes de 50 para evitar transação gigante em SQLite.
+ */
+export async function propagatePlannerConfigToPendingPosts(
+  prismaClient: {
+    post: {
+      findMany: (args: unknown) => Promise<Array<Record<string, unknown>>>;
+      update: (args: unknown) => Promise<unknown>;
+    };
+    contentItem?: { findFirst: (args: unknown) => Promise<unknown> };
+    plannerLog?: { create: (args: unknown) => Promise<unknown> };
+    channel?: { findUnique: (args: unknown) => Promise<unknown>; findMany?: (args: unknown) => Promise<unknown[]> };
+  } & PrismaLike,
+  planner: { id: string; user_id: string },
+  newConfig: PlannerConfig,
+  now: Date = new Date()
+): Promise<{ updated: number; total: number }> {
+  const pendingStatuses = ["pending", "scheduled", "queued"];
+  let posts: Array<Record<string, unknown>>;
+  try {
+    posts = await prismaClient.post.findMany({
+      where: { planner_id: planner.id, status: { in: pendingStatuses } },
+      orderBy: [{ scheduled_at: "asc" }, { created_at: "asc" }],
+    } as unknown) as Array<Record<string, unknown>>;
+  } catch (e) {
+    console.warn("[propagate] findMany failed", e);
+    return { updated: 0, total: 0 };
+  }
+  if (!posts || posts.length === 0) return { updated: 0, total: 0 };
+
+  const contentList: PlannerContentItem[] = Array.isArray(newConfig.content)
+    ? (newConfig.content as PlannerContentItem[])
+    : [];
+
+  // Mapa channel_id -> {name, platform} para evitar N+1 quando possível
+  const channelIds = [...new Set(posts.map((p) => p.channel_id).filter(Boolean) as string[])];
+  const channelMap = new Map<string, { name: string | null; platform: string | null }>();
+  if (channelIds.length > 0 && prismaClient.channel?.findMany) {
+    try {
+      const channels = await (prismaClient.channel.findMany as (args: unknown) => Promise<Array<Record<string, unknown>>>)({
+        where: { id: { in: channelIds } },
+        select: { id: true, name: true, platform: true },
+      });
+      for (const ch of channels) channelMap.set(String(ch.id), { name: (ch.name as string) || null, platform: (ch.platform as string) || null });
+    } catch {}
+  }
+
+  let updated = 0;
+  const BATCH = 50;
+  for (let i = 0; i < posts.length; i++) {
+    const post = posts[i];
+    const postId = String(post.id);
+    const channelId = post.channel_id ? String(post.channel_id) : null;
+    let channelName = "";
+    let channelPlatform: string | null = null;
+    if (channelId && channelMap.has(channelId)) {
+      const ch = channelMap.get(channelId)!;
+      channelName = ch.name || "";
+      channelPlatform = ch.platform || null;
+    } else if (channelId && prismaClient.channel?.findUnique) {
+      try {
+        const ch = await prismaClient.channel.findUnique({ where: { id: channelId }, select: { name: true, platform: true } }) as Record<string, unknown> | null;
+        channelName = (ch?.name as string) || "";
+        channelPlatform = (ch?.platform as string) || null;
+        if (ch) channelMap.set(channelId, { name: channelName, platform: channelPlatform });
+      } catch {}
+    }
+
+    // Heurística para selectedContent: tenta casar post com entrada do content
+    // pelo URL (video_url/image_url) quando o content tem id de library.
+    // Fallback: primeira entrada do content ou objeto sintético com a caption
+    // global (planners sem content ainda).
+    let selectedContent: PlannerContentItem | null | undefined = null;
+    const urlCandidates = [
+      post.video_url ? String(post.video_url) : null,
+      post.image_url ? String(post.image_url) : null,
+      post.thumbnail_url ? String(post.thumbnail_url) : null,
+    ].filter(Boolean) as string[];
+
+    if (contentList.length > 0) {
+      // Tenta casar por URL (quando content tem url explícito)
+      let matched: PlannerContentItem | null = null;
+      for (const c of contentList) {
+        const cUrl = (c as Record<string, unknown>).url ? String((c as Record<string, unknown>).url) : null;
+        if (cUrl && urlCandidates.includes(cUrl)) { matched = c; break; }
+      }
+      // Fallback: se não casou por URL, usa a entrada na posição cíclica
+      // (ordem de criação dos posts = ordem do contentList em random_loop off)
+      selectedContent = matched || contentList[i % contentList.length] || contentList[0];
+    } else {
+      // Planner sem content (caso raro): sintetiza selectedContent vazio mas com
+      // caption global se houver (ex.: config.caption)
+      const globalCap = (newConfig as Record<string, unknown>).caption;
+      selectedContent = globalCap ? { caption: String(globalCap) } as PlannerContentItem : null;
+    }
+
+    // Resolve nova caption via applyCaptionTemplate (mesma semântica do buildPostData)
+    let newCaption: string;
+    try {
+      newCaption = await applyCaptionTemplate({
+        prisma: prismaClient as PrismaLike,
+        selectedContent,
+        planner: { user_id: planner.user_id },
+        config: newConfig,
+        channelName,
+        now,
+        templateIndex: 0,
+        postOrdinal: i,
+      });
+    } catch (e) {
+      console.warn("[propagate] caption resolve failed for post", postId, e);
+      continue;
+    }
+
+    // youtube_options: só para posts de canal YouTube com youtube_type
+    const ytType = post.youtube_type ? String(post.youtube_type).toLowerCase() : null;
+    const isYtChannel = channelPlatform ? channelPlatform.toLowerCase() === "youtube" : ytType !== null;
+    let newYoutubeOptions: string | null | undefined = undefined; // undefined = não alterar
+    if (isYtChannel && ytType === "short") {
+      try {
+        newYoutubeOptions = await buildYoutubeOptionsForPropagation({
+          prisma: prismaClient as PrismaLike,
+          planner: { user_id: planner.user_id },
+          config: newConfig,
+          caption: newCaption,
+          selectedContent,
+        });
+      } catch {}
+    } else if (isYtChannel && ytType === "community") {
+      // Comunidade não tem youtube_options (usa caption); não mexe
+      newYoutubeOptions = undefined;
+    }
+
+    // Monta payload de update: sempre atualiza caption; youtube_options só se Short
+    const data: Record<string, unknown> = { caption: newCaption };
+    if (newYoutubeOptions !== undefined) data.youtube_options = newYoutubeOptions;
+
+    try {
+      await prismaClient.post.update({
+        where: { id: postId },
+        data,
+      } as unknown);
+      updated++;
+    } catch (e) {
+      console.warn("[propagate] update failed for post", postId, e);
+    }
+
+    // Batch yield (evita bloqueio longo em SQLite com muitos posts)
+    if ((i + 1) % BATCH === 0) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  }
+
+  // Log em PlannerLog (best-effort, não falha a propagação)
+  if (updated > 0 && prismaClient.plannerLog?.create) {
+    try {
+      await prismaClient.plannerLog.create({
+        data: {
+          planner_id: planner.id,
+          level: "info",
+          message: `Planner editado: ${updated}/${posts.length} post(s) pendente(s) atualizado(s) com nova descrição/título`,
+          details: JSON.stringify({ updated, total: posts.length, now: now.toISOString() }),
+        },
+      } as unknown);
+    } catch {}
+  }
+
+  return { updated, total: posts.length };
 }
 
 export async function resolvePlannerRuntime(

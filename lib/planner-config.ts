@@ -93,6 +93,24 @@ export function normalizeCollaborators(value: unknown): string | null {
 export function normalizeUserTags(value: unknown): string | null {
     return normalizeUsernameList(value, 'user_tags');
 }
+/** Normaliza CSV de produtos afiliados YouTube (string comma-separated ou array) -> string CSV limpa ou null. */
+export function normalizeYoutubeProductsCsv(value: unknown): string | null {
+    if (value == null) return null;
+    if (Array.isArray(value)) {
+        const clean = value.map(v => (typeof v === 'string' ? v.trim() : String(v ?? '').trim())).filter(Boolean);
+        return clean.length > 0 ? clean.join(',') : null;
+    }
+    if (typeof value === 'string') {
+        const clean = value.split(',').map(s => s.trim()).filter(Boolean).join(',');
+        return clean.length > 0 ? clean : null;
+    }
+    console.warn('[planner-config] youtube_products com formato inválido (esperado string CSV); ignorado.');
+    return null;
+}
+
+/** Const de privacidades válidas do YouTube (para UI e validação). */
+export const YOUTUBE_PRIVACIES = ['PUBLIC', 'UNLISTED', 'PRIVATE'] as const;
+
 
 /**
  * Valida a estrutura do config. Retorna { ok, errors } — NUNCA lança.
@@ -201,6 +219,96 @@ export function validatePlannerConfig(config: unknown): { ok: boolean; errors: s
         }
     }
 
+    // ── YouTube (planner YT) ──────────────────────────────────────────────
+    // Campos só relevantes quando o planner tem canal YouTube; validação é
+    // permissiva: se presente, deve ser válido; vazio/null ≡ ausente.
+    const YT_PRIVACIES = ['PUBLIC', 'UNLISTED', 'PRIVATE'] as const;
+
+    // youtube_title: 1..100 chars (trim)
+    if (c.youtube_title !== undefined && c.youtube_title !== null && c.youtube_title !== '') {
+        if (typeof c.youtube_title !== 'string') {
+            errors.push('youtube_title deve ser uma string');
+        } else {
+            const t = String(c.youtube_title).trim();
+            if (t.length === 0) errors.push('Título do YouTube não pode ser vazio');
+            else if (t.length > 100) errors.push('Título do YouTube deve ter no máximo 100 caracteres');
+        }
+    }
+    // alias youtube_pinned_comment (spec) e youtube_pinned_comment_text (runtime)
+    const ytPinnedRaw = (c as PlannerJson)['youtube_pinned_comment'] ?? (c as PlannerJson)['youtube_pinned_comment_text'];
+    // youtube_description: até 5000 chars
+    if (c.youtube_description !== undefined && c.youtube_description !== null && c.youtube_description !== '') {
+        if (typeof c.youtube_description !== 'string') {
+            errors.push('youtube_description deve ser uma string');
+        } else if (String(c.youtube_description).length > 5000) {
+            errors.push('Descrição do YouTube deve ter no máximo 5000 caracteres');
+        }
+    }
+    // youtube_products: CSV string — cada item não vazio após trim
+    if (c.youtube_products !== undefined && c.youtube_products !== null && c.youtube_products !== '') {
+        if (typeof c.youtube_products !== 'string' && !Array.isArray(c.youtube_products)) {
+            errors.push('youtube_products deve ser uma string com IDs separados por vírgula');
+        } else {
+            const raw = Array.isArray(c.youtube_products) ? (c.youtube_products as unknown[]).join(',') : String(c.youtube_products);
+            // detecta itens vazios (ex: "a,,b" ou "a, ,b" ou trailing comma)
+            const parts = raw.split(',');
+            const hasEmpty = parts.some((p) => {
+                // ignora string vazia total já tratada; mas se houver vírgula, cada segmento deve ser não-vazio
+                // um CSV como "" já foi filtrado; "a,b" → 2 partes válidas; "a,,b" → parte vazia no meio → erro
+                // "a,b," → última vazia → erro (usuário digitou vírgula extra)
+                const trimmed = p.trim();
+                // Se raw termina com vírgula ou contém ",,", haverá parte vazia
+                return trimmed.length === 0;
+            });
+            // Permite string vazia/whitespace-only como "sem produtos"? já filtrado ('' não entra). Se usuário enviou "   " → após split → ["   "] → trim vazio → erro
+            if (raw.trim().length > 0 && hasEmpty) {
+                errors.push('Produtos afiliados contêm item vazio — verifique os IDs separados por vírgula');
+            }
+            // cada item após trim deve ser não vazio; já coberto, mas valida tamanho individual
+            const cleaned = parts.map(p => p.trim()).filter(Boolean);
+            if (cleaned.some(item => item.length === 0)) {
+                errors.push('Produtos afiliados contêm item vazio — verifique os IDs separados por vírgula');
+            }
+            if (cleaned.some(item => item.length > 200)) {
+                errors.push('Cada produto afiliado deve ter no máximo 200 caracteres');
+            }
+        }
+    }
+    // youtube_privacy
+    if (c.youtube_privacy !== undefined && c.youtube_privacy !== null && c.youtube_privacy !== '') {
+        const v = String(c.youtube_privacy).toUpperCase().trim();
+        if (!(YT_PRIVACIES as readonly string[]).includes(v)) {
+            errors.push('youtube_privacy deve ser PUBLIC, UNLISTED ou PRIVATE');
+        }
+    }
+    // youtube_made_for_kids
+    if (c.youtube_made_for_kids !== undefined && c.youtube_made_for_kids !== null && c.youtube_made_for_kids !== '') {
+        const v = c.youtube_made_for_kids;
+        const okBool = typeof v === 'boolean' || (typeof v === 'string' && /^(true|false)$/i.test(v.trim())) || v === 0 || v === 1;
+        if (!okBool) errors.push('youtube_made_for_kids deve ser verdadeiro ou falso');
+    }
+    // youtube_monetize_with_ads
+    if (c.youtube_monetize_with_ads !== undefined && c.youtube_monetize_with_ads !== null && c.youtube_monetize_with_ads !== '') {
+        const v = c.youtube_monetize_with_ads;
+        const okBool = typeof v === 'boolean' || (typeof v === 'string' && /^(true|false)$/i.test(v.trim())) || v === 0 || v === 1;
+        if (!okBool) errors.push('youtube_monetize_with_ads deve ser verdadeiro ou falso');
+    }
+    // youtube_category_id
+    if (c.youtube_category_id !== undefined && c.youtube_category_id !== null && c.youtube_category_id !== '') {
+        const n = Number(c.youtube_category_id);
+        if (!Number.isInteger(n) || n < 1 || n > 100) {
+            errors.push('youtube_category_id deve ser um número inteiro entre 1 e 100');
+        }
+    }
+    // youtube_pinned_comment / youtube_pinned_comment_text: até 10000
+    if (ytPinnedRaw !== undefined && ytPinnedRaw !== null && ytPinnedRaw !== '') {
+        if (typeof ytPinnedRaw !== 'string') {
+            errors.push('Comentário fixado do YouTube deve ser uma string');
+        } else if (String(ytPinnedRaw).length > 10000) {
+            errors.push('Comentário fixado do YouTube deve ter no máximo 10000 caracteres');
+        }
+    }
+
     // timezone
     if (c.timezone !== undefined && typeof c.timezone !== 'string') {
         errors.push('timezone deve ser uma string IANA (ex.: America/Sao_Paulo)');
@@ -263,3 +371,93 @@ export function isSleepingNow(config: PlannerJson, now: Date): boolean {
     if (start <= end) return hhmm >= start && hhmm < end;
     return hhmm >= start || hhmm < end; // janela que cruza a meia-noite
 }
+
+// ── Isolation: YouTube vs Instagram ──────────────────────────────────────────
+
+/** Mensagem padrão quando tenta misturar plataformas num mesmo planner. */
+export const PLANNER_MIX_ERROR =
+    "Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
+
+export type PlannerPlatformType = "youtube" | "instagram" | "mixed" | null;
+
+/**
+ * Normaliza platform para comparação (lowercase, trim).
+ */
+function normalizePlatform(p: unknown): string {
+    return String(p || "").toLowerCase().trim();
+}
+
+/**
+ * Determina o tipo de planner a partir dos canais conectados.
+ * - [] ou sem plataforma reconhecida → null
+ * - só youtube → "youtube"
+ * - só instagram → "instagram"
+ * - misto youtube+instagram (ou qualquer 2 plataformas distintas) → "mixed"
+ *
+ * Assinatura oficial: getPlannerPlatformType(config, channels).
+ * `config` é aceito mas ignorado na inferência atual — mantido para compatibilidade
+ * futura (ex.: config.youtube_*). Sobrecarga: se o primeiro arg for um array e o
+ * segundo for undefined, trata o primeiro como `channels`.
+ */
+export function getPlannerPlatformType(
+    config: unknown,
+    channels?: Array<{ platform?: string | null }>,
+): PlannerPlatformType {
+    let list: Array<{ platform?: string | null }>;
+    if (Array.isArray(config) && channels === undefined) {
+        list = config as Array<{ platform?: string | null }>;
+    } else {
+        list = (channels || []) as Array<{ platform?: string | null }>;
+    }
+    if (!list || list.length === 0) return null;
+    const platforms = new Set(
+        list.map((c) => normalizePlatform((c as { platform?: string | null })?.platform)).filter(Boolean),
+    );
+    if (platforms.size === 0) return null;
+    if (platforms.size === 1) {
+        const only = [...platforms][0];
+        if (only === "youtube") return "youtube";
+        if (only === "instagram") return "instagram";
+        // plataforma desconhecida singular → trata como instagram por compatibilidade
+        return only as PlannerPlatformType;
+    }
+    // >1 plataforma distinta
+    const hasYt = platforms.has("youtube");
+    const hasIg = platforms.has("instagram");
+    if (hasYt && hasIg) return "mixed";
+    if (platforms.size > 1) return "mixed";
+    return null;
+}
+
+/**
+ * Valida que channelIds não contém plataformas mistas.
+ * Busca os canais no banco via prisma e verifica se há mais de uma plataforma distinta.
+ * Retorna { ok: true } se válido ou vazio; { ok: false, error: PLANNER_MIX_ERROR } se misto.
+ * Não lança — quem chama decide o status HTTP.
+ *
+ * Assinatura oficial: validatePlannerChannelMix(channelIds, prisma).
+ */
+export async function validatePlannerChannelMix(
+    channelIds: string[],
+    prisma: any, // eslint-disable-line @typescript-eslint/no-explicit-any
+): Promise<{ ok: boolean; error?: string; platforms?: string[] }> {
+    if (!channelIds || channelIds.length === 0) return { ok: true, platforms: [] };
+    const channels = await prisma.channel.findMany({
+        where: { id: { in: channelIds } },
+        select: { platform: true },
+    } as never);
+    const platforms: string[] = [...new Set(channels.map((c: { platform?: string | null }) => normalizePlatform(c.platform)).filter(Boolean) as string[])];
+    if (platforms.length > 1) {
+        // Se há youtube e instagram simultaneamente, ou qualquer mix, bloqueia.
+        return { ok: false, error: PLANNER_MIX_ERROR, platforms };
+    }
+    return { ok: true, platforms };
+}
+
+/**
+ * Helper síncrono para listas já carregadas (sem prisma).
+ */
+export function isMixedPlatformChannels(channels: Array<{ platform?: string | null }>): boolean {
+    return getPlannerPlatformType(channels) === "mixed";
+}
+

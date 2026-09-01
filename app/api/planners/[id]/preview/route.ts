@@ -9,6 +9,7 @@ import {
     resolvePlannerRuntime,
     substituteCaptionTemplate,
 } from "@/lib/planner-runtime";
+import { getPlannerPlatformType, PLANNER_MIX_ERROR } from "@/lib/planner-config";
 
 /** Wall-clock "HH:MM" in a given IANA timezone. */
 function getTimeInTimeZone(date: Date, tz: string): { hh: string; mm: string } {
@@ -211,6 +212,23 @@ export async function GET(
         health: describeChannelHealth(channel, now),
     }));
 
+    // YouTube fields do planner (para preview do wizard/runtime)
+    const youtubeFields = {
+        youtube_title: typeof plannerConfig.youtube_title === "string" ? String(plannerConfig.youtube_title) : null,
+        youtube_description: typeof plannerConfig.youtube_description === "string" ? String(plannerConfig.youtube_description) : null,
+        youtube_products: typeof plannerConfig.youtube_products === "string" ? String(plannerConfig.youtube_products) : Array.isArray(plannerConfig.youtube_products) ? (plannerConfig.youtube_products as unknown[]).join(",") : null,
+        youtube_privacy: typeof plannerConfig.youtube_privacy === "string" ? String(plannerConfig.youtube_privacy) : null,
+        youtube_made_for_kids: plannerConfig.youtube_made_for_kids ?? null,
+        youtube_monetize_with_ads: plannerConfig.youtube_monetize_with_ads ?? null,
+        youtube_category_id: plannerConfig.youtube_category_id ?? null,
+        youtube_pinned_comment: typeof (plannerConfig.youtube_pinned_comment ?? plannerConfig.youtube_pinned_comment_text) === "string" ? String(plannerConfig.youtube_pinned_comment ?? plannerConfig.youtube_pinned_comment_text) : null,
+    };
+
+    // Isolation: detectar planners mistos (grandfathered) — não bloqueia preview, mas expõe warning
+    const platformType = getPlannerPlatformType(config, planner.channels as Array<{ platform?: string | null }>);
+    const isMixed = platformType === "mixed";
+    const isolationWarning = isMixed ? PLANNER_MIX_ERROR : null;
+
     return NextResponse.json({
         planner: {
             id: planner.id,
@@ -218,6 +236,8 @@ export async function GET(
             status: planner.status,
             last_run: planner.last_run,
         },
+        youtube: youtubeFields,
+        youtube_fields: youtubeFields,
         runtime: {
             ...runtime,
             // Override the runtime caption with the template-resolved one for preview.
@@ -231,6 +251,8 @@ export async function GET(
         publishable_channels: channels.filter(
             (channel: { health: { ok: boolean } }) => channel.health.ok,
         ),
+        platform_type: platformType,
+        isolation_warning: isolationWarning,
         gating: {
             gated,
             next_run_at: nextRunAt ? nextRunAt.toISOString() : null,
