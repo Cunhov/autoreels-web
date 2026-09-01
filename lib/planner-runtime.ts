@@ -106,40 +106,145 @@ function cloneState(
 	return state ? JSON.parse(JSON.stringify(state)) : {};
 }
 
-function selectContentIndex(
+/**
+ * F3 — item_rotation do config (opcional): controle EXPLÍCITO da rotação de
+ * itens da library.
+ *   mode:   'sequential' | 'random' (com dedupe via published_indexes)
+ *   repeat: true (default) = reinício automático quando a fila esgota
+ *           (publica todos de novo, como o repeating do FS Poster);
+ *           false = para sem consumir item quando todos já foram usados.
+ * Retrocompat: config SEM item_rotation → null (comportamento atual do
+ * sort_order preservado, com repeat implícito ON).
+ */
+export type ItemRotationConfig = {
+	mode: "" | "sequential" | "random";
+	repeat: boolean;
+};
+
+/**
+ * Lê item_rotation do config defensivamente. Layout inválido → null (falls
+ * back para sort_order); mode desconhecido → "" (mesmo fallback); repeat
+ * ausente → true (default = reinício ON).
+ */
+export function parseItemRotation(
+	config: PlannerJson,
+): ItemRotationConfig | null {
+	const raw = config.item_rotation;
+	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+	const mode = String((raw as Record<string, unknown>).mode ?? "");
+	const repeat = (raw as Record<string, unknown>).repeat;
+	return {
+		mode: mode === "sequential" || mode === "random" ? mode : "",
+		repeat: typeof repeat === "boolean" ? repeat : true,
+	};
+}
+
+type RotationStrategy =
+	| { kind: "dedupe-random"; repeat: boolean }
+	| { kind: "dedupe-sequential"; repeat: boolean }
+	| { kind: "cursor-new-to-old" }
+	| { kind: "cursor-old-to-new" };
+
+/**
+ * Resolve a estratégia de rotação a partir de sort_order + item_rotation (F3).
+ * item_rotation (quando tem mode válido) vence sort_order — é o controle
+ * explícito mais novo. Sem item_rotation: random_loop → dedupe-random com
+ * repeat (já reseta hoje); new_to_old/old_to_new → cursores com wrap
+ * (repeat implícito). Comportamento legado 100% preservado.
+ */
+export function resolveRotationStrategy(
+	sortOrder: string,
+	itemRotation?: ItemRotationConfig | null,
+): RotationStrategy {
+	if (itemRotation?.mode) {
+		return {
+			kind:
+				itemRotation.mode === "random"
+					? "dedupe-random"
+					: "dedupe-sequential",
+			repeat: itemRotation.repeat,
+		};
+	}
+	if (sortOrder === "random_loop") {
+		return { kind: "dedupe-random", repeat: true };
+	}
+	if (sortOrder === "new_to_old") {
+		return { kind: "cursor-new-to-old" };
+	}
+	return { kind: "cursor-old-to-new" };
+}
+
+/**
+ * Seleção do próximo item da library — fonte ÚNICA da rotação (F3).
+ * Dedupe via state.published_indexes; quando a fila esgota (todos os itens já
+ * usados, incluindo índices órfãos de conteúdo encolhido):
+ *   - repeat=true  → ZERA o registro e recomeça automaticamente;
+ *   - repeat=false → retorna selectedIndex -1 com o state INTACTO (não
+ *     consome tick; runPlannerOnce trata -1 como fila vazia).
+ */
+export function selectContentIndex(
 	contentList: PlannerContentItem[],
 	sortOrder: string,
 	state: Record<string, unknown>,
+	itemRotation?: ItemRotationConfig | null,
 ) {
 	if (contentList.length === 0) {
 		return { selectedIndex: -1, nextState: state };
 	}
 
-	let selectedIndex = -1;
+	const strategy = resolveRotationStrategy(sortOrder, itemRotation);
 	const nextState = cloneState(state);
+	let selectedIndex = -1;
 
-	if (sortOrder === "random_loop") {
+	if (strategy.kind === "dedupe-random" || strategy.kind === "dedupe-sequential") {
 		const published = Array.isArray(nextState.published_indexes)
-			? nextState.published_indexes
+			? (nextState.published_indexes as unknown[])
 			: [];
+		const used = new Set(
+			published.filter(
+				(n): n is number => typeof n === "number" && Number.isFinite(n),
+			),
+		);
 		const available = contentList
 			.map((_, i) => i)
-			.filter((i) => !published.includes(i));
+			.filter((i) => !used.has(i));
 
 		if (available.length === 0) {
-			const lastIndex =
-				published.length > 0 ? published[published.length - 1] : -1;
-			let candidates = contentList.map((_, i) => i);
-			if (contentList.length > 1 && lastIndex !== -1) {
-				candidates = candidates.filter((i) => i !== lastIndex);
+			// Fila esgotada: todos os itens da library já foram usados.
+			if (!strategy.repeat) {
+				// repeat=false → NÃO recomeça: para sem marcar nada (state
+				// original intacto — mesma semântica de fila vazia).
+				return { selectedIndex: -1, nextState: state };
 			}
-			selectedIndex = candidates[Math.floor(Math.random() * candidates.length)];
+			// REINÍCIO automático (FS Poster repeating): zera o registro de
+			// usados e recomeça. Random evita repetir o ÚLTIMO item imediatamente
+			// (igual random_loop atual); sequential recomeça do início da fila.
+			const lastEntry = published[published.length - 1];
+			const lastIndex =
+				typeof lastEntry === "number" && Number.isFinite(lastEntry)
+					? lastEntry
+					: -1;
+			if (strategy.kind === "dedupe-sequential") {
+				selectedIndex = 0;
+			} else {
+				let candidates = contentList.map((_, i) => i);
+				if (contentList.length > 1 && lastIndex !== -1) {
+					candidates = candidates.filter((i) => i !== lastIndex);
+				}
+				selectedIndex =
+					candidates[Math.floor(Math.random() * candidates.length)];
+			}
 			nextState.published_indexes = [selectedIndex];
-		} else {
+		} else if (strategy.kind === "dedupe-random") {
 			selectedIndex = available[Math.floor(Math.random() * available.length)];
 			nextState.published_indexes = [...published, selectedIndex];
+		} else {
+			// dedupe-sequential: menor índice ainda não usado → cada item é
+			// publicado exatamente uma vez por ciclo, em ordem de fila.
+			selectedIndex = available[0];
+			nextState.published_indexes = [...published, selectedIndex];
 		}
-	} else if (sortOrder === "new_to_old") {
+	} else if (strategy.kind === "cursor-new-to-old") {
 		// Clamp: se o conteúdo encolheu desde o último run, o índice antigo
 		// pode estar fora da faixa — nunca deixar wedged (item inexistente).
 		const last =
@@ -841,6 +946,27 @@ export async function buildPostData(opts: {
 		platform: opts.channel.platform,
 	});
 
+	// F4: primeiro comentário — SNAPSHOT do ContentItem (library) para o Post.
+	// Decisão do dono: o YouTube publica automaticamente após o Short (o
+	// publisher lê `post.first_comment`); IG/TikTok apenas salvam o texto (sem
+	// API oficial de comentário). Mesmo caminho IDOR-safe do
+	// resolveCaptionTemplateVars (item por id/folder_id do usuário).
+	let firstComment: string | null = null;
+	const fcLibId =
+		runtime.selectedContent?.id || runtime.selectedContent?.folder_id;
+	if (fcLibId) {
+		try {
+			const fcItem = await opts.prisma.contentItem.findFirst({
+				where: { id: fcLibId, user_id: opts.planner.user_id },
+				select: { first_comment: true },
+			});
+			const fc = (fcItem?.first_comment || "").trim();
+			firstComment = fc ? fc.slice(0, 500) : null;
+		} catch {
+			/* SAFETY: best-effort opcional — item inexistente/ausente = sem comentário */
+		}
+	}
+
 	const isYtChannel =
 		(opts.channel.platform || "").toLowerCase() === "youtube";
 	const ytTypeForPost =
@@ -939,6 +1065,7 @@ export async function buildPostData(opts: {
 			? JSON.stringify(runtime.audioConfiguration)
 			: null,
 		caption,
+		first_comment: firstComment,
 		scheduled_at: opts.now,
 		planner_id: opts.planner.id,
 	} as unknown as Prisma.PostUncheckedCreateInput;
@@ -1117,6 +1244,22 @@ export async function propagatePlannerConfigToPendingPosts(
       selectedContent = globalCap ? { caption: String(globalCap) } as PlannerContentItem : null;
     }
 
+    // F4: re-deriva o primeiro comentário do item de library (MESMO caminho
+    // do buildPostData). undefined = não alterar o post (falha de lookup ou
+    // item sem id não sobrescreve o valor existente — regra M5/B2).
+    let newFirstComment: string | null | undefined = undefined;
+    const fcLibId = selectedContent?.id || selectedContent?.folder_id;
+    if (fcLibId) {
+      try {
+        const fcItem = await (prismaClient as PrismaLike).contentItem.findFirst({
+          where: { id: fcLibId, user_id: planner.user_id },
+          select: { first_comment: true },
+        });
+        const fc = (fcItem?.first_comment || "").trim();
+        newFirstComment = fc ? fc.slice(0, 500) : null;
+      } catch { /* SAFETY: mantém o primeiro comentário existente do post */ }
+    }
+
     // Resolve nova caption via applyCaptionTemplate (mesma semântica do buildPostData)
     let newCaption: string;
     try {
@@ -1195,6 +1338,7 @@ export async function propagatePlannerConfigToPendingPosts(
     const data: Record<string, unknown> = { caption: newCaption };
     if (newYoutubeOptions !== undefined) data.youtube_options = newYoutubeOptions;
     if (newTiktokOptions !== undefined) data.tiktok_options = newTiktokOptions;
+    if (newFirstComment !== undefined) data.first_comment = newFirstComment;
 
     // M14: re-checa o status DENTRO do where — o publisher pode ter claimado
     // (pending→processing) ou o usuário cancelado este post no instante da
@@ -1259,6 +1403,7 @@ export async function resolvePlannerRuntime(
 		contentList,
 		sortOrder,
 		state,
+		parseItemRotation(config),
 	);
 	const selectedContent = contentList[selectedIndex];
 
@@ -1595,7 +1740,12 @@ export async function runPlannerOnce(
 		const maxAttempts = Math.max(contentEntries.length, 1);
 		for (let attempt = 0; attempt < maxAttempts; attempt++) {
 			// Peek: qual índice o PRÓXIMO resolve selecionará a partir deste estado?
-			const peek = selectContentIndex(contentEntries, sortOrderKey, advanceState);
+			const peek = selectContentIndex(
+				contentEntries,
+				sortOrderKey,
+				advanceState,
+				parseItemRotation(config),
+			);
 			if (!peek || peek.selectedIndex === -1) break;
 			if (attempted.has(peek.selectedIndex)) break; // ciclo completo
 			attempted.add(peek.selectedIndex);

@@ -12,6 +12,10 @@
  *   start_time:     ISO string (data de início)
  *   caption_templates: string[]
  *   caption_rotation:  'off' | 'sequential' | 'random'
+ *   item_rotation:     { mode: 'sequential'|'random', repeat: true } — opcional (F3)
+ *                      controle explícito da rotação de ITENS da library com dedupe
+ *                      + reinício automático quando a fila esgota; sem o campo = o
+ *                      sort_order legado corre com repeat implícito ON.
  *   collaborators:  string[] OU string comma-separated (normalizado p/ comma-string)
  *   user_tags:      string[] OU string comma-separated (normalizado p/ comma-string)
  *   audio_configuration: objeto { audio_id, audio_volume?, video_volume? }
@@ -23,6 +27,7 @@
 const SORT_ORDERS = ["random_loop", "old_to_new", "new_to_old"] as const;
 const FREQUENCY_UNITS = ["minutes", "hours", "days", "weeks"] as const;
 const CAPTION_ROTATIONS = ["off", "sequential", "random"] as const;
+const ITEM_ROTATION_MODES = ["sequential", "random"] as const;
 const DEFAULT_TIMEZONE = "America/Sao_Paulo";
 
 /** Regex estrito de relógio HH:MM (00:00–23:59). */
@@ -636,6 +641,36 @@ export function validatePlannerConfig(config: unknown): {
         errors.push(
             `caption_rotation deve ser ${CAPTION_ROTATIONS.join(" | ")}`,
         );
+    }
+
+    // item_rotation (F3 — rotação de itens com dedupe + reinício)
+    if (c.item_rotation !== undefined && c.item_rotation !== null) {
+        const ir = c.item_rotation;
+        if (typeof ir !== "object" || Array.isArray(ir)) {
+            errors.push(
+                "item_rotation deve ser um objeto { mode, repeat }",
+            );
+        } else {
+            const i = ir as PlannerJson;
+            if (
+                i.mode !== undefined &&
+                i.mode !== null &&
+                !(ITEM_ROTATION_MODES as readonly string[]).includes(
+                    String(i.mode),
+                )
+            ) {
+                errors.push(
+                    `item_rotation.mode deve ser ${ITEM_ROTATION_MODES.join(" | ")}`,
+                );
+            }
+            if (
+                i.repeat !== undefined &&
+                i.repeat !== null &&
+                typeof i.repeat !== "boolean"
+            ) {
+                errors.push("item_rotation.repeat deve ser um boolean");
+            }
+        }
     }
 
     // collaborators / user_tags — mesmo formato aceito pela normalização
