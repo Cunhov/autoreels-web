@@ -281,8 +281,9 @@ async function notifyPostFailed(
 // `cancelled` (bug-remove) ou já `published`/`failed` NÃO pode ser sobrescrito
 // por uma escrita final atrasada. `scheduled` fica fora: posts scheduled nunca
 // chegam às lanes (só entram via claim pending→processing).
+// F5/M13: finalizePostWrite e isPostStillInFlight vêm do lib (extraído para
+// teste); PUBLISHABLE_IN_FLIGHT_STATUSES é usado internamente pelo lib.
 import {
-	PUBLISHABLE_IN_FLIGHT_STATUSES,
 	finalizePostWrite,
 	isPostStillInFlight,
 } from "@/lib/publisher-race-guard";

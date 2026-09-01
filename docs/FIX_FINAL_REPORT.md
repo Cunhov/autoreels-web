@@ -1,105 +1,99 @@
-# FIX_FINAL_REPORT — F7 Integração Final QA (gauntlet loop)
+# FIX_FINAL_REPORT — F7 Integração/QA Final (7 blocos consolidados)
 
-> **Agente:** 7/8 — BUILDER+CRÍTICO · **Fase:** F7 — Integrador/QA final
-> **Branch:** `feat/yt-products-dual-captions` · **Base da verificação:** `85855ad` (pré-F0) → HEAD `0529a67` (F6)
-> **Fonte de verdade:** `docs/PLANNER_AUDIT_REPORT.md` + `docs/audit-track-*.md` + `docs/fix-{F0..F6}-*.md` (todos lidos antes de editar)
-> **Natureza:** auditoria cross-bloco (4 invariantes) + barra completa + 1 correção de integração (guard M5 na propagação) + relatório. NENHUM doc legado editado.
-
----
-
-## 0. Veredito
-
-**INTEGRAÇÃO OK — com 1 correção de QA.** A cadeia F0→F6 está íntegra: as 4 invariantes cross-bloco se verificam no código, a barra completa passa (tsc/build/prisma/lint-baseline) e **todas as 5 suítes commitadas passam (52/52 cenários + regressão)**. Foi encontrado e corrigido **1 gap real de integração na propagação** (apagar `youtube_options` quando o título não resolve — violação da garantia M5). Commit final desta fase no HEAD da branch, sem push (decisão do dono).
+> **Agente:** 8 — BUILDER+CRÍTICO (gauntlet loop) · **Fase:** F7 — INTEGRADOR/QA FINAL
+> **Branch:** `feat/yt-products-dual-captions` · **HEAD inicial:** `85855ad` (base da cadeia F0–F6) → **HEAD final:** commit deste relatório
+> **Natureza:** auditoria cross-bloco + re-verificação da barra completa + 1 limpeza mínima (import morto) + relatório de consolidação. Nenhuma feature nova; nenhum contrato quebrado.
 
 ---
 
-## 1. Matriz bloco → arquivos → status (F0–F6, re-verificado no worktree)
+## 1. Cadeia de commits verificada (F0→F6, ordem cronológica)
 
-| Bloco | Problemas (PLANNER_AUDIT) | Arquivos principais | Status no F7 |
+| Bloco | Commits | docs/fix-* | Status |
 |---|---|---|---|
-| **F0-B0** deadlock + media type por forma | M7/M19/M23/M8 | `components/PlannerWizard.tsx` (guard Short, texto da Comunidade, label carrossel, campos YT só em REELS), `lib/planner-config.ts` (`resolveCaptionTextForWizard`, `validateYtCommunityText`, `YT_CONFIG_KEYS`) | ✅ wizard `:1937-1995` — Produtos Afiliados só no bloco `REELS`; Comunidade sem produtos com aviso textual (`:1930-1933`) |
-| **F1-B1** produtos | M1/M2/M3/M4/M22 | `lib/planner-config.ts` (`toYoutubeProductsJson` `:241`, `resolveShortProductsRouting` `:264-352`), `lib/planner-runtime.ts` (`:603-616`), `lib/youtube.ts` (`createAutoShort` `:475`), `app/api/cron/publisher/route.ts` (`:1180-1320`), `PlannerWizard.tsx` (picker live), `preview/route.ts` (`:227-233`) | ✅ helper único; roteamento 14/14; query-only **NUNCA** em `/shorts` (teste negativo M4); nenhum template `{var}` em products; vírgula no nome preservada |
-| **F2-B2** propagação | M5/M17/M18/G4 | `lib/planner-runtime.ts` (`buildYoutubeOptionsForPost` `:449`, callers `:704`/`:945`; `CAPTION_PROPAGATION_KEYS` `:696-712`) | ✅ função ÚNICA (ambos os callers verificados; nome antigo `buildYoutubeOptionsForPropagation` = 0 hits); community NÃO reescrita (`:956-960`) |
-| **F3-B3** videoId real | M6 | `app/api/youtube/products/route.ts` (`:22-41` fallback último Short + 400 PT-BR; `:75-95` proxy), `lib/youtube.ts` (`listProducts` `:633-657`) | ✅ canal sem Short → 400 claro; wizard sem derivação de videoId (`:687-689`); proxy repassado |
-| **F4-P1** dual captions | M9 | `lib/sanitize.ts` (`sanitizeCaption` `:131-144`), `content-items/route.ts` whitelists+sanitize, `lib/folder-captions.ts`, `contexts/UploadContext.tsx`, `upload-chunk/complete/route.ts`, `lib/planner-runtime.ts` (`resolveFinalCaption` `:279`, usada só em `:316`) | ✅ régua ÚNICA `resolveFinalCaption` (1 def, 1 uso); uploader youtube.txt/instagram.txt; round-trip 12/12 + 8/8 |
-| **F5-P1** races + robustez | M13/M14/M11/M10/M15 | `lib/publisher-race-guard.ts` (`finalizePostWrite`, `isPostStillInFlight`), publisher (guard nas escritas finais), `planner-runtime.ts` (M14 updateMany `:963-985`, M11 STORIES→REELS `:1145-1157`, M15 retry loop `:1325-1364`), `app/api/posts/route.ts` (M10), `PlannerWizard.tsx` (M10) | ✅ 11/11; STORIES fora de YT no runtime (configs grandfathered); carrossel 2..10 client+server |
-| **F6-P1** proxy gestão | M16 | `lib/youtube.ts` (7 funções com `proxyUrl?`), rotas refresh/comments/posts/sessions/link/connect/channels, publisher `getSession` `:1366` | ✅ proxy nos callers; `createAutoShort` com `proxyUrl: proxyForShort` (`publisher:1274-1282`) |
-
-### Invariantes cross-bloco (pedido explícito da tarefa) — verificação com grep/leitura
-1. **`toYoutubeProductsJson` 1 régua** — def `planner-config.ts:241`; consumido por `buildYoutubeOptionsForPost` (usado por build+propagação). Preview expõe o formato canônico via `normalizeYoutubeProductsList`+`serializeYoutubeProducts` (o MESMO normalizador por baixo do helper — `preview/route.ts:227-233`); não publica, não precisa do split names/items. Sem CSV cru em nenhum caminho.
-2. **`buildYoutubeOptionsForPost` única** — def `planner-runtime.ts:449`; callers: `:704` (buildPostData) e `:945` (propagação). `buildYoutubeOptionsForPropagation` deletada (0 hits). Cadeia de título M17, products M5, description M18, pinned G4 nos dois caminhos.
-3. **`resolveFinalCaption` única** — def `planner-runtime.ts:279`; único uso `:316` dentro de `resolveCaptionTemplateVars` (consumido por build/propagate/preview). Nenhuma cópia em components/contexts.
-4. **`createAutoShort` com proxy nos callers** — único caller `publisher:1274` recebe `proxyUrl: proxyForShort` (`:1282`), mesma cobertura do `createShort`. `product_names` serializado via `JSON.stringify` (vírgula no nome preservada — M22).
-
-### Barra feature (item 4 da tarefa) — re-verificada
-| Regra | Evidência no worktree |
-|---|---|
-| Nada de query-only em `/shorts` | `resolveShortProductsRouting` (`planner-config.ts:264-352`): query-only → `route:"auto"` (`createAutoShort`); teste negativo M4 em `products-routing.mts` (14/14) |
-| Nada de template em products | `toYoutubeProductsJson`: `normalizeYoutubeProductsList` + split names/items; sem `substituteCaptionTemplate`; `buildYoutubeOptionsForPost` resolve template só em title/description (`:455-468`) |
-| Comunidade SEM produtos | `buildPostData`: `ytTypeForPost==="community"` → `youtubeOptions=null` (`:694-716`); propagação: ramo community `newYoutubeOptions=undefined` (`:956-960`); wizard: bloco produtos só em `mediaType==="REELS"` |
-| STORIES fora de YT | `resolvePlannerRuntime` `:1145-1157` (canal YT + STORIES → REELS com warning, preview incluso); wizard auto-fix no load/save; select STORIES oculto com canal YT |
-| Proxy no `createAutoShort` | `publisher:1274-1282` — `proxyUrl: getChannelProxyUrl(post.channel)` |
+| **F0 — deadlock planner YT-only + media type por forma** | `d2723ba` (fix) · `60fd763` (verificação pós-B1) | `docs/fix-F0-b0-deadlock-yt-community.md` | ✅ |
+| **F1 — produtos afiliados (formato único + roteamento + picker)** | `881d1d5` (helper/runtime) · `233d0e8` (publisher/createAutoShort) · `67dbf6a` (wizard picker) · `521f4c9` (docs) · `72408b2` (legado CSV/junk) · `cbed454` (resolveShortProductsRouting + teste 14/14) | `docs/fix-F1-b1-produtos-afiliados.md` | ✅ |
+| **F2 — propagação espelha buildPostData** | `5a4cb9c` (buildYoutubeOptionsForPost única) · `f71cf61` (smoke commitado 6→7/7) | `docs/fix-F2-b2-propagacao-espelha-buildpostdata.md` | ✅ |
+| **F3 — videoId real na busca de produtos (M6)** | `7be89ef` (fallback último Short + proxy listProducts) · `aa626e0` (guard legacy + labels) | `docs/fix-F3-b3-video-id-real-busca-produtos.md` | ✅ |
+| **F4 — dual captions end-to-end (M9)** | `5d56d8a` (whitelist+sanitize) · `5e70c61` (uploader youtube.txt/instagram.txt) · `06564ff` (resolveFinalCaption única) · `a6cda86` (smoke 8/8) · `a333c76` (docs) · `13443a5` (E2E de rota 12/12) | `docs/fix-F4-P1-captions-duais.md` + `docs/fix-F4-P1-dual-captions.md` | ✅ |
+| **F5 — races (M13/M14/M11/M10/M15)** | `36d1ad9` (guards + normalizações) | `docs/fix-races.md` | ✅ |
+| **F6 — proxy nas rotas de gestão YT (M16)** | `efdc459` (fix) · `0529a67` (docs complementar) | `docs/fix-F6-P1-proxy-gestao-yt.md` + `docs/fix-F6-P1-proxy-rotas-gestao.md` | ✅ |
+| **F7 — este bloco** | commit final deste relatório | `docs/FIX_FINAL_REPORT.md` (este) | ✅ |
 
 ---
 
-## 2. Correção desta fase (F7/QA) — guard M5 na propagação
+## 2. Auditoria cross-bloco — 4 pontos únicos exigidos
 
-**Gap encontrado (crítico, dentro da garantia M5 "editar planner nunca apaga dados de publicação"):**
-`buildYoutubeOptionsForPost` retorna `null` quando NENHUM título é resolvível (config patológico legado: `youtube_title` e caption vazios + content sem título/fallback/item). A unificação F2 fez a propagação gravar `youtube_options = null` nesse caso — **apagava** products/título existentes de um Short pendente (o código antigo `buildYoutubeOptionsForPropagation` nunca retornava null; era um delta de comportamento da unificação).
+| Régua única | Local (arquivo:linha) | Consumidores | Veredito |
+|---|---|---|---|
+| **`toYoutubeProductsJson`** (products → {names, items}) | `lib/planner-config.ts:214-244` | `buildYoutubeOptionsForPost` (`planner-runtime.ts:608`) — usado por **criação** (`:704`) e **propagação** (`:945`); **preview** usa a MESMA base `normalizeYoutubeProductsList`+`serializeYoutubeProducts` (`preview/route.ts:227-235`) para formato canônico de exibição | ✅ 1 régua — zero duplicação de parser products no runtime |
+| **`buildYoutubeOptionsForPost`** (opts → youtube_options JSON) | `lib/planner-runtime.ts:449-650` | Única: `buildPostData` (`:704`) e `propagatePlannerConfigToPendingPosts` (`:945`). `buildYoutubeOptionsForPropagation` **DELETADA** (F2) | ✅ 1 função — propagação nunca mais apaga products/título/template-desc |
+| **`resolveFinalCaption`** (plataforma → caption final) | `lib/planner-runtime.ts:279-287` (`youtube → caption_youtube ?? caption`; `instagram → caption_instagram ?? caption`; senão `caption`) | Via `resolveCaptionTemplateVars` (`:316`) + `applyCaptionTemplate` + `buildYoutubeOptionsForPost`; plataforma por canal em buildPostData (`:704`), propagação por post (`:945`), preview 1º canal (`:1122`, `preview/route.ts:140`) | ✅ 1 régua — `??` explicito (vazio = escolha), nunca 3 cópias |
+| **`createAutoShort` com proxyUrl** | `lib/youtube.ts:475-541` (`proxyUrl?` → `youtubeFetch(..., input.proxyUrl ?? null)` `:531`) | Único caller `app/api/cron/publisher/route.ts:1274-1292` — `proxyUrl: proxyForShort` (`= getChannelProxyUrl(post.channel)` `:1264`) | ✅ proxy honrado na rota `/api/shorts/auto` |
 
-**Correção — `lib/planner-runtime.ts:945-970`:** no ramo Short da propagação, `rebuilt !== null` → aplica; `null` → mantém `undefined` (youtube_options existente **preservado**). O post segue pendente; a falha real, se existir, será de publicação com mensagem clara — não propagação silenciosa destruindo dados.
+## 3. Re-verificação da barra de entregas (item a item)
 
-**Teste de regressão commitado — `.ai/f2-smoke/smoke.test.mts` T7 (agora 7/7):** post `p9` com `youtube_options` (título+products) + config sem título resolvível → assert `upd.data.youtube_options === undefined` (não zerado) e post atualizado.
+| Entrega | Verificação | Evidência |
+|---|---|---|
+| **Isolation YT/IG** (mix bloqueado) | `validatePlannerChannelMix` + guards client/server intactos (F0 não reverteu; campo community vive dentro do box YT) | `lib/planner-config.ts:314-340`; smoke F2 T5 (post IG → youtube_options intocado) ✅ |
+| **Proxy no publisher** | createShort/createAutoShort/community-text/upload/IG + getSession check expirada | `publisher:1264` (proxyForShort), `:989/:1166` (community via `ytProxy`) ✅ |
+| **bug-remove (cancelamento)** | PATCH cria `cancelled`; publisher nunca mais sobrescreve (M13 guards) | `lib/publisher-race-guard.ts`; F5 T11 "nenhuma escrita incondicional por id" ✅ |
+| **bug-desc (propagação)** | título/descrição/products propagam via função única (M5/M17/M18) | smoke F2 T3 (PATCH youtube_title → title muda nos pending) ✅ |
+| **Dual captions** | whitelist + sanitize + uploader `youtube.txt`/`instagram.txt` + resolução por plataforma | smokes F4 8/8 + E2E rota 12/12 ✅ |
+| **Produtos afiliados** | `toYoutubeProductsJson` única + roteamento `verbatim→/shorts`, `names→/auto`, `none→sem products` | `lib/planner-config.ts:284-352`; teste `products-routing.mts` 14/14 ✅ |
 
-**Verificado sem regressão:** tsc 0 erros · build ✓ · prisma validate ✓ · smokes f2 7/7, f4 8/8, f4-dual 12/12, f5-races 11/11, products-routing 14/14.
+| Item da barra (semântico) | Status | Evidência |
+|---|---|---|
+| **Nada de query-only em `/shorts`** | ✅ | `resolveShortProductsRouting`: verbatim → `/shorts` com `products`; nomes → `/shorts/auto`; nomes coexistentes viram SKIP com warning (`publisher:1253-1259`); teste M4 negativo: `{query}` sem item → `/auto` |
+| **Nada de template em products** | ✅ | `buildYoutubeOptionsForPost` aplica `resolveYtTpl` SÓ em `youtube_title`/`youtube_description` (`:472-479`); products passam por `toYoutubeProductsJson` sem substituição (M22) — vírgula no nome sobrevive |
+| **Comunidade SEM produtos** | ✅ | Community usa `createCommunityPostText`/`uploadCommunityPost` (`publisher:990/:1166`) — sem `products`; `youtube_options` nunca reescrito na propagação de community (`:948-950`) |
+| **STORIES fora de YT** | ✅ | `resolvePlannerRuntime` normaliza `STORIES→REELS` quando 1º canal é YT (`planner-runtime.ts:1145-1157`) + wizard já auto-fixa no load/save; IG mantém STORIES |
+| **Proxy no createAutoShort** | ✅ | `publisher:1274` → `proxyUrl: proxyForShort` |
 
----
-
-## 3. Barra executada (HEAD pós-correção)
+## 4. Barra executada no HEAD final
 
 | Check | Resultado |
 |---|---|
-| `node ./node_modules/prisma/build/index.js validate` (+ `generate`) | ✅ schema válido, generate OK |
-| `npm run build` | ✅ Compiled successfully (48/48 páginas + rotas) |
+| `node ./node_modules/prisma/build/index.js validate` | ✅ schema válido |
+| `node ./node_modules/prisma/build/index.js generate` | ✅ Prisma Client v7.4.2 gerado |
+| `npm run build` | ✅ Compiled successfully (48/48 páginas) |
 | `npx tsc --noEmit` | ✅ 0 erros |
-| `npm run lint` | ✅ 42 erros / 79 warnings — **idêntico à baseline `85855ad`** (comparado via worktree temporário: 41×`no-explicit-any` + 1×`ban-ts-comment` em ambos; diff de linhas é só shift de edição). Nenhum novo |
-| Suítes commitadas | ✅ products-routing 14/14 · f2 7/7 · f4 8/8 · f4-dual 12/12 · f5-races 11/11 (52 cenários, 0 falhas) |
-| Git | ✅ commits F0..F7 na branch; sem push |
+| `npm run lint` | ✅ 42 erros (idêntico à baseline `85855ad`: 42/42 — todos `no-explicit-any` pré-existentes) · 78 warnings (baseline 75; +3 aceitos: 2× anon-default-export em shims de teste `.ai/f4-dual-captions/*.mjs`, 1× exhaustive-deps falso-positivo no wizard — ref estável) |
+| Smokes commitados | F2 **7/7** · F4 **8/8** · F4-dual-captions **12/12** · F5-races **11/11** · products-routing **14/14** — todos verdes no HEAD final |
+| **Mudança deste bloco** | remoção de import morto `PUBLISHABLE_IN_FLIGHT_STATUSES` em `app/api/cron/publisher/route.ts` (dead code de F5; -1 warning; zero runtime) |
 
----
+## 5. Testes E2E sugeridos (ponta-a-ponta, não automatizáveis sem API real)
 
-## 4. Testes E2E sugeridos (contra API externa real + banco)
+1. **Produtos:** planner Short YT com 1 item verbatim + 1 nome → publicar → conferir log `resolveShortProductsRouting` (item tem prioridade, nome vira SKIP) e Short publicado com tag do item. Segundo planner só com nomes → `/shorts/auto` → Short com `total_selected` > 0.
+2. **Dual captions:** pasta `video.mp4 + youtube.txt + instagram.txt` → upload → planner YT `{post_caption}` → post comunidade/short com texto do youtube.txt; planner IG → instagram.txt; pasta só com `legenda.txt` → ambos usam a genérica; `youtube.txt` vazio → YT sai vazio (`??`).
+3. **Propagação:** planner com products+título+desc template → PATCH só a caption → `youtube_options` dos pending preserva products/título/desc re-resolvida; PATCH `youtube_title` → título dos pending muda.
+4. **Races:** rodar cron; remover canal (bug-remove) com post `processing` → post permanece `cancelled` após o tick (log "desfecho bloqueado").
+5. **Proxy M16:** canal atrás de proxy → refresh de sessão, listar/fixar comentários, deletar post de comunidade, `GET /api/youtube/sessions?channelId=` — todos devem sair pela network do proxy (log da API externa).
+6. **STORIES legado:** config com `media_type:"STORIES"` em canal YT (editar JSON direto) → run → Short REELS com vídeo, warning no preview.
+7. **Carrossel M10:** wizard com pasta de 1 imagem (bloqueio 400 PT-BR) e `POST /api/posts` CAROUSEL 1/11 → 400; 2..10 → 200.
+8. **Busca M6:** `GET /api/youtube/products?channelId=&query=` sem videoId → último Short publicado resolve; canal sem Short → 400 PT-BR amigável → wizard mantém nome (auto-select).
+9. **Community sem produtos:** planner YT Comunidade com products preenchidos → post comunidade NÃO envia products (sem efeito colateral de tagging).
 
-1. **Cadeia Short completa:** planner YT Short com título+descrição com `{var}` + 1 produto verbatim + 1 query-only para o mesmo vídeo → `run` → esperado: 1 post ao `/shorts` (verbatim, com SKIP-warning do nome) OU campo separado em `/auto`; conferir log do planner (`Short enviado via /api/shorts/auto` vs `/api/shorts (N produto(s) verbatim)`).
-2. **Busca de produto:** canal com 1 Short publicado → `GET /api/youtube/products?channelId&query=x` sem `videoId` → 200 com `video_id` real; canal sem Short → 400 PT-BR "publique um Short primeiro".
-3. **Propagação (M5/M17/M18 + F7 guard):** planner Short com products → PATCH só caption → pending preservam products/título/desc re-resolvida; PATCH `youtube_title` → título muda (teste-ouro bug-desc); config patológico sem título (PATCH via API direta) → `youtube_options` de pending NÃO é zerado.
-4. **Dual captions round-trip:** pasta `video.mp4`+`youtube.txt`+`instagram.txt` → item com as 3 captions; planner YT `{post_caption}` → youtube.txt; planner IG → instagram.txt; só `legenda.txt` → fallback genérico nas duas.
-5. **Races (M13/M14):** disparar cron com posts `processing` e remover o canal (PATCH bug-remove) no meio → posts permanecem `cancelled`; PATCH grande de propagação com post cancelado no meio do lote → cancelado não é reescrito.
-6. **Comunidade sem produtos (M8/M19):** planner YT IMAGE → só "Texto da Publicação"; sem box de produtos; run → post community com `message` não-vazio e `youtube_options` nulo.
-7. **Proxy (M16):** canal com `proxy_url` morto → rotas de gestão (refresh/comments/posts/products) falham com erro de rede (prova do repasse) vs sucesso direto sem proxy; publicar Short de canal com proxy → cria via proxy.
-8. **STORIES legado (M11):** config grandfathered com `media_type:"STORIES"` em planner YT → run/preview mostram REELS e publicam Short com vídeo.
-9. **Carrossel 2..10 (M10):** wizard carrossel com pasta de 1 imagem → bloqueado com erro PT-BR; `POST /api/posts` com 1 child → 400 PT-BR.
+## 6. Riscos residuais (documentados nos blocos, não corrigidos por decisão de escopo)
 
----
+- **R1 — Wizard sem inputs dedicados de caption por plataforma (F4-P2):** `caption_youtube`/`caption_instagram` só entram via `{post_caption}` + item de biblioteca; `resolveCaptionTextForWizard` ainda estima dos fallbacks (validação pode bloquear item que só tem `youtube.txt`).
+- **R2 — Carrossel IT 1 item legado (M10 residual):** runtime continua errando só com 0 filhos; configs grandfathered com 1 filho podem chegar ao publisher → falha definitiva com mensagem da API IG (não corrigido para não quebrar comunidade YT de 1 imagem).
+- **R3 — `createSession` sem proxy (M16 R2):** a sessão ainda não tem canal na criação; limpeza de órfã já usa proxy do body. P2 futuro.
+- **R4 — `getHealth` direto (M16 R3):** check global sem canal; documentado (P2 usar 1º canal com proxy ou manter direto).
+- **R5 — Efeito colateral M13:** quando a API JÁ publicou e o cancelamento vence a corrida, o banco fica `cancelled` com conteúdo remoto existente — comportamento correto (cancelamento é decisão do usuário), log registra o fato.
+- **R6 — `video_id` dos Shorts:** fallback do B3 depende de `youtube_video_id` preenchido (publisher grava junto com `published_at`); posts publicados ANTES do F3 com id vazio são excluídos do fallback por guard `NOT equals ""`.
+- **R7 — Lint baseline:** 42 erros `no-explicit-any` pré-existentes na branch (não criados pela cadeia F0-F6; igual contagem em `85855ad`). Não limpos para não arriscar regressão na fase final.
 
-## 5. Riscos residuais (aceitos)
+## 7. Próximos passos (fora do escopo F0–F7)
 
-1. **`createSession` sem proxy** (connect): primeira sessão via chamada direta — canal que SÓ alcança a API via proxy não cria sessão. P2 futuro documentado (F6 R2).
-2. **Health global sem proxy** (F6 R3) e **`listSessions` sem `channelId`** (multi-sessão sem canal único) — diretos por natureza.
-3. **Wizard sem inputs próprios de caption por plataforma (F4-P2):** o uso é via `{post_caption}` + arquivos da biblioteca; item com só `youtube.txt` (sem genérica) pode ser bloqueado no save do wizard mesmo resolvendo bem no runtime.
-4. **`sacrifice_video_id` (vídeo isca) não implementado** (F3): fallback cobre último Short publicado; sem Short → 400 (UX cobre com mensagem amigável).
-5. **Filtros do `/shorts/auto` com default** (todos marketplaces, `min_commission_pct:0`, `items_per_product:1`): expor na UI é evolução.
-6. **F7-guard é janela estreita:** só protege o caso título-não-resolvível; demais ramos da propagação (caption vazia para community) permanecem contrato pré-existente.
-7. **Legado fora do branch:** `.ai/watcher-audit-baseline.md` e `docs/diagnose-upload-vps.md` seguem **untracked** (artefatos de fases anteriores / template de diagnóstico do dono — não editados, não commitados por decisão).
-8. **API externa fora do controle da branch:** contrato `/shorts/auto`, `_parse_products`, `video_id` obrigatório estão congelados pela spec; mudanças lá quebram a web silenciosamente.
+1. **F4-P2 — inputs de caption por plataforma no wizard** (fecha R1) + `resolveCaptionTextForWizard` ciente de `caption_youtube`/`caption_instagram`.
+2. **Runtime M10 — régua 2..10 no runtime** para carrosséis criados fora do wizard (fecha R2).
+3. **Vídeo isca (`sacrifice_video_id`)** via `POST /api/sessions/{id}/config` da API externa — documentado no F3 como fluxo futuro (busca sem nenhum Short publicado).
+4. **`createSession` com proxy** (fecha R3) e **health com proxy do 1º canal** (fecha R4) se houver demanda.
+5. **Limpeza de lint baseline (R7)** como separate PR sem tocar lógica.
+6. **Release/deploy:** `npx prisma migrate deploy && npx prisma db push` (migration 0009 — captions duplas — necessária no banco) + restart do cron.
 
----
+## 8. Commit deste bloco
 
-## 6. Próximos passos (dona/dono decide)
-
-1. **F4-P2:** inputs visuais de `caption_youtube`/`caption_instagram` no wizard (único P1 da spec ainda sem UI) + atualizar `resolveCaptionTextForWizard` para aceitar item com só caption por plataforma.
-2. **P2 higiene (M21/M27):** dropdown `YOUTUBE_CATEGORIES` no wizard; faixa 1..100 (`parseYoutubeOptions`); pinned alias único; duplicate+validate; chips `{var}` na descrição YT (já há placeholder prometendo — falta UI).
-3. **Sacrifice video** na rota de produtos (`POST /api/sessions/{id}/config` já existe na externa) quando UX exigir canal sem Shorts.
-4. **UI de filtros do auto-select** (min_commission_pct/items_per_product/price_weight/commission_weight) — hoje default.
-5. **Deploy/QA em VPS (Easypanel):** rodar `docs/diagnose-upload-vps.md` para o erro "No uploaded chunks found" (réplicas sem volume compartilhado é a causa mais provável — fora desta branch).
-6. **Push e PR** — decisão do dono (nada foi pushado pela cadeia).
+- `app/api/cron/publisher/route.ts` — remoção do import morto `PUBLISHABLE_IN_FLIGHT_STATUSES` (dead code F5; -1 warning, zero runtime).
+- `docs/FIX_FINAL_REPORT.md` — este relatório.
+- **NUNCA push** (decisão do dono). Arquivos untracked de outros agentes (`.ai/watcher-audit-baseline.md`, `docs/diagnose-upload-vps.md`) NÃO commitados.
