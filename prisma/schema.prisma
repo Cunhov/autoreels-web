@@ -149,6 +149,7 @@ model ContentItem {
   caption     String?
   caption_youtube String?  // caption específica do YouTube (arquivo youtube.txt na pasta)
   caption_instagram String? // caption específica do Instagram (arquivo instagram.txt na pasta)
+  caption_tiktok String?  // caption específica do TikTok (arquivo tiktok.txt na pasta)
   youtube_products String?  // CSV de NOMES de produtos afiliados do YouTube (por vídeo; vence o fixo do planner)
   created_at  DateTime @default(now())
 
@@ -195,6 +196,12 @@ model Post {
   youtube_video_id       String?   // video id do Short publicado
   youtube_post_id        String?   // remote_post_id do post da Comunidade (p/ exclusão)
   youtube_options        String?   // JSON: opções do Short (title, description, privacy, made_for_kids, monetize_with_ads, category_id, pinned_comment_text)
+  // TikTok
+  tiktok_type            String?   // "video" (v1 apenas vídeo)
+  tiktok_post_id         String?   // publish_id / video_id do TikTok
+  tiktok_publish_id      String?   // publish_id returned by POST /v2/post/publish/video/init/
+  tiktok_options         String?   // JSON: opções do TikTok (title, privacy_level, disable_duet, disable_stitch, disable_comment, video_cover_timestamp_ms, brand_content_toggle, brand_organic_toggle)
+  tiktok_status          String?   // status TikTok: pending | processing | published | failed
   created_at             DateTime  @default(now())
 
   user    User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
@@ -212,6 +219,7 @@ model Post {
   @@index([planner_id, status])
   @@index([channel_id, status, published_at])
   @@index([youtube_video_id])
+  @@index([tiktok_post_id])
 }
 
 // Registro de qual usuário do app criou cada sessão remota na API do

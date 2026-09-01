@@ -14,6 +14,8 @@ import {
     normalizeYoutubeProductsList,
     serializeYoutubeProducts,
     PLANNER_MIX_ERROR,
+    PLANNER_TIKTOK_MIX_ERROR,
+    TIKTOK_PRIVACY_FALLBACK,
 } from "@/lib/planner-config";
 
 /** Wall-clock "HH:MM" in a given IANA timezone. */
@@ -257,10 +259,41 @@ export async function GET(
         })(),
     };
 
-    // Isolation: detectar planners mistos (grandfathered) — não bloqueia preview, mas expõe warning
+    // TikTok fields — preview para wizard/runtime (A4)
+    const tiktokFields = {
+        caption_tiktok: await (async () => {
+            const sel = runtime.selectedContent as { id?: string; folder_id?: string; caption_tiktok?: string | null } | null | undefined;
+            if (sel && typeof (sel as Record<string, unknown>).caption_tiktok === "string") {
+                return String((sel as Record<string, unknown>).caption_tiktok);
+            }
+            const libId = sel?.id || sel?.folder_id;
+            if (!libId) {
+                const cfgCap = (plannerConfig as Record<string, unknown>).tiktok_caption ?? (plannerConfig as Record<string, unknown>).tiktok_title;
+                return typeof cfgCap === "string" ? String(cfgCap) : null;
+            }
+            try {
+                const it = await prisma.contentItem.findFirst({
+                    where: { id: libId, user_id: userId },
+                    select: { caption_tiktok: true, caption: true },
+                });
+                if (!it) return null;
+                return (it as { caption_tiktok?: string | null; caption?: string | null }).caption_tiktok ?? (it as { caption?: string | null }).caption ?? null;
+            } catch { return null; }
+        })(),
+        tiktok_caption: typeof (plannerConfig as Record<string, unknown>).tiktok_caption === "string" ? String((plannerConfig as Record<string, unknown>).tiktok_caption) : null,
+        tiktok_title: typeof (plannerConfig as Record<string, unknown>).tiktok_title === "string" ? String((plannerConfig as Record<string, unknown>).tiktok_title) : null,
+        tiktok_privacy_level: typeof (plannerConfig as Record<string, unknown>).tiktok_privacy_level === "string" ? String((plannerConfig as Record<string, unknown>).tiktok_privacy_level) : null,
+    };
+
+    // Isolation: detectar planners mistos (grandfathered) — não bloqueia preview, mas expõe warning (TikTok tem mensagem dedicada)
     const platformType = getPlannerPlatformType(config, planner.channels as Array<{ platform?: string | null }>);
     const isMixed = platformType === "mixed";
-    const isolationWarning = isMixed ? PLANNER_MIX_ERROR : null;
+    const isolationWarning = isMixed
+        ? (() => {
+            const plats = (planner.channels || []).map((c) => String((c as { platform?: string | null }).platform || "").toLowerCase());
+            return plats.includes("tiktok") ? PLANNER_TIKTOK_MIX_ERROR : PLANNER_MIX_ERROR;
+        })()
+        : null;
 
     return NextResponse.json({
         planner: {
@@ -271,6 +304,8 @@ export async function GET(
         },
         youtube: youtubeFields,
         youtube_fields: youtubeFields,
+        tiktok: tiktokFields,
+        tiktok_fields: tiktokFields,
         runtime: {
             ...runtime,
             // Override the runtime caption with the template-resolved one for preview.

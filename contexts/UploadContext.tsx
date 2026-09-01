@@ -35,6 +35,7 @@ export interface UploadTask {
 	caption?: string | null; // caption from generic .txt file
 	captionYoutube?: string | null; // caption from youtube.txt (F4 dual captions)
 	captionInstagram?: string | null; // caption from instagram.txt (F4 dual captions)
+	captionTiktok?: string | null; // caption from tiktok.txt (TikTok)
 	errorMessage?: string;
 	chunkSize: number;
 	totalChunks: number;
@@ -60,6 +61,7 @@ interface UploadOpts {
 	caption?: string | null;
 	captionYoutube?: string | null;
 	captionInstagram?: string | null;
+	captionTiktok?: string | null;
 }
 
 interface UploadActions {
@@ -376,6 +378,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 				caption: opts.caption ?? null,
 				captionYoutube: opts.captionYoutube ?? null,
 				captionInstagram: opts.captionInstagram ?? null,
+				captionTiktok: opts.captionTiktok ?? null,
 				chunkSize: CHUNK_SIZE,
 				totalChunks: Math.ceil(file.size / CHUNK_SIZE),
 				currentChunk: 0,
@@ -475,11 +478,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 			for (const [folderKey, groupFiles] of folderGroups) {
 				// DB name = the folder's base segment (keys may contain a nested path).
 				const folderName = folderKey.split("/").pop() || folderKey;
-				// F4 dual captions: youtube.txt/instagram.txt (nome exato,
+				// F4+TikTok triple captions: youtube.txt/instagram.txt/tiktok.txt (nome exato,
 				// case-insensitive) → captions por plataforma; QUALQUER outro
-				// .txt → caption genérica (fallback p/ ambas). Helper puro em
+				// .txt → caption genérica (fallback p/ todas). Helper puro em
 				// lib/folder-captions (mesmo usado pelo smoke test).
-				const { caption: folderCaption, captionYoutube: folderCaptionYoutube, captionInstagram: folderCaptionInstagram } =
+				const { caption: folderCaption, captionYoutube: folderCaptionYoutube, captionInstagram: folderCaptionInstagram, captionTiktok: folderCaptionTiktok } =
 					await readFolderCaptions(groupFiles);
 
 				const mediaFiles = groupFiles.filter(
@@ -498,6 +501,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 							caption: folderCaption,
 							captionYoutube: folderCaptionYoutube,
 							captionInstagram: folderCaptionInstagram,
+							captionTiktok: folderCaptionTiktok,
 						},
 					);
 				} else {
@@ -516,6 +520,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 								caption: folderCaption || null,
 								caption_youtube: folderCaptionYoutube || null,
 								caption_instagram: folderCaptionInstagram || null,
+								caption_tiktok: folderCaptionTiktok || null,
 								...(tags.length > 0 ? { tags: JSON.stringify(tags) } : {}),
 							}),
 						});
@@ -545,6 +550,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 									caption: folderCaption,
 									captionYoutube: folderCaptionYoutube,
 									captionInstagram: folderCaptionInstagram,
+									captionTiktok: folderCaptionTiktok,
 								},
 							);
 						}
@@ -852,6 +858,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 					formData.append("captionYoutube", task.captionYoutube);
 				if (task.captionInstagram)
 					formData.append("captionInstagram", task.captionInstagram);
+				if (task.captionTiktok)
+					formData.append("captionTiktok", task.captionTiktok);
 				if (thumbFile) formData.append("thumbnail", thumbFile);
 
 				const metaRes = await finalizeWithRetry(formData, controller.signal);

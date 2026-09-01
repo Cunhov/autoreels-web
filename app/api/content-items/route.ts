@@ -11,7 +11,7 @@ import { escapeHtml, sanitizeCaption } from "@/lib/sanitize";
 // Fields a client may set when creating a content item. Server-owned fields
 // (id, user_id, created_at, path) are excluded to prevent mass assignment.
 const POST_ALLOWED_FIELDS = [
-    "name", "title", "caption", "caption_youtube", "caption_instagram",
+    "name", "title", "caption", "caption_youtube", "caption_instagram", "caption_tiktok",
     "youtube_products",
     "tags", "type", "size", "duration",
     "parent_id", "url", "thumbnail_url",
@@ -198,7 +198,7 @@ export async function POST(req: Request) {
             payload.name = escapeHtml(cleanName).slice(0, 200);
         }
         // BK-07/BK-14 caption sanitização + limite 2200 (espelhada pelas
-        // captions por plataforma caption_youtube/caption_instagram — F4).
+        // captions por plataforma caption_youtube/caption_instagram/caption_tiktok — F4/TikTok).
         // sanitizeCaption faz trim + slice(CAPTION_MAX) + escape `<`/`>`.
         if (payload.caption !== undefined && payload.caption !== null) {
             payload.caption = sanitizeCaption(payload.caption);
@@ -208,6 +208,9 @@ export async function POST(req: Request) {
         }
         if (payload.caption_instagram !== undefined && payload.caption_instagram !== null) {
             payload.caption_instagram = sanitizeCaption(payload.caption_instagram);
+        }
+        if (payload.caption_tiktok !== undefined && payload.caption_tiktok !== null) {
+            payload.caption_tiktok = sanitizeCaption(payload.caption_tiktok);
         }
         // Produtos afiliados por vídeo (decisão do dono): CSV de NOMES no item
         // (ex.: "Cadeira Gamer, Mousepad"). Nomes NÃO passam por escapeHtml

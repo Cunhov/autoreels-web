@@ -1,11 +1,12 @@
 /**
  * folder-captions.ts — leitura das legendas de uma pasta importada.
  *
- * Convenção F4 (dual captions YouTube/Instagram), nome EXATO porém
+ * Convenção F4+TikTok (triple captions YouTube/Instagram/TikTok), nome EXATO porém
  * case-insensitive:
  *   - `youtube.txt`      → captionYoutube
  *   - `instagram.txt`    → captionInstagram
- *   - QUALQUER outro `.txt` → caption genérica (fallback p/ ambas plataformas)
+ *   - `tiktok.txt`       → captionTiktok
+ *   - QUALQUER outro `.txt` → caption genérica (fallback p/ todas plataformas)
  *
  * Vários `.txt` genéricos → o primeiro encontrado (mesmo comportamento do
  * upload pré-dual-captions). Arquivo ausente/falha de leitura → null.
@@ -16,6 +17,7 @@ export interface FolderCaptions {
     caption: string | null;
     captionYoutube: string | null;
     captionInstagram: string | null;
+    captionTiktok?: string | null;
 }
 
 type CaptionFileLike = { name: string; text(): Promise<string> };
@@ -28,13 +30,15 @@ export async function readFolderCaptions(
     );
     const ytFile = byLower.get("youtube.txt");
     const igFile = byLower.get("instagram.txt");
+    const tkFile = byLower.get("tiktok.txt");
     // .txt genérico = qualquer arquivo que NÃO seja uma caption por plataforma.
     const genericFile = files.find((f) => {
         const lower = f.name.toLowerCase();
         return (
             lower.endsWith(".txt") &&
             lower !== "youtube.txt" &&
-            lower !== "instagram.txt"
+            lower !== "instagram.txt" &&
+            lower !== "tiktok.txt"
         );
     });
 
@@ -50,10 +54,11 @@ export async function readFolderCaptions(
         }
     };
 
-    const [caption, captionYoutube, captionInstagram] = await Promise.all([
+    const [caption, captionYoutube, captionInstagram, captionTiktok] = await Promise.all([
         read(genericFile),
         read(ytFile),
         read(igFile),
+        read(tkFile),
     ]);
-    return { caption, captionYoutube, captionInstagram };
+    return { caption, captionYoutube, captionInstagram, captionTiktok };
 }

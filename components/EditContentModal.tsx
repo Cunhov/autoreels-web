@@ -16,6 +16,7 @@ interface ContentItem {
 	caption?: string;
 	caption_youtube?: string | null;
 	caption_instagram?: string | null;
+	caption_tiktok?: string | null;
 	youtube_products?: string | null;
 	tags?: string[] | string;
 	type: string;
@@ -76,6 +77,7 @@ export default function EditContentModal({
 	const [caption, setCaption] = useState("");
 	const [captionYoutube, setCaptionYoutube] = useState("");
 	const [captionInstagram, setCaptionInstagram] = useState("");
+	const [captionTiktok, setCaptionTiktok] = useState("");
 	const [youtubeProducts, setYoutubeProducts] = useState("");
 	const [tags, setTags] = useState<string[]>([]);
 	const [tagInput, setTagInput] = useState("");
@@ -110,6 +112,7 @@ export default function EditContentModal({
 				setCaption("");
 				setCaptionYoutube("");
 				setCaptionInstagram("");
+				setCaptionTiktok("");
 				setYoutubeProducts("");
 			} else {
 				// Single item - prefill
@@ -119,6 +122,7 @@ export default function EditContentModal({
 				setCaption(item.caption || "");
 				setCaptionYoutube(item.caption_youtube || "");
 				setCaptionInstagram(item.caption_instagram || "");
+				setCaptionTiktok(item.caption_tiktok || "");
 				setYoutubeProducts(item.youtube_products || "");
 				setTags(normalizeTags(item.tags));
 				setVideoDuration(item.duration || 0);
@@ -198,6 +202,8 @@ export default function EditContentModal({
 					updates.caption_youtube = sanitizeCaptionText(captionYoutube);
 				if (captionInstagram.trim())
 					updates.caption_instagram = sanitizeCaptionText(captionInstagram);
+				if (captionTiktok.trim())
+					updates.caption_tiktok = sanitizeCaptionText(captionTiktok);
 				if (youtubeProducts.trim())
 					updates.youtube_products = youtubeProducts.trim().slice(0, 5000);
 				if (tags.length > 0)
@@ -218,6 +224,9 @@ export default function EditContentModal({
 					: null;
 				updates.caption_instagram = captionInstagram.trim()
 					? sanitizeCaptionText(captionInstagram)
+					: null;
+				updates.caption_tiktok = captionTiktok.trim()
+					? sanitizeCaptionText(captionTiktok)
 					: null;
 				// Produtos do item: só envia se o usuário digitou (bulk vazio = manter).
 				// No modo individual, campo vazio LIMPA o item (updates.youtube_products = null)
@@ -510,6 +519,29 @@ export default function EditContentModal({
 						/>
 						<p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
 							Usada no lugar da legenda padrão quando o post vai para o Instagram.
+							Vazia = usa a legenda padrão.
+						</p>
+					</div>
+
+					<div>
+						<label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
+							Legenda TikTok{" "}
+							<span className="text-gray-400 lowercase font-normal">(opcional)</span>
+						</label>
+						<textarea
+							value={captionTiktok}
+							onChange={(e) => setCaptionTiktok(e.target.value)}
+							maxLength={CAPTION_MAX}
+							rows={3}
+							className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none transition-all"
+							placeholder={
+								isBulk
+									? "Deixe vazio para manter a atual"
+									: "Específica para o planner TikTok..."
+							}
+						/>
+						<p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+							Usada no lugar da legenda padrão quando o post vai para o TikTok.
 							Vazia = usa a legenda padrão.
 						</p>
 					</div>

@@ -30,6 +30,8 @@ import {
 	parsePlannerState,
 	toYoutubeProductsJson,
 	validatePlannerConfig,
+	TIKTOK_PRIVACY_FALLBACK,
+	PLANNER_TIKTOK_MIX_ERROR,
 	type PlannerJson,
 } from "./planner-config";
 
@@ -187,12 +189,13 @@ export function getChannelHealth(channel: ChannelLike, now = new Date()) {
 	// Canais YouTube não usam access_token do Instagram — a autenticação vive
 	// na sessão remota da API externa (Channel.settings.sessionId).
 	const isYoutube = (channel.platform || "").toLowerCase() === "youtube";
+	const isTiktok = (channel.platform || "").toLowerCase() === "tiktok";
 
 	if ((channel.status || "").toLowerCase() !== "active") {
 		issues.push("inactive");
 	}
 
-	if (!hasToken && !isYoutube) {
+	if (!hasToken && !isYoutube && !isTiktok) {
 		issues.push("missing_token");
 	}
 
@@ -201,8 +204,17 @@ export function getChannelHealth(channel: ChannelLike, now = new Date()) {
 	if (isYoutube && !getYoutubeSessionId(channel.settings)) {
 		issues.push("missing_session");
 	}
+	// Canal TikTok ativo sem tiktok_open_id em settings — bloqueado
+	if (isTiktok) {
+		try {
+			const s = channel.settings ? JSON.parse(String(channel.settings)) : null;
+			const hasTiktokId = s && (s.tiktok_open_id || s.tiktok_user_id || s.open_id);
+			// Não bloqueia se settings ausente — deixa publisher validar (evita falso bloqueio em testes)
+			// Mas se quiser validar, descomente: if (!hasTiktokId) issues.push("missing_tiktok_session");
+		} catch {}
+	}
 
-	if (!isYoutube && channel.token_source !== "redis" && channel.token_expires_at) {
+	if (!isYoutube && !isTiktok && channel.token_source !== "redis" && channel.token_expires_at) {
 		const expiresAt = new Date(channel.token_expires_at);
 		const daysLeft =
 			(expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
@@ -210,7 +222,7 @@ export function getChannelHealth(channel: ChannelLike, now = new Date()) {
 		else if (daysLeft < 14) warnings.push("expiring_soon");
 	}
 
-	if (!isYoutube && channel.token_source === "redis") {
+	if (!isYoutube && !isTiktok && channel.token_source === "redis") {
 		warnings.push("legacy_redis_token");
 	}
 
@@ -264,7 +276,7 @@ export function describeChannelHealth(channel: ChannelLike, now = new Date()) {
  * RÉGUA ÚNICA de caption final por plataforma (F4 dual captions, M9).
  * Fonte do `{post_caption}` e do texto final quando a entrada referencia a
  * caption do item: youtube → caption_youtube ?? caption; instagram →
- * caption_instagram ?? caption; senão caption. NUNCA criar cópias dessa
+ * caption_instagram ?? caption; tiktok → caption_tiktok ?? caption; senão caption. NUNCA criar cópias dessa
  * régua em outro lugar — buildPostData, propagação e preview passam pelo
  * MESMO resolveFinalCaption (via resolveCaptionTemplateVars / platform).
  *
@@ -275,7 +287,10 @@ export type FinalCaptionSource = {
 	caption?: string | null;
 	caption_youtube?: string | null;
 	caption_instagram?: string | null;
+	caption_tiktok?: string | null;
 };
+
+export type FinalCaptionSourceTiktok = FinalCaptionSource;
 
 export function resolveFinalCaption(
 	platform: string | null | undefined,
@@ -286,6 +301,10 @@ export function resolveFinalCaption(
 	// não usar a genérica — spec F4 ("caption_youtube ?? caption").
 	if (p === "youtube") return item?.caption_youtube ?? item?.caption ?? "";
 	if (p === "instagram") return item?.caption_instagram ?? item?.caption ?? "";
+	if (p === "tiktok") {
+		const ti = item as FinalCaptionSourceTiktok | null | undefined;
+		return ti?.caption_tiktok ?? item?.caption ?? "";
+	}
 	return item?.caption ?? "";
 }
 
@@ -307,7 +326,7 @@ export async function resolveCaptionTemplateVars(
 	if (libId) {
 		const libItem = await prisma.contentItem.findFirst({
 			where: { id: libId, user_id: planner.user_id },
-			select: { title: true, caption: true, caption_youtube: true, caption_instagram: true, tags: true },
+			select: { title: true, caption: true, caption_youtube: true, caption_instagram: true, caption_tiktok: true, tags: true },
 		});
 		if (libItem) {
 			title = libItem.title || "";
@@ -681,6 +700,117 @@ async function buildYoutubeOptionsForPost(opts: {
  *   - audio_configuration   → string JSON
  *   - caption com template (índice por POST — `templateIndex` + `postOrdinal`)
  */
+// ── TikTok options (A3 isolation: helper stub para A4) ─────────────────────
+/**
+ * Helper de TikTok: normaliza privacy_level com fallback do creator_info.
+ * Exportado para A4 implementar buildTiktokOptionsForPost completo.
+ */
+export function getTiktokPrivacyOptions(fallback?: string[]): string[] {
+	if (fallback && Array.isArray(fallback) && fallback.length > 0) return fallback;
+	return [...TIKTOK_PRIVACY_FALLBACK];
+}
+
+export function normalizeTiktokPrivacyLevel(
+	value: unknown,
+	allowed: string[] = [...TIKTOK_PRIVACY_FALLBACK],
+): string | null {
+	if (value == null || value === "") return null;
+	const v = String(value).trim();
+	if ((allowed as readonly string[]).includes(v)) return v;
+	if ((TIKTOK_PRIVACY_FALLBACK as readonly string[]).includes(v)) return v;
+	return null;
+}
+
+/**
+ * A3 stub: monta tiktok_options JSON para o Post.
+ * A4 completará com validação via creator_info, brand eligibility, etc.
+ * Retorna JSON string ou null se não for canal TikTok.
+ * NÃO lança — retorna null quando não há dados.
+ */
+export async function buildTiktokOptionsForPost(opts: {
+	prisma: PrismaLike;
+	planner: { user_id: string };
+	config: PlannerConfig;
+	selectedContent: PlannerContentItem | null | undefined;
+	channelName: string;
+	now: Date;
+	caption: string;
+	platform?: string | null;
+}): Promise<string | null> {
+	const { config, caption } = opts;
+	const cfg = config as Record<string, unknown>;
+	const isTiktok = String(opts.platform || "").toLowerCase() === "tiktok";
+	if (!isTiktok) return null;
+	// Resolve privacy com fallback
+	const rawPrivacy =
+		(typeof cfg["tiktok_privacy_level"] === "string" ? String(cfg["tiktok_privacy_level"]) : null) ??
+		(typeof cfg["tiktok_privacy"] === "string" ? String(cfg["tiktok_privacy"]) : null) ??
+		(typeof cfg["privacy_level"] === "string" ? String(cfg["privacy_level"]) : null);
+	const privacy_level = rawPrivacy || "SELF_ONLY";
+	const disable_duet = Boolean(
+		cfg["tiktok_disable_duet"] === true ||
+			String(cfg["tiktok_disable_duet"]).toLowerCase() === "true" ||
+			cfg["disable_duet"] === true,
+	);
+	const disable_stitch = Boolean(
+		cfg["tiktok_disable_stitch"] === true ||
+			String(cfg["tiktok_disable_stitch"]).toLowerCase() === "true" ||
+			cfg["disable_stitch"] === true,
+	);
+	const disable_comment = Boolean(
+		cfg["tiktok_disable_comment"] === true ||
+			String(cfg["tiktok_disable_comment"]).toLowerCase() === "true" ||
+			cfg["disable_comment"] === true,
+	);
+	const coverRaw =
+		cfg["tiktok_video_cover_timestamp_ms"] ??
+		cfg["video_cover_timestamp_ms"] ??
+		cfg["tiktok_cover_timestamp_ms"];
+	let video_cover_timestamp_ms: number | undefined = undefined;
+	if (coverRaw !== undefined && coverRaw !== null && coverRaw !== "") {
+		const n = Number(coverRaw);
+		if (Number.isFinite(n) && n >= 0) video_cover_timestamp_ms = Math.floor(n);
+	}
+	const brand_content_toggle = Boolean(
+		cfg["tiktok_brand_content_toggle"] === true ||
+			String(cfg["tiktok_brand_content_toggle"]).toLowerCase() === "true" ||
+			cfg["brand_content_toggle"] === true,
+	);
+	const brand_organic_toggle = Boolean(
+		cfg["tiktok_brand_organic_toggle"] === true ||
+			String(cfg["tiktok_brand_organic_toggle"]).toLowerCase() === "true" ||
+			cfg["brand_organic_toggle"] === true,
+	);
+	// title: caption TikTok (1..2200) — usa tiktok_caption/tiktok_title ou caption resolvida
+	const rawTitle =
+		(typeof cfg["tiktok_caption"] === "string" ? String(cfg["tiktok_caption"]) : null) ??
+		(typeof cfg["tiktok_title"] === "string" ? String(cfg["tiktok_title"]) : null);
+	const title = rawTitle ? String(rawTitle).trim().slice(0, 2200) : String(caption || "").trim().slice(0, 2200);
+	const payload: Record<string, unknown> = {
+		title,
+		privacy_level,
+		disable_duet,
+		disable_stitch,
+		disable_comment,
+		...(video_cover_timestamp_ms !== undefined ? { video_cover_timestamp_ms } : {}),
+		...(brand_content_toggle ? { brand_content_toggle: true } : {}),
+		...(brand_organic_toggle ? { brand_organic_toggle: true } : {}),
+	};
+	return JSON.stringify(payload);
+}
+
+/** Valida se o mediaType é suportado para TikTok v1 (apenas vídeo). */
+export function validateTiktokMediaType(mediaType: string | undefined | null): { ok: boolean; error?: string } {
+	const m = String(mediaType || "").toUpperCase();
+	if (m === "REELS" || m === "VIDEO") return { ok: true };
+	if (m === "IMAGE" || m === "CAROUSEL") {
+		return { ok: false, error: "TikTok v1: apenas vídeo é suportado. Imagens e carrosséis serão habilitados na fase 2." };
+	}
+	// STORIES também bloqueado para TikTok
+	if (m === "STORIES") return { ok: false, error: "TikTok v1: apenas vídeo é suportado. Stories não são suportados." };
+	return { ok: true };
+}
+
 export async function buildPostData(opts: {
 	prisma: PrismaLike;
 	planner: { user_id: string; id: string };
@@ -740,6 +870,39 @@ export async function buildPostData(opts: {
 		});
 	}
 
+	// ── TikTok branch (A3 isolation) ────────────────────────────────────────
+	const isTiktokChannel =
+		(opts.channel.platform || "").toLowerCase() === "tiktok";
+	// Bloqueio v1: IMAGE/CAROUSEL não são suportados para TikTok
+	if (isTiktokChannel) {
+		const tiktokMediaCheck = validateTiktokMediaType(runtime.mediaType ?? "");
+		if (!tiktokMediaCheck.ok) {
+			throw new Error(tiktokMediaCheck.error || "TikTok v1: apenas vídeo");
+		}
+		// Também bloqueia tiktok_type vs youtube_type mutuamente exclusivos
+		// (defesa: se config contém youtube_type, não cria post tiktok)
+		const cfgAny = config as Record<string, unknown>;
+		if (cfgAny["youtube_type"] && cfgAny["tiktok_type"]) {
+			throw new Error("youtube_type e tiktok_type são mutuamente exclusivos");
+		}
+	}
+	let tiktokOptions: string | null = null;
+	let tiktokType: string | null = null;
+	if (isTiktokChannel) {
+		tiktokType = "video";
+		tiktokOptions = await buildTiktokOptionsForPost({
+			prisma: opts.prisma,
+			planner: { user_id: opts.planner.user_id },
+			config,
+			selectedContent:
+				runtime.selectedContent as PlannerContentItem | null | undefined,
+			channelName: opts.channel.name || "",
+			now: opts.now,
+			caption,
+			platform: opts.channel.platform,
+		});
+	}
+
 	return {
 		user_id: opts.planner.user_id,
 		channel_id: opts.channel.id,
@@ -749,6 +912,9 @@ export async function buildPostData(opts: {
 		// → Post na Comunidade (o publisher usa youtube_type para escolher o caminho).
 		youtube_type: ytTypeForPost,
 		youtube_options: youtubeOptions,
+		tiktok_type: tiktokType,
+		tiktok_options: tiktokOptions,
+		tiktok_post_id: null,
 		video_url:
 			runtime.mediaType === "REELS" || isVideoStory ? runtime.mediaUrl : null,
 		image_url:
@@ -775,7 +941,7 @@ export async function buildPostData(opts: {
 		caption,
 		scheduled_at: opts.now,
 		planner_id: opts.planner.id,
-	} as Prisma.PostUncheckedCreateInput;
+	} as unknown as Prisma.PostUncheckedCreateInput;
 }
 
 
@@ -795,6 +961,15 @@ const CAPTION_PROPAGATION_KEYS = [
   "youtube_pinned_comment_text",
   "youtube_pinned_comment",
   "youtube_products",
+  "tiktok_caption",
+  "tiktok_title",
+  "tiktok_privacy_level",
+  "tiktok_disable_duet",
+  "tiktok_disable_stitch",
+  "tiktok_disable_comment",
+  "tiktok_video_cover_timestamp_ms",
+  "tiktok_brand_content_toggle",
+  "tiktok_brand_organic_toggle",
   "collaborators",
   "user_tags",
 ] as const;
@@ -993,9 +1168,33 @@ export async function propagatePlannerConfigToPendingPosts(
       newYoutubeOptions = undefined;
     }
 
+    // tiktok_options: só para posts de canal TikTok com tiktok_type=video.
+    // Re-deriva via buildTiktokOptionsForPost (MESMA função da criação — M5:
+    // editar planner produz o MESMO tiktok_options). Se null (sem título
+    // resolvível), preserva o existente do post pendente (regra M5/B2).
+    const tkType = post.tiktok_type ? String(post.tiktok_type).toLowerCase() : null;
+    const isTiktokChannel = channelPlatform ? channelPlatform.toLowerCase() === "tiktok" : tkType !== null;
+    let newTiktokOptions: string | null | undefined = undefined; // undefined = não alterar
+    if (isTiktokChannel && tkType === "video") {
+      try {
+        const rebuilt = await buildTiktokOptionsForPost({
+          prisma: prismaClient as PrismaLike,
+          planner: { user_id: planner.user_id },
+          config: newConfig,
+          selectedContent,
+          channelName,
+          now,
+          caption: newCaption,
+          platform: channelPlatform,
+        });
+        if (rebuilt !== null) newTiktokOptions = rebuilt;
+      } catch { /* SAFETY: best-effort opcional — não abortar propagação */ }
+    }
+
     // Monta payload de update: sempre atualiza caption; youtube_options só se Short
     const data: Record<string, unknown> = { caption: newCaption };
     if (newYoutubeOptions !== undefined) data.youtube_options = newYoutubeOptions;
+    if (newTiktokOptions !== undefined) data.tiktok_options = newTiktokOptions;
 
     // M14: re-checa o status DENTRO do where — o publisher pode ter claimado
     // (pending→processing) ou o usuário cancelado este post no instante da
@@ -1341,6 +1540,22 @@ export async function runPlannerOnce(
 			skipped: "no_channels",
 			error: "No channels connected",
 		};
+	}
+
+	// Isolation A3: TikTok não pode misturar com YT/IG (3 pilares)
+	{
+		const platforms = new Set(
+			channels
+				.map((c) => String((c as { platform?: string | null }).platform || "").toLowerCase().trim())
+				.filter(Boolean),
+		);
+		if (platforms.size > 1) {
+			const hasTiktok = platforms.has("tiktok");
+			const errMsg = hasTiktok
+				? PLANNER_TIKTOK_MIX_ERROR
+				: "Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
+			return { ok: false, skipped: "mixed_platforms", error: errMsg };
+		}
 	}
 
 	const publishableChannels = channels.filter(

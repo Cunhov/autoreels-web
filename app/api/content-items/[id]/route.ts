@@ -11,7 +11,7 @@ import { escapeHtml, sanitizeCaption } from "@/lib/sanitize";
 // Fields a client may update. Server-owned fields (id, user_id, created_at,
 // path) are excluded to prevent mass assignment / arbitrary file deletion.
 const PATCH_ALLOWED_FIELDS = [
-    "name", "title", "caption", "caption_youtube", "caption_instagram",
+    "name", "title", "caption", "caption_youtube", "caption_instagram", "caption_tiktok",
     "youtube_products",
     "tags", "type", "size", "duration",
     "parent_id", "thumbnail_url", "url",
@@ -140,7 +140,7 @@ export async function PATCH(
             payload.name = escapeHtml(cleanName).slice(0, 200);
         }
         // BK-07/BK-14 sanitização caption/title com limite — captions por
-        // plataforma (F4 dual captions) usam a MESMA sanitizeCaption (trim +
+        // plataforma (F4+TikTok triple captions) usam a MESMA sanitizeCaption (trim +
         // slice 2200 + escape). NUNCA gravar caption_* sem sanitize.
         if (payload.caption !== undefined && payload.caption !== null) {
             payload.caption = sanitizeCaption(payload.caption);
@@ -150,6 +150,9 @@ export async function PATCH(
         }
         if (payload.caption_instagram !== undefined && payload.caption_instagram !== null) {
             payload.caption_instagram = sanitizeCaption(payload.caption_instagram);
+        }
+        if (payload.caption_tiktok !== undefined && payload.caption_tiktok !== null) {
+            payload.caption_tiktok = sanitizeCaption(payload.caption_tiktok);
         }
         // Produtos afiliados por vídeo (decisão do dono): CSV de NOMES no item.
         // Mesma regra do POST: trim + limite 5000; vírgula separa itens; nomes

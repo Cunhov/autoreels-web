@@ -398,6 +398,21 @@ export const YOUTUBE_CATEGORIES: Record<number, string> = {
 
 export const YOUTUBE_CATEGORY_DEFAULT = 22;
 
+export const TIKTOK_PRIVACY_OPTIONS = [
+	"PUBLIC_TO_EVERYONE",
+	"MUTUAL_FOLLOW_FRIENDS",
+	"FOLLOWER_OF_CREATOR",
+	"SELF_ONLY",
+] as const;
+
+export const TIKTOK_PRIVACY_FALLBACK: readonly string[] = [
+	"PUBLIC_TO_EVERYONE",
+	"MUTUAL_FOLLOW_FRIENDS",
+	"SELF_ONLY",
+] as const;
+
+export type TiktokPrivacyLevel = typeof TIKTOK_PRIVACY_OPTIONS[number];
+
 /**
  * Estima o texto FINAL de uma legenda como o runtime fará (applyCaptionTemplate
  * simplificado, sem acesso ao banco): rotação ativa com templates → substitui
@@ -817,6 +832,149 @@ export function validatePlannerConfig(config: unknown): {
         }
     }
 
+    // ── TikTok (planner TikTok) ───────────────────────────────────────────────
+    // Campos só relevantes quando o planner tem canal TikTok; validação é
+    // permissiva: se presente, deve ser válido; vazio/null ≡ ausente.
+    // tiktok_caption / tiktok_title: 1..2200 chars (trim)
+    const tiktokCaptionRaw =
+        (c as PlannerJson)["tiktok_caption"] ??
+        (c as PlannerJson)["tiktok_title"] ??
+        (c as PlannerJson)["tiktok_description"];
+    if (
+        tiktokCaptionRaw !== undefined &&
+        tiktokCaptionRaw !== null &&
+        tiktokCaptionRaw !== ""
+    ) {
+        if (typeof tiktokCaptionRaw !== "string") {
+            errors.push("Legenda do TikTok deve ser uma string");
+        } else {
+            const t = String(tiktokCaptionRaw).trim();
+            if (t.length === 0)
+                errors.push("Legenda do TikTok não pode ser vazia");
+            else if (t.length > 2200)
+                errors.push(
+                    "Legenda do TikTok deve ter no máximo 2200 caracteres",
+                );
+        }
+    }
+    // tiktok_privacy_level
+    if (
+        c.tiktok_privacy_level !== undefined &&
+        c.tiktok_privacy_level !== null &&
+        c.tiktok_privacy_level !== ""
+    ) {
+        const v = String(c.tiktok_privacy_level).trim();
+        if (!(TIKTOK_PRIVACY_OPTIONS as readonly string[]).includes(v)) {
+            errors.push(
+                `tiktok_privacy_level deve ser ${TIKTOK_PRIVACY_OPTIONS.join(" | ")}`,
+            );
+        }
+    }
+    // tiktok_privacy (alias)
+    if (
+        (c as PlannerJson)["tiktok_privacy"] !== undefined &&
+        (c as PlannerJson)["tiktok_privacy"] !== null &&
+        (c as PlannerJson)["tiktok_privacy"] !== ""
+    ) {
+        const v = String((c as PlannerJson)["tiktok_privacy"]).trim();
+        if (!(TIKTOK_PRIVACY_OPTIONS as readonly string[]).includes(v)) {
+            errors.push(
+                `tiktok_privacy deve ser ${TIKTOK_PRIVACY_OPTIONS.join(" | ")}`,
+            );
+        }
+    }
+    // privacy_level alias (generic)
+    if (
+        (c as PlannerJson)["privacy_level"] !== undefined &&
+        (c as PlannerJson)["privacy_level"] !== null &&
+        (c as PlannerJson)["privacy_level"] !== "" &&
+        // só valida se for contexto TikTok (tem algum campo tiktok_*)
+        ((c as PlannerJson)["tiktok_privacy_level"] !== undefined ||
+            (c as PlannerJson)["tiktok_caption"] !== undefined)
+    ) {
+        const v = String((c as PlannerJson)["privacy_level"]).trim();
+        if (!(TIKTOK_PRIVACY_OPTIONS as readonly string[]).includes(v)) {
+            errors.push(
+                `privacy_level deve ser ${TIKTOK_PRIVACY_OPTIONS.join(" | ")}`,
+            );
+        }
+    }
+    // disable flags (boolean)
+    for (const flag of [
+        "tiktok_disable_duet",
+        "tiktok_disable_stitch",
+        "tiktok_disable_comment",
+        "disable_duet",
+        "disable_stitch",
+        "disable_comment",
+    ] as const) {
+        const v = (c as PlannerJson)[flag];
+        if (v !== undefined && v !== null && v !== "") {
+            const okBool =
+                typeof v === "boolean" ||
+                (typeof v === "string" && /^(true|false)$/i.test(String(v).trim())) ||
+                v === 0 ||
+                v === 1;
+            if (!okBool) errors.push(`${flag} deve ser verdadeiro ou falso`);
+        }
+    }
+    // video_cover_timestamp_ms
+    const coverRaw =
+        (c as PlannerJson)["tiktok_video_cover_timestamp_ms"] ??
+        (c as PlannerJson)["video_cover_timestamp_ms"];
+    if (coverRaw !== undefined && coverRaw !== null && coverRaw !== "") {
+        const n = Number(coverRaw);
+        if (!Number.isInteger(n) || n < 0) {
+            errors.push(
+                "tiktok_video_cover_timestamp_ms deve ser um número inteiro >= 0",
+            );
+        }
+    }
+    // brand flags (boolean)
+    for (const flag of [
+        "tiktok_brand_content_toggle",
+        "tiktok_brand_organic_toggle",
+        "brand_content_toggle",
+        "brand_organic_toggle",
+    ] as const) {
+        const v = (c as PlannerJson)[flag];
+        if (v !== undefined && v !== null && v !== "") {
+            const okBool =
+                typeof v === "boolean" ||
+                (typeof v === "string" && /^(true|false)$/i.test(String(v).trim())) ||
+                v === 0 ||
+                v === 1;
+            if (!okBool) errors.push(`${flag} deve ser verdadeiro ou falso`);
+        }
+    }
+    // tiktok_type: só "video" em v1
+    if (
+        (c as PlannerJson)["tiktok_type"] !== undefined &&
+        (c as PlannerJson)["tiktok_type"] !== null &&
+        (c as PlannerJson)["tiktok_type"] !== ""
+    ) {
+        const v = String((c as PlannerJson)["tiktok_type"]).toLowerCase().trim();
+        if (v !== "video") {
+            errors.push('tiktok_type deve ser "video" (TikTok v1: apenas vídeo)');
+        }
+    }
+    // mutual exclusivity: youtube_type vs tiktok_type
+    const hasYtType =
+        (c as PlannerJson)["youtube_type"] !== undefined &&
+        (c as PlannerJson)["youtube_type"] !== null &&
+        (c as PlannerJson)["youtube_type"] !== "";
+    const hasTiktokType =
+        (c as PlannerJson)["tiktok_type"] !== undefined &&
+        (c as PlannerJson)["tiktok_type"] !== null &&
+        (c as PlannerJson)["tiktok_type"] !== "";
+    if (hasYtType && hasTiktokType) {
+        errors.push(
+            "youtube_type e tiktok_type são mutuamente exclusivos — um planner não pode ter ambos",
+        );
+    }
+    // Nota: não bloqueia config mista de campos YT vs TikTok aqui — isolation
+    // de canais já bloqueia 400. A validação acima só impede type conflitante.
+
     // timezone
     if (c.timezone !== undefined && typeof c.timezone !== "string") {
         errors.push(
@@ -893,13 +1051,17 @@ export function isSleepingNow(config: PlannerJson, now: Date): boolean {
     return hhmm >= start || hhmm < end; // janela que cruza a meia-noite
 }
 
-// ── Isolation: YouTube vs Instagram ──────────────────────────────────────────
+// ── Isolation: YouTube vs Instagram vs TikTok ──────────────────────────────
 
-/** Mensagem padrão quando tenta misturar plataformas num mesmo planner. */
+/** Mensagem padrão quando tenta misturar plataformas num mesmo planner (YT+IG). */
 export const PLANNER_MIX_ERROR =
     "Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
 
-export type PlannerPlatformType = "youtube" | "instagram" | "mixed" | null;
+/** Mensagem quando tenta misturar TikTok com outras plataformas. */
+export const PLANNER_TIKTOK_MIX_ERROR =
+    "Planners TikTok não podem misturar canais de outras plataformas.";
+
+export type PlannerPlatformType = "youtube" | "instagram" | "tiktok" | "mixed" | null;
 
 /**
  * Normaliza platform para comparação (lowercase, trim).
@@ -947,12 +1109,15 @@ export function getPlannerPlatformType(
         const only = [...platforms][0];
         if (only === "youtube") return "youtube";
         if (only === "instagram") return "instagram";
+        if (only === "tiktok") return "tiktok";
         // plataforma desconhecida singular → trata como instagram por compatibilidade
         return only as PlannerPlatformType;
     }
     // >1 plataforma distinta
     const hasYt = platforms.has("youtube");
     const hasIg = platforms.has("instagram");
+    const hasTt = platforms.has("tiktok");
+    if (hasTt) return "mixed";
     if (hasYt && hasIg) return "mixed";
     if (platforms.size > 1) return "mixed";
     return null;
@@ -986,8 +1151,10 @@ export async function validatePlannerChannelMix(
         ),
     ];
     if (platforms.length > 1) {
-        // Se há youtube e instagram simultaneamente, ou qualquer mix, bloqueia.
-        return { ok: false, error: PLANNER_MIX_ERROR, platforms };
+        // Se há TikTok envolvido, mensagem específica PT-BR
+        const hasTiktok = platforms.includes("tiktok");
+        const err = hasTiktok ? PLANNER_TIKTOK_MIX_ERROR : PLANNER_MIX_ERROR;
+        return { ok: false, error: err, platforms };
     }
     return { ok: true, platforms };
 }
