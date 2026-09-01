@@ -155,6 +155,9 @@ export interface YoutubeShortOptions {
 	category_id?: number;
 	monetize_with_ads?: boolean;
 	pinned_comment_text?: string;
+	// B1: nomes/termos de produto p/ auto-select (POST /api/shorts/auto).
+	// Gravado como JSON string (paridade com `products`) pelo buildPostData.
+	product_names?: string[] | string;
 }
 
 // ─── Helpers de canal (Channel.settings) ─────────────────────────────────────
@@ -423,6 +426,96 @@ export async function createShort(input: {
 		throw new YoutubeApiError(reason, transient ? 502 : 400);
 	}
 	return data;
+}
+
+/**
+ * Resposta de POST /api/shorts/auto (AutoShortResponse da API externa).
+ * O upload é feito PRIMEIRO (sem products); a tagagem por nome acontece
+ * depois — `tagging_error` carrega falha da etapa de tagging SEM invalidar
+ * o upload. `status` é sintético (uniformidade com createShort).
+ */
+export interface YoutubeAutoShort {
+	video_id: string;
+	url: string;
+	title: string;
+	total_selected: number;
+	per_product: Array<{
+		query: string;
+		found: number;
+		selected: Array<Record<string, unknown>>;
+		skipped_reason?: string | null;
+	}>;
+	tagging_error?: string | null;
+	status?: string;
+	watch_url?: string;
+}
+
+/**
+ * POST /api/shorts/auto — multipart do vídeo + product_names + filters.
+ * Espelha createShort (mesmos campos de vídeo/título/privacidade) mas NÃO
+ * envia `products`: a API publica primeiro e auto-seleciona o melhor produto
+ * por nome (filters controlam marketplace/comissão). `proxyUrl?` opcional —
+ * o publisher repassa getChannelProxyUrl (mesma cobertura do createShort).
+ * product_names viaja como JSON array STRING: preserva vírgula dentro do
+ * nome (M22) e é aceito por _parse_product_names da API.
+ */
+export async function createAutoShort(input: {
+	sessionId: string;
+	video: { blob: Blob; filename: string; contentType: string };
+	title: string;
+	description?: string;
+	privacy?: "PUBLIC" | "PRIVATE" | "UNLISTED";
+	madeForKids?: boolean;
+	categoryId?: number;
+	monetizeWithAds?: boolean;
+	pinnedCommentText?: string;
+	productNames: string[];
+	filters?: Record<string, unknown>;
+	proxyUrl?: string | null;
+}): Promise<YoutubeAutoShort> {
+	if (!input.productNames.length) {
+		throw new YoutubeApiError(
+			"createAutoShort exige ao menos um nome de produto (product_names).",
+			400,
+		);
+	}
+	const form = new FormData();
+	form.append("session_id", input.sessionId);
+	form.append("title", input.title);
+	form.append("description", input.description ?? "");
+	form.append("privacy", input.privacy ?? "PUBLIC");
+	form.append("made_for_kids", String(input.madeForKids ?? false));
+	// Categoria neutra (22 = People & Blogs) — paridade com createShort.
+	form.append("category_id", String(input.categoryId ?? 22));
+	form.append("monetize_with_ads", String(input.monetizeWithAds ?? false));
+	form.append("product_names", JSON.stringify(input.productNames));
+	form.append("filters", JSON.stringify(input.filters ?? {}));
+	if (input.pinnedCommentText) {
+		form.append("pinned_comment_text", input.pinnedCommentText);
+	}
+	form.append("video", input.video.blob, input.video.filename);
+
+	const data = (await youtubeFetch(
+		"/api/shorts/auto",
+		{ method: "POST", body: form },
+		SHORT_UPLOAD_TIMEOUT_MS,
+		input.proxyUrl ?? null,
+	)) as YoutubeAutoShort;
+
+	// /auto responde AutoShortResponse (sem `status`): falha de upload já sai
+	// como YoutubeApiError (502/500). Sem video_id é falha definitiva (400).
+	if (!data.video_id) {
+		const reason =
+			data.tagging_error ||
+			"Upload do Short (auto) respondeu sem video_id — falha definitiva";
+		const transient =
+			/botguard|tls|network|timeout|temporar|try again/i.test(reason);
+		throw new YoutubeApiError(reason, transient ? 502 : 400);
+	}
+	const url =
+		data.url ||
+		(data.video_id ? `https://youtube.com/shorts/${data.video_id}` : "");
+	return { ...data, status: "published", url, watch_url: url };
 }
 
 /** GET /api/shorts?session_id= */

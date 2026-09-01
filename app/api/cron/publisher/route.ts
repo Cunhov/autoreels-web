@@ -20,6 +20,7 @@ import {
 } from "@/lib/youtube-community-image";
 import {
 	YoutubeApiError,
+	createAutoShort,
 	createCommunityPostText,
 	createShort,
 	getSession,
@@ -1173,48 +1174,143 @@ async function publishYoutubePost(opts: {
 		if (!title) {
 			throw new MalformedDataError("Short do YouTube exige título");
 		}
-		// products: CSV normalizado -> JSON string array via youtube_options (track yt-fields)
-		let productsStr: string | undefined = undefined;
+		// products (B1, M1/M2/M3/M4): youtube_options agora carrega SEPARADOS:
+		//   products      = itens verbatim [{ item: <catálogo> }] -> POST /api/shorts
+		//   product_names = nomes/termos p/ auto-select          -> POST /api/shorts/auto
+		// Decisão de roteamento (fonte: shorts.py da API externa — create_short
+		// tem `products`, /auto tem `product_names`+`filters`; NUNCA os dois na
+		// MESMA chamada):
+		//   - algum item verbatim -> /shorts com products; nomes coexistentes
+		//     viram SKIP com warning (regra segura documentada em
+		//     docs/fix-F1-b1-products.md: item escolhido pelo usuário tem
+		//     prioridade — nomes só viajam sozinhos por /auto);
+		//   - só nomes -> /shorts/auto (product_names + filters default);
+		//   - nada -> /shorts sem products ("/").
+		// Legacy: youtube_options.products como '["nome"]' (strings) é colapsado
+		// em namesArr -> /auto (antes a API _parse_products descartava strings
+		// silenciosamente — M1).
+		let itemsArr: unknown[] = [];
 		if (typeof options.products === "string" && options.products.trim()) {
-			const s = options.products.trim();
-			// se já é JSON array string, usa direto; senão tenta JSON.parse, senão trata como CSV
-			if (s.startsWith("[") ) {
-				productsStr = s;
-			} else {
-				try {
-					const parsed = JSON.parse(s);
-					if (Array.isArray(parsed)) productsStr = JSON.stringify(parsed);
-					else productsStr = JSON.stringify(s.split(",").map((x: string)=>x.trim()).filter(Boolean));
-				} catch {
-					productsStr = JSON.stringify(s.split(",").map((x: string)=>x.trim()).filter(Boolean));
-				}
+			try {
+				const parsed = JSON.parse(options.products);
+				if (Array.isArray(parsed)) itemsArr = parsed;
+			} catch {
+				itemsArr = [];
 			}
 		} else if (Array.isArray(options.products)) {
-			productsStr = JSON.stringify((options.products as unknown[]).map(v=>String(v).trim()).filter(Boolean));
+			itemsArr = options.products;
 		}
+
+		let namesArr: string[] = [];
+		if (Array.isArray(options.product_names)) {
+			namesArr = (options.product_names as unknown[])
+				.filter((x): x is string => typeof x === "string" && !!x.trim())
+				.map((s) => s.trim());
+		} else if (
+			typeof options.product_names === "string" &&
+			options.product_names.trim()
+		) {
+			try {
+				const parsed = JSON.parse(options.product_names);
+				if (Array.isArray(parsed)) {
+					namesArr = parsed
+						.filter((x): x is string => typeof x === "string" && !!x.trim())
+						.map((s) => s.trim());
+				} else {
+					namesArr = [options.product_names.trim()];
+				}
+			} catch {
+				namesArr = [];
+			}
+		}
+
+		// itens verbatim = objetos (shape B1 { item } ou shape legacy
+		// {merchant_id,...}); strings legacy viram nomes (auto-select).
+		const verbatimItems = itemsArr.filter(
+			(v): v is Record<string, unknown> =>
+				v != null && typeof v === "object" && !Array.isArray(v),
+		);
+		const legacyNameStrings = itemsArr.filter(
+			(v): v is string => typeof v === "string" && !!v.trim(),
+		);
+		if (legacyNameStrings.length > 0) {
+			namesArr.push(...legacyNameStrings.map((s) => s.trim()));
+		}
+
 		const proxyForShort = getChannelProxyUrl(post.channel as any);
-		const short = await createShort({
-			sessionId,
-			title,
-			description: options.description ?? "",
-			privacy: options.privacy ?? "PUBLIC",
-			madeForKids: options.made_for_kids ?? false,
-			// Categoria neutra (22 = People & Blogs, default do próprio YouTube).
-			// Ver lib/youtube.ts createShort — 17 é "Sports", default questionável
-			// para conteúdo genérico (não há campo de categoria na UI/planner).
-			categoryId: options.category_id ?? 22,
-			proxyUrl: proxyForShort,
-			monetizeWithAds: options.monetize_with_ads ?? false,
-			pinnedCommentText: options.pinned_comment_text || undefined,
-			products: productsStr ?? "[]",
-			video: {
-				blob: new Blob([bufferView(videoFile.buffer)], {
-					type: videoFile.contentType,
-				}),
-				filename: videoFile.filename,
-				contentType: videoFile.contentType,
-			},
-		});
+		const productsRoute =
+			verbatimItems.length > 0 ? "verbatim" : namesArr.length > 0 ? "auto" : "none";
+		if (productsRoute === "verbatim" && namesArr.length > 0) {
+			await logPlanner(
+				plannerId,
+				`[YouTube] ${namesArr.length} nome(s) de produto ignorado(s) (SKIP) — itens verbatim selecionados têm prioridade; products e product_names nunca são misturados na mesma chamada.`,
+				"warning",
+			).catch(() => {});
+		}
+		const short =
+			productsRoute === "auto"
+				? await createAutoShort({
+						sessionId,
+						title,
+						description: options.description ?? "",
+						privacy: options.privacy ?? "PUBLIC",
+						madeForKids: options.made_for_kids ?? false,
+						// Categoria neutra (22 = People & Blogs, default do próprio YouTube).
+						categoryId: options.category_id ?? 22,
+						proxyUrl: proxyForShort,
+						monetizeWithAds: options.monetize_with_ads ?? false,
+						pinnedCommentText: options.pinned_comment_text || undefined,
+						// default de filtros = todos os marketplaces habilitados
+						productNames: namesArr,
+						filters: {
+							mercadolivre: true,
+							shopee: true,
+							amazon: true,
+							min_commission_pct: 0,
+							items_per_product: 1,
+						},
+						video: {
+							blob: new Blob([bufferView(videoFile.buffer)], {
+								type: videoFile.contentType,
+							}),
+							filename: videoFile.filename,
+							contentType: videoFile.contentType,
+						},
+					})
+				: await createShort({
+						sessionId,
+						title,
+						description: options.description ?? "",
+						privacy: options.privacy ?? "PUBLIC",
+						madeForKids: options.made_for_kids ?? false,
+						// Categoria neutra (22 = People & Blogs, default do próprio YouTube).
+						categoryId: options.category_id ?? 22,
+						proxyUrl: proxyForShort,
+						monetizeWithAds: options.monetize_with_ads ?? false,
+						pinnedCommentText: options.pinned_comment_text || undefined,
+						products:
+							productsRoute === "verbatim"
+								? JSON.stringify(verbatimItems)
+								: "[]",
+						video: {
+							blob: new Blob([bufferView(videoFile.buffer)], {
+								type: videoFile.contentType,
+							}),
+							filename: videoFile.filename,
+							contentType: videoFile.contentType,
+						},
+					});
+		const productNote =
+			productsRoute === "auto"
+				? `auto-select ${namesArr.length} produto(s)`
+				: productsRoute === "verbatim"
+					? `${verbatimItems.length} produto(s) verbatim`
+					: "sem produtos";
+		await logPlanner(
+			plannerId,
+			`[YouTube] Short enviado via ${productsRoute === "auto" ? "/api/shorts/auto" : "/api/shorts"} (${productNote}) para a API externa`,
+			"info",
+		).catch(() => {});
 		await prisma.post.update({
 			where: { id: post.id },
 			data: {
