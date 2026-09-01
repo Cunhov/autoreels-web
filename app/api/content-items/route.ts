@@ -6,13 +6,13 @@ import { Prisma } from "@prisma/client";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { cleanPathSegment } from "@/lib/upload-path";
 import { normalizeTags } from "./shared";
-import { escapeHtml, sanitizeCaption } from "@/lib/sanitize";
+import { escapeHtml, sanitizeCaption, sanitizeFirstComment } from "@/lib/sanitize";
 
 // Fields a client may set when creating a content item. Server-owned fields
 // (id, user_id, created_at, path) are excluded to prevent mass assignment.
 const POST_ALLOWED_FIELDS = [
     "name", "title", "caption", "caption_youtube", "caption_instagram", "caption_tiktok",
-    "youtube_products",
+    "youtube_products", "first_comment",
     "tags", "type", "size", "duration",
     "parent_id", "url", "thumbnail_url",
 ] as const;
@@ -211,6 +211,11 @@ export async function POST(req: Request) {
         }
         if (payload.caption_tiktok !== undefined && payload.caption_tiktok !== null) {
             payload.caption_tiktok = sanitizeCaption(payload.caption_tiktok);
+        }
+        // F4: primeiro comentário — trim + limite 500 + vazio→null (mesma régua
+        // de sanitização da caption; null explícito também vira null).
+        if (payload.first_comment !== undefined) {
+            payload.first_comment = sanitizeFirstComment(payload.first_comment);
         }
         // Produtos afiliados por vídeo (decisão do dono): CSV de NOMES no item
         // (ex.: "Cadeira Gamer, Mousepad"). Nomes NÃO passam por escapeHtml

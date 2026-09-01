@@ -6,13 +6,13 @@ import { getErrorMessage, getSessionUserId } from "@/lib/api";
 import { deleteFileFromDisk, collectItemFiles } from "@/lib/deleteFiles";
 import { cleanPathSegment } from "@/lib/upload-path";
 import { normalizeTags } from "../shared";
-import { escapeHtml, sanitizeCaption } from "@/lib/sanitize";
+import { escapeHtml, sanitizeCaption, sanitizeFirstComment } from "@/lib/sanitize";
 
 // Fields a client may update. Server-owned fields (id, user_id, created_at,
 // path) are excluded to prevent mass assignment / arbitrary file deletion.
 const PATCH_ALLOWED_FIELDS = [
     "name", "title", "caption", "caption_youtube", "caption_instagram", "caption_tiktok",
-    "youtube_products",
+    "youtube_products", "first_comment",
     "tags", "type", "size", "duration",
     "parent_id", "thumbnail_url", "url",
 ] as const;
@@ -153,6 +153,11 @@ export async function PATCH(
         }
         if (payload.caption_tiktok !== undefined && payload.caption_tiktok !== null) {
             payload.caption_tiktok = sanitizeCaption(payload.caption_tiktok);
+        }
+        // F4: primeiro comentário — mesmo tratamento do POST: trim + limite 500
+        // + vazio→null (vazio num PATCH individual limpa o campo; ver modal).
+        if (payload.first_comment !== undefined) {
+            payload.first_comment = sanitizeFirstComment(payload.first_comment);
         }
         // Produtos afiliados por vídeo (decisão do dono): CSV de NOMES no item.
         // Mesma regra do POST: trim + limite 5000; vírgula separa itens; nomes

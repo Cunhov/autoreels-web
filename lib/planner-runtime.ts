@@ -841,6 +841,27 @@ export async function buildPostData(opts: {
 		platform: opts.channel.platform,
 	});
 
+	// F4: primeiro comentário — SNAPSHOT do ContentItem (library) para o Post.
+	// Decisão do dono: o YouTube publica automaticamente após o Short (o
+	// publisher lê `post.first_comment`); IG/TikTok apenas salvam o texto (sem
+	// API oficial de comentário). Mesmo caminho IDOR-safe do
+	// resolveCaptionTemplateVars (item por id/folder_id do usuário).
+	let firstComment: string | null = null;
+	const fcLibId =
+		runtime.selectedContent?.id || runtime.selectedContent?.folder_id;
+	if (fcLibId) {
+		try {
+			const fcItem = await opts.prisma.contentItem.findFirst({
+				where: { id: fcLibId, user_id: opts.planner.user_id },
+				select: { first_comment: true },
+			});
+			const fc = (fcItem?.first_comment || "").trim();
+			firstComment = fc ? fc.slice(0, 500) : null;
+		} catch {
+			/* SAFETY: best-effort opcional — item inexistente/ausente = sem comentário */
+		}
+	}
+
 	const isYtChannel =
 		(opts.channel.platform || "").toLowerCase() === "youtube";
 	const ytTypeForPost =
@@ -939,6 +960,7 @@ export async function buildPostData(opts: {
 			? JSON.stringify(runtime.audioConfiguration)
 			: null,
 		caption,
+		first_comment: firstComment,
 		scheduled_at: opts.now,
 		planner_id: opts.planner.id,
 	} as unknown as Prisma.PostUncheckedCreateInput;
@@ -1117,6 +1139,22 @@ export async function propagatePlannerConfigToPendingPosts(
       selectedContent = globalCap ? { caption: String(globalCap) } as PlannerContentItem : null;
     }
 
+    // F4: re-deriva o primeiro comentário do item de library (MESMO caminho
+    // do buildPostData). undefined = não alterar o post (falha de lookup ou
+    // item sem id não sobrescreve o valor existente — regra M5/B2).
+    let newFirstComment: string | null | undefined = undefined;
+    const fcLibId = selectedContent?.id || selectedContent?.folder_id;
+    if (fcLibId) {
+      try {
+        const fcItem = await (prismaClient as PrismaLike).contentItem.findFirst({
+          where: { id: fcLibId, user_id: planner.user_id },
+          select: { first_comment: true },
+        });
+        const fc = (fcItem?.first_comment || "").trim();
+        newFirstComment = fc ? fc.slice(0, 500) : null;
+      } catch { /* SAFETY: mantém o primeiro comentário existente do post */ }
+    }
+
     // Resolve nova caption via applyCaptionTemplate (mesma semântica do buildPostData)
     let newCaption: string;
     try {
@@ -1195,6 +1233,7 @@ export async function propagatePlannerConfigToPendingPosts(
     const data: Record<string, unknown> = { caption: newCaption };
     if (newYoutubeOptions !== undefined) data.youtube_options = newYoutubeOptions;
     if (newTiktokOptions !== undefined) data.tiktok_options = newTiktokOptions;
+    if (newFirstComment !== undefined) data.first_comment = newFirstComment;
 
     // M14: re-checa o status DENTRO do where — o publisher pode ter claimado
     // (pending→processing) ou o usuário cancelado este post no instante da
