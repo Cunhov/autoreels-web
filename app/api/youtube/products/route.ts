@@ -3,15 +3,16 @@ import {
 	requireOwnedYoutubeChannel,
 	youtubeErrorMessage,
 } from "@/lib/youtube-channel";
-import { listProducts } from "@/lib/youtube";
+import { getSession, listProducts } from "@/lib/youtube";
 import { getChannelProxyUrl } from "@/lib/proxy";
 import { prisma } from "@/lib/prisma";
 
 /**
  * GET /api/youtube/products?channelId=&videoId=&query=&suggestions=&limit=...
  * Busca produtos afiliados taggeáveis pela sessão (YouTube Shopping).
- * `videoId` agora é OPCIONAL (B3/F3): quando ausente, a rota resolve o
- * último Short publicado do canal a partir do Post.youtube_video_id.
+ * `videoId` é OPCIONAL (B3): quando ausente, a rota resolve o vídeo alvo na
+ * ordem: (1) último Short publicado do canal, (2) sacrifice_video_id da
+ * sessão remota (configurado na API externa via POST /api/sessions/{id}/config).
  */
 export async function GET(req: Request) {
 	const url = new URL(req.url);
@@ -19,20 +20,18 @@ export async function GET(req: Request) {
 	if (!guard.ok) return guard.response;
 
 	const videoIdParam = (url.searchParams.get("videoId") || "").trim();
-	const resolvedVideoId = await resolveVideoIdForProductSearch(
-		videoIdParam,
-		guard.channel.id,
-	);
+	const resolvedVideoId = await resolveVideoIdForProductSearch({
+		explicitVideoId: videoIdParam,
+		channelId: guard.channel.id,
+		sessionId: guard.sessionId,
+		proxyUrl: getChannelProxyUrl(guard.channel),
+	});
 	if (!resolvedVideoId) {
-		// B3/F3 — sem vídeo explícito e sem nenhum Short publicado no canal:
-		// não há vídeo alvo para a tagagem. Erro PT-BR claro. O fluxo de vídeo
-		// isca (sacrifice_video_id / POST /api/sessions/{id}/config da API
-		// externa) fica para fase futura — documentado em
-		// docs/PLANNER_AUDIT_REPORT.md §2 P0-B3, NÃO implementado aqui.
 		return NextResponse.json(
 			{
 				error:
-					"Nenhum vídeo publicado para buscar produtos — publique um Short primeiro.",
+					"Nenhum vídeo disponível para buscar produtos. Publique um Short no canal " +
+					"ou configure o vídeo isca da sessão na API (sacrifice_video_id).",
 			},
 			{ status: 400 },
 		);
@@ -104,19 +103,24 @@ export async function GET(req: Request) {
 }
 
 /**
- * Resolve o videoId alvo da busca de produtos (B3/F3):
- * 1. videoId explícito na query — retrocompat preservada (channelId+videoId+
- *    query continua aceito e tem prioridade);
+ * Resolve o videoId alvo da busca de produtos:
+ * 1. videoId explícito na query — retrocompat preservada (maior prioridade);
  * 2. ausente → último Short publicado do canal (Post.status="published" com
  *    youtube_video_id preenchido, mais recente por published_at);
- * 3. nenhum → null — o caller responde 400 PT-BR orientando publicar um Short.
+ * 3. ausente → sacrifice_video_id da sessão remota (configurado na API externa
+ *    via POST /api/sessions/{id}/config — o vídeo isca que a token farm usa);
+ * 4. nenhum → null — o caller responde 400 PT-BR claro.
  */
-async function resolveVideoIdForProductSearch(
-	explicitVideoId: string,
-	channelId: string,
-): Promise<string | null> {
+async function resolveVideoIdForProductSearch(opts: {
+	explicitVideoId: string;
+	channelId: string;
+	sessionId: string;
+	proxyUrl: string | null;
+}): Promise<string | null> {
+	const { explicitVideoId, channelId, sessionId, proxyUrl } = opts;
 	const videoId = explicitVideoId.trim();
 	if (videoId) return videoId;
+
 	const lastPublished = await prisma.post.findFirst({
 		where: {
 			channel_id: channelId,
@@ -129,5 +133,19 @@ async function resolveVideoIdForProductSearch(
 		orderBy: { published_at: "desc" },
 		select: { youtube_video_id: true },
 	});
-	return lastPublished?.youtube_video_id ?? null;
+	if (lastPublished?.youtube_video_id) return lastPublished.youtube_video_id;
+
+	// Fallback 3: sacrifice_video_id já configurado na API externa (vídeo isca).
+	// Busca a sessão remota direto da API (ex.: o usuário configurou o sacrifício
+	// mas ainda não publicou nada pelo app) — mesmo proxy do canal.
+	try {
+		const session = await getSession(sessionId, proxyUrl);
+		const sacrifice = (session?.sacrifice_video_id || "").trim();
+		if (sacrifice) return sacrifice;
+	} catch {
+		// Sessão remota indisponível/timeout — segue sem sacrifício; o caller
+		// responde 400 com orientação clara em vez de propagar 502.
+	}
+
+	return null;
 }

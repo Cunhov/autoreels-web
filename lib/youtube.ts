@@ -98,6 +98,7 @@ export interface YoutubeSession {
 	status: string; // "active" | "expired" | ...
 	created_at: string;
 	last_rotate_at: string | null;
+	sacrifice_video_id?: string | null;
 }
 
 export interface YoutubeHealth {
@@ -166,7 +167,10 @@ export interface YoutubeShortOptions {
 export function getYoutubeSessionId(settings: string | null | undefined): string {
 	if (!settings) return "";
 	try {
-		const parsed = safeJsonParse<{ sessionId?: unknown }>(settings, { } as any) as { sessionId?: unknown };
+		const parsed = safeJsonParse<{ sessionId?: unknown }>(
+			settings,
+			{ sessionId: undefined } as { sessionId?: unknown },
+		) as { sessionId?: unknown };
 		return typeof parsed?.sessionId === "string" ? parsed.sessionId : "";
 	} catch {
 		return "";
