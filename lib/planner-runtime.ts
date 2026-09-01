@@ -26,9 +26,9 @@ import {
 	isSleepingNow,
 	normalizeCollaborators,
 	normalizeUserTags,
-	normalizeYoutubeProductsCsv,
 	parsePlannerConfig,
 	parsePlannerState,
+	toYoutubeProductsJson,
 	validatePlannerConfig,
 	type PlannerJson,
 } from "./planner-config";
@@ -452,21 +452,21 @@ export async function buildPostData(opts: {
 		const resolveYtTpl = (v: string): string => v.includes("{") ? substituteCaptionTemplate(v, varsForYt) : v;
 		const rawYtTitle = typeof cfg["youtube_title"] === "string" ? resolveYtTpl(String(cfg["youtube_title"])) : "";
 		const rawYtDescTpl = typeof cfg["youtube_description"] === "string" ? resolveYtTpl(String(cfg["youtube_description"])) : "";
-		// Products CSV -> JSON string array via JSON.stringify(csv.split(',').filter(Boolean))
-		const rawProductsCsv = cfg["youtube_products"] as unknown;
+		// Produtos afiliados (B1/M1..M4/M22): helper ÚNICO toYoutubeProductsJson
+		// separa nomes (auto-select via /api/shorts/auto) de itens verbatim
+		// (/api/shorts com products). NUNCA aplicar template {var} nem split por
+		// vírgula em nomes de produto (M22) — produto não é caption, e vírgula
+		// pode ser parte do nome. CSV legacy é normalizado para {query}.
+		const productsPayload = toYoutubeProductsJson(cfg["youtube_products"]);
 		let productsJson: string | null = null;
-		if (typeof rawProductsCsv === "string" && rawProductsCsv.trim()) {
-			const resolvedCsv = rawProductsCsv.includes("{") ? resolveYtTpl(rawProductsCsv) : rawProductsCsv;
-			const arr = resolvedCsv.split(",").map((s: string) => s.trim()).filter(Boolean);
-			productsJson = JSON.stringify(arr);
-		} else if (Array.isArray(rawProductsCsv)) {
-			const arr = (rawProductsCsv as unknown[]).map(v => String(v).trim()).filter(Boolean);
-			if (arr.length > 0) productsJson = JSON.stringify(arr);
+		let productNamesJson: string | null = null;
+		if (productsPayload.hasItems) {
+			// [{ item: <bloco verbatim do catálogo> }] — /api/shorts (products)
+			productsJson = JSON.stringify(productsPayload.items);
 		}
-		// also check normalized helper for safety
-		if (!productsJson) {
-			const normalized = normalizeYoutubeProductsCsv(rawProductsCsv);
-			if (normalized) productsJson = JSON.stringify(normalized.split(",").filter(Boolean));
+		if (productsPayload.hasNames) {
+			// ["nome", ...] — /api/shorts/auto (product_names)
+			productNamesJson = JSON.stringify(productsPayload.names);
 		}
 		const titleCandidate = [
 			rawYtTitle || "",
@@ -549,6 +549,7 @@ export async function buildPostData(opts: {
 			if (categoryId !== undefined && Number.isInteger(categoryId)) ytObj.category_id = categoryId;
 			if (typeof pinnedRaw === "string" && pinnedRaw.trim()) ytObj.pinned_comment_text = pinnedRaw.trim().slice(0, 10000);
 			if (productsJson) ytObj.products = productsJson;
+			if (productNamesJson) ytObj.product_names = productNamesJson;
 			youtubeOptions = JSON.stringify(ytObj);
 		}
 	}
@@ -745,6 +746,12 @@ export async function buildYoutubeOptionsForPropagation(opts: {
   if (descriptionVal) ytObj.description = String(descriptionVal).slice(0, 5000);
   if (categoryId !== undefined && Number.isInteger(categoryId)) ytObj.category_id = categoryId;
   if (typeof pinnedRaw === "string" && (pinnedRaw as string).trim()) ytObj.pinned_comment_text = (pinnedRaw as string).trim().slice(0, 10000);
+  // B1: propagação usa o MESMO helper do buildPostData (toYoutubeProductsJson)
+  // para reconstruir products/product_names — sem isso, editar um planner
+  // apagaria os produtos afiliados dos Shorts pendentes (M5/W8).
+  const propagatedProducts = toYoutubeProductsJson(cfg["youtube_products"]);
+  if (propagatedProducts.hasItems) ytObj.products = JSON.stringify(propagatedProducts.items);
+  if (propagatedProducts.hasNames) ytObj.product_names = JSON.stringify(propagatedProducts.names);
   return JSON.stringify(ytObj);
 }
 

@@ -212,6 +212,49 @@ export function serializeYoutubeProducts(
     }));
 }
 
+/**
+ * Payload separado de produtos afiliados para a publicação do Short (B1).
+ * Única fonte usada por buildPostData, propagação e preview: transforma
+ * youtube_products do config (Array<{query,item?}> | array de strings | CSV
+ * legacy) no formato que o publisher roteia:
+ *   - names: entradas query-only -> POST /api/shorts/auto (product_names)
+ *   - items: entradas verbatim -> POST /api/shorts (products: [{item}])
+ * NUNCA misturar os dois na MESMA chamada da API externa.
+ */
+export interface YoutubeProductsPayload {
+    /** Nomes/termos de busca (entradas sem item) — rota /api/shorts/auto. */
+    names: string[];
+    /** Itens verbatim { item: <bloco do catálogo> } — rota /api/shorts. */
+    items: { item: unknown }[];
+    hasNames: boolean;
+    hasItems: boolean;
+}
+
+/**
+ * B1/M1..M4/M22 — helper ÚNICO de produtos afiliados.
+ * Converte youtube_products em { names, items } usando
+ * normalizeYoutubeProductsList (que já aceita CSV legacy / array de strings /
+ * array de {query,item?}). NUNCA aplica template {var} nem split por vírgula
+ * no nome do produto (M22): o nome viaja intacto em `names` e cada `item` é
+ * preservado verbatim. Entrada com item -> items (não vira name).
+ */
+export function toYoutubeProductsJson(value: unknown): YoutubeProductsPayload {
+    const entries = normalizeYoutubeProductsList(value) ?? [];
+    const names: string[] = [];
+    const items: { item: unknown }[] = [];
+    for (const e of entries) {
+        if (e.item !== undefined) {
+            // verbatim: { item: <bloco do catálogo> } (compatível com
+            // build_products_selection da API externa — passthrough fiel).
+            items.push({ item: e.item });
+        } else {
+            const q = e.query.trim();
+            if (q) names.push(q);
+        }
+    }
+    return { names, items, hasNames: names.length > 0, hasItems: items.length > 0 };
+}
+
 /** Categorias de vídeo do YouTube (id -> nome) para o dropdown do planner. */
 export const YOUTUBE_CATEGORIES: Record<number, string> = {
     1: "Film & Animation",
@@ -552,50 +595,34 @@ export function validatePlannerConfig(config: unknown): {
             );
         }
     }
-    // youtube_products: CSV string — cada item não vazio após trim
+    // youtube_products (B1): formato canônico Array<{query,item?}> — aceita
+    // também array de strings e CSV legacy (normalizados para {query}).
+    // Shape-check via normalizeYoutubeProductsList: NUNCA aceita valores que o
+    // runtime descartaria (o CSV com vírgula no nome some com o novo formato;
+    // M22). Array vazio = "sem produtos" (válido).
     if (
         c.youtube_products !== undefined &&
         c.youtube_products !== null &&
         c.youtube_products !== ""
     ) {
-        if (
-            typeof c.youtube_products !== "string" &&
-            !Array.isArray(c.youtube_products)
-        ) {
-            errors.push(
-                "youtube_products deve ser uma string com IDs separados por vírgula",
-            );
+        const raw = c.youtube_products;
+        if (Array.isArray(raw) && (raw as unknown[]).length === 0) {
+            // vazio = sem produtos: ok
         } else {
-            const raw = Array.isArray(c.youtube_products)
-                ? (c.youtube_products as unknown[]).join(",")
-                : String(c.youtube_products);
-            // detecta itens vazios (ex: "a,,b" ou "a, ,b" ou trailing comma)
-            const parts = raw.split(",");
-            const hasEmpty = parts.some((p) => {
-                // ignora string vazia total já tratada; mas se houver vírgula, cada segmento deve ser não-vazio
-                // um CSV como "" já foi filtrado; "a,b" → 2 partes válidas; "a,,b" → parte vazia no meio → erro
-                // "a,b," → última vazia → erro (usuário digitou vírgula extra)
-                const trimmed = p.trim();
-                // Se raw termina com vírgula ou contém ",,", haverá parte vazia
-                return trimmed.length === 0;
-            });
-            // Permite string vazia/whitespace-only como "sem produtos"? já filtrado ('' não entra). Se usuário enviou "   " → após split → ["   "] → trim vazio → erro
-            if (raw.trim().length > 0 && hasEmpty) {
+            const norm = normalizeYoutubeProductsList(raw);
+            if (!norm) {
                 errors.push(
-                    "Produtos afiliados contêm item vazio — verifique os IDs separados por vírgula",
+                    "youtube_products deve ser uma lista de produtos (array de {query, item?}, array de strings ou CSV legacy)",
                 );
-            }
-            // cada item após trim deve ser não vazio; já coberto, mas valida tamanho individual
-            const cleaned = parts.map((p) => p.trim()).filter(Boolean);
-            if (cleaned.some((item) => item.length === 0)) {
-                errors.push(
-                    "Produtos afiliados contêm item vazio — verifique os IDs separados por vírgula",
-                );
-            }
-            if (cleaned.some((item) => item.length > 200)) {
-                errors.push(
-                    "Cada produto afiliado deve ter no máximo 200 caracteres",
-                );
+            } else {
+                if (norm.some((entry) => entry.query.length > 500)) {
+                    errors.push(
+                        "Cada produto afiliado deve ter no máximo 500 caracteres no nome/termo",
+                    );
+                }
+                if (norm.length > 50) {
+                    errors.push("Limite de 50 produtos afiliados por planner");
+                }
             }
         }
     }

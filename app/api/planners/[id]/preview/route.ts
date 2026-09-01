@@ -9,7 +9,12 @@ import {
     resolvePlannerRuntime,
     substituteCaptionTemplate,
 } from "@/lib/planner-runtime";
-import { getPlannerPlatformType, PLANNER_MIX_ERROR } from "@/lib/planner-config";
+import {
+    getPlannerPlatformType,
+    normalizeYoutubeProductsList,
+    serializeYoutubeProducts,
+    PLANNER_MIX_ERROR,
+} from "@/lib/planner-config";
 
 /** Wall-clock "HH:MM" in a given IANA timezone. */
 function getTimeInTimeZone(date: Date, tz: string): { hh: string; mm: string } {
@@ -216,7 +221,14 @@ export async function GET(
     const youtubeFields = {
         youtube_title: typeof plannerConfig.youtube_title === "string" ? String(plannerConfig.youtube_title) : null,
         youtube_description: typeof plannerConfig.youtube_description === "string" ? String(plannerConfig.youtube_description) : null,
-        youtube_products: typeof plannerConfig.youtube_products === "string" ? String(plannerConfig.youtube_products) : Array.isArray(plannerConfig.youtube_products) ? (plannerConfig.youtube_products as unknown[]).join(",") : null,
+        youtube_products: (() => {
+            // B1: preview expõe o formato canônico Array<{query,item?}> via o
+            // MESMO helper do runtime (normalize+serialize) — nunca CSV cru.
+            const entries = normalizeYoutubeProductsList(
+                plannerConfig.youtube_products,
+            );
+            return entries ? serializeYoutubeProducts(entries) : null;
+        })(),
         youtube_privacy: typeof plannerConfig.youtube_privacy === "string" ? String(plannerConfig.youtube_privacy) : null,
         youtube_made_for_kids: plannerConfig.youtube_made_for_kids ?? null,
         youtube_monetize_with_ads: plannerConfig.youtube_monetize_with_ads ?? null,
