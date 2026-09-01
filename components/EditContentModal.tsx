@@ -7,7 +7,7 @@ import {
 	Video as VideoIcon,
 } from "lucide-react";
 import IOSButton from "./IOSButton";
-import { escapeHtml, CAPTION_MAX } from "@/lib/sanitize";
+import { escapeHtml, CAPTION_MAX, FIRST_COMMENT_MAX } from "@/lib/sanitize";
 
 interface ContentItem {
 	id: string;
@@ -18,6 +18,7 @@ interface ContentItem {
 	caption_instagram?: string | null;
 	caption_tiktok?: string | null;
 	youtube_products?: string | null;
+	first_comment?: string | null;
 	tags?: string[] | string;
 	type: string;
 	url?: string;
@@ -31,6 +32,13 @@ interface ContentItem {
 function sanitizeCaptionText(v: string): string {
 	let s = v.trim();
 	if (s.length > CAPTION_MAX) s = s.slice(0, CAPTION_MAX);
+	return escapeHtml(s);
+}
+
+/** Sanitiza o primeiro comentário (F4): trim + limite 500 + escape HTML. */
+function sanitizeFirstCommentText(v: string): string {
+	let s = v.trim();
+	if (s.length > FIRST_COMMENT_MAX) s = s.slice(0, FIRST_COMMENT_MAX);
 	return escapeHtml(s);
 }
 
@@ -79,6 +87,7 @@ export default function EditContentModal({
 	const [captionInstagram, setCaptionInstagram] = useState("");
 	const [captionTiktok, setCaptionTiktok] = useState("");
 	const [youtubeProducts, setYoutubeProducts] = useState("");
+	const [firstComment, setFirstComment] = useState("");
 	const [tags, setTags] = useState<string[]>([]);
 	const [tagInput, setTagInput] = useState("");
 
@@ -114,6 +123,7 @@ export default function EditContentModal({
 				setCaptionInstagram("");
 				setCaptionTiktok("");
 				setYoutubeProducts("");
+				setFirstComment("");
 			} else {
 				// Single item - prefill
 				const item = itemsToEdit[0];
@@ -124,6 +134,7 @@ export default function EditContentModal({
 				setCaptionInstagram(item.caption_instagram || "");
 				setCaptionTiktok(item.caption_tiktok || "");
 				setYoutubeProducts(item.youtube_products || "");
+				setFirstComment(item.first_comment || "");
 				setTags(normalizeTags(item.tags));
 				setVideoDuration(item.duration || 0);
 				setThumbTime(0.5);
@@ -204,6 +215,9 @@ export default function EditContentModal({
 					updates.caption_instagram = sanitizeCaptionText(captionInstagram);
 				if (captionTiktok.trim())
 					updates.caption_tiktok = sanitizeCaptionText(captionTiktok);
+				// Bulk: campo vazio = manter o atual (não sobrescreve).
+				if (firstComment.trim())
+					updates.first_comment = sanitizeFirstCommentText(firstComment);
 				if (youtubeProducts.trim())
 					updates.youtube_products = youtubeProducts.trim().slice(0, 5000);
 				if (tags.length > 0)
@@ -227,6 +241,10 @@ export default function EditContentModal({
 					: null;
 				updates.caption_tiktok = captionTiktok.trim()
 					? sanitizeCaptionText(captionTiktok)
+					: null;
+				// Individual: campo vazio LIMPA o item (null) — remoção explícita no modal.
+				updates.first_comment = firstComment.trim()
+					? sanitizeFirstCommentText(firstComment)
 					: null;
 				// Produtos do item: só envia se o usuário digitou (bulk vazio = manter).
 				// No modo individual, campo vazio LIMPA o item (updates.youtube_products = null)
@@ -543,6 +561,29 @@ export default function EditContentModal({
 						<p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
 							Usada no lugar da legenda padrão quando o post vai para o TikTok.
 							Vazia = usa a legenda padrão.
+						</p>
+					</div>
+
+					<div>
+						<label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5 uppercase tracking-wide">
+							Primeiro comentário{" "}
+							<span className="text-gray-400 lowercase font-normal">(opcional)</span>
+						</label>
+						<textarea
+							value={firstComment}
+							onChange={(e) => setFirstComment(e.target.value)}
+							maxLength={FIRST_COMMENT_MAX}
+							rows={2}
+							className="w-full bg-gray-100 dark:bg-white/10 border-0 rounded-xl px-4 py-3 text-[17px] text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:outline-none resize-none transition-all"
+							placeholder={
+								isBulk
+									? "Deixe vazio para manter o atual"
+									: "Comentário publicado logo após o Short..."
+							}
+						/>
+						<p className="text-[11px] text-gray-400 dark:text-gray-500 mt-1">
+							Publicado automaticamente no YouTube após o Short; IG/TikTok ficam
+							salvos.
 						</p>
 					</div>
 

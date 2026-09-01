@@ -7,6 +7,7 @@ export const YT_TITLE_MAX = 100;
 export const CAPTION_MAX = 2200;
 export const DESCRIPTION_MAX = 5000;
 export const PINNED_MAX = 10000;
+export const FIRST_COMMENT_MAX = 500;
 
 export const CHANNEL_NAME_MAX = 80;
 export const PLANNER_NAME_MAX = 80;
@@ -137,6 +138,21 @@ export function formatImageCount(count: number): string {
 export function sanitizeCaption(input: unknown): string {
   const str = String(input ?? "").trim();
   const capped = str.length > CAPTION_MAX ? str.slice(0, CAPTION_MAX) : str;
+  return capped.includes("<") || capped.includes(">")
+    ? escapeHtml(capped)
+    : capped;
+}
+
+/**
+ * Sanitiza o primeiro comentário (F4): trim, limite FIRST_COMMENT_MAX (500),
+ * vazio → null (vazio = escolha explícita de não comentar) e escape HTML
+ * (mesma régua da caption). Usada pela whitelist content-items POST/PATCH e
+ * pelo editor da library (EditContentModal).
+ */
+export function sanitizeFirstComment(input: unknown): string | null {
+  const str = String(input ?? "").trim();
+  if (!str) return null;
+  const capped = str.length > FIRST_COMMENT_MAX ? str.slice(0, FIRST_COMMENT_MAX) : str;
   return capped.includes("<") || capped.includes(">")
     ? escapeHtml(capped)
     : capped;

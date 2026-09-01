@@ -42,6 +42,7 @@ import {
   TiktokApiError,
 } from "@/lib/tiktok";
 import { resolveFinalCaption } from "@/lib/planner-runtime";
+import { publishYoutubeFirstComment } from "@/lib/first-comment";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -955,6 +956,7 @@ interface YoutubePublishPost {
 	children_urls?: string | null;
 	youtube_type?: string | null;
 	youtube_options?: string | null;
+	first_comment?: string | null;
 	attempts?: number;
 	created_at?: Date | null;
 	channel?: {
@@ -1706,6 +1708,22 @@ async function publishYoutubePost(opts: {
 		});
 		if (!wroteShort) return;
 		results.published++;
+		// ── F4: primeiro comentário ───────────────────────────────────────────
+		// Decisão do dono: o YouTube publica o comentário AUTOMATICAMENTE após o
+		// Short (IG/TikTok só salvam o texto — sem API oficial de comentário).
+		// O texto vem do snapshot Post.first_comment (cópia do ContentItem na
+		// criação); falha de comentário NUNCA falha o post nem altera
+		// failed_reason — a orquestração em lib/first-comment.ts só loga e
+		// retorna false. O proxy do canal é sempre repassado (M16).
+		await publishYoutubeFirstComment({
+			postId: post.id,
+			plannerId,
+			videoId: short.video_id || null,
+			sessionId,
+			text: post.first_comment,
+			proxyUrl: getChannelProxyUrl(post.channel as any),
+			log: (msg, level) => logPlanner(plannerId, msg, level ?? "info"),
+		});
 	} catch (e: unknown) {
 		const rawMsg = e instanceof Error ? e.message : String(e ?? "Unknown error");
 
