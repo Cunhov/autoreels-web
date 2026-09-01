@@ -916,15 +916,20 @@ function InstagramIcon() {
     );
 }
 
-// ── Estado vazio p/ canais YouTube (a API externa não expõe métricas) ────────
-function YoutubeMetricsEmpty() {
+// ── Estado vazio p/ canais sem métricas de audiência (YouTube/TikTok) ────────
+function PlatformMetricsEmpty({ platform }: { platform: 'youtube' | 'tiktok' }) {
     return (
         <IOSCard className="p-12 text-center text-ios-text-secondary">
             <Video size={48} className="mx-auto mb-4 opacity-30" strokeWidth={1} />
-            <h3 className="text-xl font-semibold mb-2 text-ios-text">Métricas do YouTube ainda não disponíveis</h3>
+            <h3 className="text-xl font-semibold mb-2 text-ios-text">
+                {platform === 'youtube'
+                    ? 'Métricas do YouTube ainda não disponíveis'
+                    : 'Métricas do TikTok ainda não disponíveis'}
+            </h3>
             <p className="max-w-sm mx-auto text-[14px]">
-                A API do YouTube integrada ao app não fornece métricas de audiência.
-                Os Shorts e posts na Comunidade deste canal aparecem no calendário normalmente.
+                {platform === 'youtube'
+                    ? 'A API do YouTube integrada ao app não fornece métricas de audiência. Os Shorts e posts na Comunidade deste canal aparecem no calendário normalmente.'
+                    : 'A API do TikTok integrada ao app não fornece métricas de audiência. Os vídeos deste canal aparecem na fila e no calendário normalmente.'}
             </p>
         </IOSCard>
     );
@@ -936,9 +941,12 @@ export default function AnalyticsPage() {
     const [selectedChannel, setSelectedChannel] = useState<string>('all');
     const [toast, showToast] = useToast();
 
-    const selectedIsYoutube =
-        selectedChannel !== 'all' &&
-        channels.find((ch) => ch.id === selectedChannel)?.platform === 'youtube';
+    const selectedPlatform =
+        selectedChannel !== 'all'
+            ? channels.find((ch) => ch.id === selectedChannel)?.platform
+            : undefined;
+    const selectedIsYoutube = selectedPlatform === 'youtube';
+    const selectedIsTiktok = selectedPlatform === 'tiktok';
 
     useEffect(() => {
         fetch('/api/channels')
@@ -957,7 +965,9 @@ export default function AnalyticsPage() {
                             ? 'Resumo local de todas as contas — selecione um canal para métricas reais.'
                             : selectedIsYoutube
                                 ? 'Este canal publica via YouTube — métricas de audiência ainda não disponíveis.'
-                                : 'Métricas reais do Instagram (alcance, engajamento, salvos).'}
+                                : selectedIsTiktok
+                                    ? 'Este canal publica via TikTok — métricas de audiência ainda não disponíveis.'
+                                    : 'Métricas reais do Instagram (alcance, engajamento, salvos).'}
                     </p>
                 </div>
             </div>
@@ -987,7 +997,9 @@ export default function AnalyticsPage() {
             {selectedChannel === 'all' ? (
                 <LocalDashboard channels={channels} onToast={showToast} onSelectChannel={setSelectedChannel} />
             ) : selectedIsYoutube ? (
-                <YoutubeMetricsEmpty />
+                <PlatformMetricsEmpty platform="youtube" />
+            ) : selectedIsTiktok ? (
+                <PlatformMetricsEmpty platform="tiktok" />
             ) : (
                 <ChannelInsights channelId={selectedChannel} onToast={showToast} />
             )}

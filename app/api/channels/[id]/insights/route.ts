@@ -45,10 +45,26 @@ export async function GET(
     const { id } = await params;
     const channel = await prisma.channel.findUnique({
         where: { id, user_id: userId },
-        select: { id: true, name: true, access_token: true, account_id: true },
+        select: { id: true, name: true, access_token: true, account_id: true, platform: true },
     });
     if (!channel) {
         return NextResponse.json({ error: "Channel not found" }, { status: 404 });
+    }
+
+    // S2-analytics: métricas são exclusivas do Instagram (Graph API). Canal
+    // TikTok/YouTube guarda o token em settings (API própria) e acess_token fica
+    // vazio — antes caía em "Channel has no access token" (erro enganoso, em
+    // inglês, sugerindo reconectar um canal que está conectado). Resposta PT-BR
+    // clara; o painel tem empty-states dedicados para essas plataformas.
+    if ((channel.platform || "").toLowerCase() !== "instagram") {
+        const label = (channel.platform || "desconhecido").toLowerCase();
+        return NextResponse.json(
+            {
+                error: `Métricas do Instagram não se aplicam a um canal ${label}.`,
+                detail: "As métricas de audiência para esta plataforma ainda não são suportadas pelo painel.",
+            },
+            { status: 400 },
+        );
     }
 
     const { searchParams } = new URL(req.url);

@@ -28,8 +28,11 @@ async function handler(req: Request) {
     }
 
     const since = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+    // S2-analytics: o job de métricas fala a Graph API do Instagram — filtrar por
+    // platform evita iterar canais TikTok/YouTube (token em settings, sem
+    // access_token IG) e queimar quota/calls de uma API que nunca responde para eles.
     const channels = await prisma.channel.findMany({
-        where: { status: "active" },
+        where: { status: "active", platform: "instagram" },
         select: { id: true, access_token: true, account_id: true },
     });
 
