@@ -169,7 +169,9 @@ export async function POST(req: Request) {
             } catch {}
             const planner = await prisma.planner.create({
                 data: {
-                    name,
+                    // S4: mesmo escape do branch normal — o wizard sempre envia o header,
+                    // então este é o caminho principal de criação de planner.
+                    name: safeName,
                     status: safeStatus,
                     config: configCheck.json,
                     state: null,
