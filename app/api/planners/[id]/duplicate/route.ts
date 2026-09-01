@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { getErrorMessage, getSessionUserId } from '@/lib/api';
+import { validatePlannerChannelMix, PLANNER_MIX_ERROR } from '@/lib/planner-config';
 
 /**
  * POST /api/planners/[id]/duplicate
@@ -37,6 +38,14 @@ export async function POST(
         }
 
         const channelIds = (source.channels || []).map(channel => channel.id);
+
+        // Isolation: bloquear duplicação de planners mistos (grandfathered)
+        if (channelIds.length > 1) {
+            const mixCheck = await validatePlannerChannelMix(channelIds, prisma);
+            if (!mixCheck.ok) {
+                return NextResponse.json({ error: PLANNER_MIX_ERROR }, { status: 400 });
+            }
+        }
 
         // Ownership is already guaranteed by the source lookup (same user), so
         // we can safely reconnect the same channel ids on the clone.

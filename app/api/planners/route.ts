@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
 // Contract with fix3-core: lib/planner-config.ts is created by that worktree.
-import { parsePlannerConfig, validatePlannerConfig } from "@/lib/planner-config";
+import { parsePlannerConfig, validatePlannerConfig, validatePlannerChannelMix, PLANNER_MIX_ERROR } from "@/lib/planner-config";
 import { escapeHtml } from "@/lib/sanitize";
 
 import { PLANNER_STATUSES, isPlannerStatus } from "@/lib/planner-status";
@@ -140,6 +140,14 @@ export async function POST(req: Request) {
         const channelCheck = await resolveOwnedChannelIds(userId, channel_ids);
         if (!channelCheck.ok) {
             return NextResponse.json({ error: channelCheck.error }, { status: 400 });
+        }
+
+        // Isolation: bloquear planners mistos YT+IG (criar planners separados)
+        if (channelCheck.ids.length > 1) {
+            const mixCheck = await validatePlannerChannelMix(channelCheck.ids, prisma);
+            if (!mixCheck.ok) {
+                return NextResponse.json({ error: PLANNER_MIX_ERROR }, { status: 400 });
+            }
         }
 
         // BK-05: idempotency header (debounce 800ms do wizard)

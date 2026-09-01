@@ -8,6 +8,7 @@ import { getErrorMessage } from '@/lib/api';
 // (due/sleep/start_time checks, content selection, templates, post creation,
 // state + last_run persistence) and returns { ok, created, errors, warnings }.
 import { runPlannerOnce } from '@/lib/planner-runtime';
+import { getPlannerPlatformType, PLANNER_MIX_ERROR } from '@/lib/planner-config';
 
 // Contract result shape — defensive: accepts both `created` and `posts_created`.
 type RunOnceResult = {
@@ -56,6 +57,22 @@ export async function POST(
             return NextResponse.json({ error: 'Planner has no channels connected' }, { status: 400 });
         }
 
+        // Isolation: detectar planners mistos grandfathered — logar warning mas não bloquear execução
+        const platformType = getPlannerPlatformType({}, planner.channels as Array<{ platform?: string | null }>);
+        if (platformType === 'mixed') {
+            console.warn(`[planner run] planner ${planner.id} é misto YT+IG (grandfathered) — ${PLANNER_MIX_ERROR}`);
+            try {
+                await prisma.plannerLog.create({
+                    data: {
+                        planner_id: planner.id,
+                        level: 'warning',
+                        message: `Planner misto detectado (grandfathered) — ${PLANNER_MIX_ERROR}`,
+                        details: JSON.stringify({ platform_type: platformType, channels: planner.channels.map((c: { id: string; platform: string | null }) => ({ id: c.id, platform: c.platform })) }),
+                    },
+                });
+            } catch {}
+        }
+
         const now = new Date();
         // force: true → ignores frequency/start_time/sleep gating (explicit user action).
         const rawResult = await runPlannerOnce(prisma, planner, now, { force: true });
@@ -81,11 +98,14 @@ export async function POST(
             },
         }).catch(() => { });
 
+        const warnings = [...(result?.warnings ?? [])];
+        if (platformType === 'mixed') warnings.push(PLANNER_MIX_ERROR);
         return NextResponse.json({
             success: true,
             posts_created: postsCreated,
             selected_index: result.selected_index ?? null,
-            warnings: result?.warnings ?? [],
+            warnings,
+            platform_type: platformType,
         });
     } catch (error: unknown) {
         console.error('Run planner error:', error);

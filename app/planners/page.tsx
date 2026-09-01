@@ -573,6 +573,19 @@ export default function PlannersPage() {
 											>
 												{planner.status}
 											</span>
+											{(() => {
+												const chans = planner.channels || [];
+												const isYt = (c: { platform?: string }) => (c.platform || "").toLowerCase() === "youtube";
+												const isIg = (c: { platform?: string }) => (c.platform || "").toLowerCase() === "instagram";
+												const isYtOnly = chans.length > 0 && chans.every(isYt);
+												const isIgOnly = chans.length > 0 && chans.every(isIg);
+												const isMixed = chans.length > 1 && chans.some(isYt) && chans.some(isIg);
+												if (isMixed) return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500 text-white uppercase tracking-wide">Misto</span>;
+												if (isYtOnly) return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-500 text-white uppercase tracking-wide"><Youtube size={10} /> YouTube</span>;
+												if (isIgOnly) return <span className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white uppercase tracking-wide"><Instagram size={10} /> Instagram</span>;
+												if (chans.length === 0) return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-gray-200 text-gray-600 uppercase tracking-wide">Sem canal</span>;
+												return null;
+											})()}
 										</div>
 
 										<div className="flex flex-wrap gap-x-4 gap-y-1 mt-1.5 text-[12px] text-ios-text-secondary">
