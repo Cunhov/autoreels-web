@@ -241,6 +241,35 @@ export function describeChannelHealth(channel: ChannelLike, now = new Date()) {
  * {post_caption} e {post_title} resolvem SOMENTE da row do ContentItem no
  * banco e dos campos explícitos *_fallback — NUNCA de selectedContent.caption.
  */
+/**
+ * RÉGUA ÚNICA de caption final por plataforma (F4 dual captions, M9).
+ * Fonte do `{post_caption}` e do texto final quando a entrada referencia a
+ * caption do item: youtube → caption_youtube ?? caption; instagram →
+ * caption_instagram ?? caption; senão caption. NUNCA criar cópias dessa
+ * régua em outro lugar — buildPostData, propagação e preview passam pelo
+ * MESMO resolveFinalCaption (via resolveCaptionTemplateVars / platform).
+ *
+ * `item` aceita tanto a row Prisma (ContentItem tem caption_youtube /
+ * caption_instagram) quanto uma PlannerContentItem (campos opcionais).
+ */
+export type FinalCaptionSource = {
+	caption?: string | null;
+	caption_youtube?: string | null;
+	caption_instagram?: string | null;
+};
+
+export function resolveFinalCaption(
+	platform: string | null | undefined,
+	item: FinalCaptionSource | null | undefined,
+): string {
+	const p = (platform || "").toLowerCase();
+	// `??` (não `||`): caption por plataforma vazia é ESCOLHA EXPLÍCITA de
+	// não usar a genérica — spec F4 ("caption_youtube ?? caption").
+	if (p === "youtube") return item?.caption_youtube ?? item?.caption ?? "";
+	if (p === "instagram") return item?.caption_instagram ?? item?.caption ?? "";
+	return item?.caption ?? "";
+}
+
 export async function resolveCaptionTemplateVars(
 	prisma: PrismaLike,
 	selectedContent: PlannerContentItem | null | undefined,
@@ -248,6 +277,7 @@ export async function resolveCaptionTemplateVars(
 	config: Record<string, unknown>,
 	channelName: string,
 	now: Date,
+	platform?: string | null,
 ): Promise<Record<string, string>> {
 	let title = "";
 	let itemCaption = "";
@@ -258,11 +288,17 @@ export async function resolveCaptionTemplateVars(
 	if (libId) {
 		const libItem = await prisma.contentItem.findFirst({
 			where: { id: libId, user_id: planner.user_id },
-			select: { title: true, caption: true, tags: true },
+			select: { title: true, caption: true, caption_youtube: true, caption_instagram: true, tags: true },
 		});
 		if (libItem) {
 			title = libItem.title || "";
-			itemCaption = libItem.caption || "";
+			// F4/M9: {post_caption} resolve a caption da PLATAFORMA do canal do
+			// post (youtube.txt/instagram.txt), com fallback para a caption
+			// genérica — régua única resolveFinalCaption.
+			itemCaption = resolveFinalCaption(
+				platform,
+				libItem as FinalCaptionSource,
+			);
 			libTags = libItem.tags;
 		}
 	}
@@ -334,6 +370,7 @@ export async function applyCaptionTemplate(opts: {
 	now: Date;
 	templateIndex: number; // índice base (do state) — incrementado POR POST
 	postOrdinal: number; // 0-based: quantos posts já foram criados neste run
+	platform?: string | null; // plataforma do canal do post (F4 dual captions)
 }): Promise<string> {
 	const templates = Array.isArray(opts.config.caption_templates)
 		? opts.config.caption_templates.filter(
@@ -355,6 +392,7 @@ export async function applyCaptionTemplate(opts: {
 		opts.config,
 		opts.channelName,
 		opts.now,
+		opts.platform,
 	);
 
 	if (templates.length === 0 || rotation === "off") {
@@ -399,6 +437,7 @@ async function buildYoutubeOptionsForPost(opts: {
 	now: Date;
 	caption: string;
 	itemName?: string; // nome do arquivo do item de biblioteca (se ausente, resolve via lookup)
+	platform?: string | null; // plataforma do canal do post (F4 dual captions)
 }): Promise<string | null> {
 	const { config, selectedContent } = opts;
 	const selected = selectedContent as PlannerContentItem | null | undefined;
@@ -414,6 +453,7 @@ async function buildYoutubeOptionsForPost(opts: {
 		config,
 		opts.channelName,
 		opts.now,
+		opts.platform,
 	);
 	const resolveYtTpl = (v: string): string =>
 		v.includes("{") ? substituteCaptionTemplate(v, varsForYt) : v;
@@ -623,6 +663,8 @@ export async function buildPostData(opts: {
 		now: opts.now,
 		templateIndex: opts.templateIndex,
 		postOrdinal: opts.postOrdinal,
+		// F4/M9: {post_caption} resolve a caption da plataforma deste canal.
+		platform: opts.channel.platform,
 	});
 
 	const isYtChannel =
@@ -650,6 +692,7 @@ export async function buildPostData(opts: {
 			channelName: opts.channel.name || "",
 			now: opts.now,
 			caption,
+			platform: opts.channel.platform,
 		});
 	}
 
@@ -866,6 +909,8 @@ export async function propagatePlannerConfigToPendingPosts(
         now,
         templateIndex: 0,
         postOrdinal: i,
+        // F4/M9: cada post já tem canal; a caption por plataforma vem dele.
+        platform: channelPlatform,
       });
     } catch (e) {
       console.warn("[propagate] caption resolve failed for post", postId, e);
@@ -886,6 +931,7 @@ export async function propagatePlannerConfigToPendingPosts(
           channelName,
           now,
           caption: newCaption,
+          platform: channelPlatform,
         });
       } catch {}
     } else if (isYtChannel && ytType === "community") {
@@ -1066,6 +1112,8 @@ export async function resolvePlannerRuntime(
 		firstChannel && typeof firstChannel.name === "string"
 			? firstChannel.name
 			: "";
+	// F4/M9: preview/runtime resolve a caption da plataforma do canal (mix é
+	// bloqueado, então o 1º canal representa a plataforma do planner).
 	const templateVars = await resolveCaptionTemplateVars(
 		prisma,
 		selectedContent,
@@ -1073,6 +1121,7 @@ export async function resolvePlannerRuntime(
 		config,
 		channelName,
 		now,
+		firstChannel ? firstChannel.platform : null,
 	);
 	caption = substituteCaptionTemplate(caption || "", templateVars);
 

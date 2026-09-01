@@ -135,6 +135,9 @@ export async function GET(
             config,
             (planner.channels || [])[0]?.name || "",
             now,
+            // F4/M9: {post_caption} resolve a caption da plataforma do canal
+            // (mix é bloqueado — 1º canal representa a plataforma).
+            (planner.channels || [])[0]?.platform || null,
         );
         finalCaption = substituteCaptionTemplate(chosen, vars);
     }
