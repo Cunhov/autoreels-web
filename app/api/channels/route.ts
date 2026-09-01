@@ -23,6 +23,7 @@ const channelSelect = {
     access_token: true,
     proxy_url: true,
     proxy_enabled: true,
+    settings: true, // JSON sanitizado pelo toSafeChannel (tiktok_open_id etc.)
 };
 
 const channelSelectFallback = {
@@ -38,6 +39,7 @@ const channelSelectFallback = {
     token_refreshed_at: true,
     created_at: true,
     access_token: true,
+    settings: true,
 };
 
 function isMissingProxyColumnError(e: unknown): boolean {
@@ -157,6 +159,27 @@ export async function POST(req: Request) {
     try {
         const data = await req.json();
         const tokenSource = data.token_source || "manual";
+        // S1: aceita platform explícita (instagram | youtube | tiktok);
+        // antes a rota hardcodava "instagram" e ignorava o campo do payload.
+        const platform =
+            data.platform === "instagram" ||
+            data.platform === "youtube" ||
+            data.platform === "tiktok"
+                ? (data.platform as "instagram" | "youtube" | "tiktok")
+                : "instagram";
+        // settings JSON opcional (ex.: Channel.settings.tiktok_*); só persiste
+        // se for string JSON válida — nunca entra aqui cru vindo do client.
+        let settingsStr: string | null = null;
+        if (typeof data.settings === "string" && String(data.settings).trim()) {
+            try {
+                const parsed = JSON.parse(String(data.settings).trim());
+                if (parsed && typeof parsed === "object") {
+                    settingsStr = String(data.settings).trim();
+                }
+            } catch {
+                settingsStr = null;
+            }
+        }
         let profile: {
             id: string;
             username: string;
@@ -211,7 +234,11 @@ export async function POST(req: Request) {
             ? escapeHtml(String(data.name).trim().slice(0, 80))
             : profile?.username
               ? escapeHtml(profile.username.slice(0, 80))
-              : `Instagram ${accountId}`;
+              : platform === "tiktok"
+                ? `TikTok ${accountId}`
+                : platform === "youtube"
+                  ? `YouTube ${accountId}`
+                  : `Instagram ${accountId}`;
 
         // Proxy por canal (opcional): valida formato http(s)://user:pass@host:porta
         let proxyUrl: string | null = null;
@@ -238,7 +265,7 @@ export async function POST(req: Request) {
                 data: {
                     user_id: userId,
                     name: channelName,
-                    platform: "instagram",
+                    platform,
                     account_id: accountId,
                     username: profile?.username || data.username || null,
                     profile_picture_url:
@@ -255,6 +282,7 @@ export async function POST(req: Request) {
                         data.proxy_enabled !== undefined
                             ? Boolean(data.proxy_enabled)
                             : true,
+                    ...(settingsStr ? { settings: settingsStr } : {}),
                 },
                 select: channelSelect,
             });
@@ -267,7 +295,7 @@ export async function POST(req: Request) {
                     data: {
                         user_id: userId,
                         name: channelName,
-                        platform: "instagram",
+                        platform,
                         account_id: accountId,
                         username: profile?.username || data.username || null,
                         profile_picture_url:
@@ -279,6 +307,7 @@ export async function POST(req: Request) {
                         token_expires_at: expiresAt,
                         token_refreshed_at: refreshedAt,
                         status: data.status || "active",
+                        ...(settingsStr ? { settings: settingsStr } : {}),
                     },
                     select: channelSelectFallback,
                 });
@@ -287,7 +316,7 @@ export async function POST(req: Request) {
                     data: {
                         user_id: userId,
                         name: channelName,
-                        platform: "instagram",
+                        platform,
                         account_id: accountId,
                         username: profile?.username || data.username || null,
                         profile_picture_url:
@@ -299,6 +328,7 @@ export async function POST(req: Request) {
                         token_expires_at: expiresAt,
                         token_refreshed_at: refreshedAt,
                         status: data.status || "active",
+                        ...(settingsStr ? { settings: settingsStr } : {}),
                     },
                     select: channelSelectFallback,
                 });

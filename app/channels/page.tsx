@@ -109,8 +109,13 @@ export default function ChannelsPage() {
 
     useEffect(() => {
         const connect = searchParams.get('connect');
-        if (connect === 'success') showToast('Instagram channel connected');
-        if (connect === 'error') showToast(searchParams.get('message') || 'Instagram connection failed', 'err');
+        const connectedPlatform = searchParams.get('platform');
+        const connectedLabel =
+            connectedPlatform === 'tiktok' ? 'TikTok'
+            : connectedPlatform === 'youtube' ? 'YouTube'
+            : 'Instagram';
+        if (connect === 'success') showToast(`${connectedLabel} channel connected`);
+        if (connect === 'error') showToast(searchParams.get('message') || `${connectedLabel} connection failed`, 'err');
         if (connect) router.replace('/channels');
     }, [searchParams, router]);
 
@@ -260,7 +265,7 @@ export default function ChannelsPage() {
                 <IOSCard className="p-12 text-center text-ios-text-secondary">
                     <Instagram size={48} className="mx-auto mb-4 opacity-30" strokeWidth={1} />
                     <h3 className="text-xl font-semibold mb-2 text-ios-text">Nenhum canal</h3>
-                    <p className="max-w-xs mx-auto mb-6">Conecte suas contas do Instagram ou YouTube para começar a agendar conteúdo.</p>
+                    <p className="max-w-xs mx-auto mb-6">Conecte suas contas do Instagram, YouTube ou TikTok para começar a agendar conteúdo.</p>
                     <IOSButton variant="primary" onClick={() => setIsModalOpen(true)}>Conectar conta</IOSButton>
                 </IOSCard>
             ) : (
