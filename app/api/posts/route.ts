@@ -149,6 +149,31 @@ export async function POST(req: Request) {
             }
         }
 
+        // M10: carrossel exige 2..10 mídias — a API do Instagram rejeita
+        // carrossel com 1 item de forma DEFINITIVA (post passava wizard+runtime
+        // e falhava para sempre no publisher; o runtime só errava com 0 filhos).
+        // Valida server-side na origem, com erro PT-BR claro.
+        if (payload.media_type === "CAROUSEL") {
+            let carouselCount = 0;
+            if (payload.children_urls) {
+                const children = safeJsonParse<{ url?: unknown }[]>(
+                    String(payload.children_urls),
+                    [] as { url?: unknown }[],
+                );
+                if (Array.isArray(children)) {
+                    carouselCount = children.filter((c) => Boolean(c?.url)).length;
+                }
+            }
+            if (carouselCount < 2 || carouselCount > 10) {
+                return NextResponse.json(
+                    {
+                        error: `Carrossel exige entre 2 e 10 mídias (recebido: ${carouselCount}). Selecione uma pasta com 2 a 10 itens ou envie mais arquivos.`,
+                    },
+                    { status: 400 },
+                );
+            }
+        }
+
         // BK-10 validar scheduled_at com Date.parse + isNaN + min=agora
         if (payload.scheduled_at !== undefined && payload.scheduled_at !== null) {
             const raw = String(payload.scheduled_at);

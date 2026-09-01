@@ -274,6 +274,19 @@ async function notifyPostFailed(
 	);
 }
 
+// ─── Race guard cancelamento×publisher (M13) ────────────────────────────────
+//
+// Implementação em lib/publisher-race-guard.ts (extraída para teste): status
+// NÃO-terminais em que o publisher pode gravar o desfecho de um post; um post
+// `cancelled` (bug-remove) ou já `published`/`failed` NÃO pode ser sobrescrito
+// por uma escrita final atrasada. `scheduled` fica fora: posts scheduled nunca
+// chegam às lanes (só entram via claim pending→processing).
+import {
+	PUBLISHABLE_IN_FLIGHT_STATUSES,
+	finalizePostWrite,
+	isPostStillInFlight,
+} from "@/lib/publisher-race-guard";
+
 /** Minimal shape of a Post that flows through retry/throttle helpers. */
 interface RetryablePost {
 	id: string;
@@ -335,7 +348,19 @@ async function handleRetryableFailure(opts: {
 		data.status = revertToStatus;
 	}
 
-	await prisma.post.update({ where: { id: post.id }, data });
+	// M13: escrita de retry/falha com guard de status — um post cancelado no
+	// meio do pipeline não pode ser revertido para `pending` (= ressuscitado)
+	// nem sobrescrito para `failed`. Quando bloqueado, pula todo o bookkeeping
+	// (contadores/log/notificação): cancelamento é decisão deliberada do usuário.
+	const wrote = await finalizePostWrite(post.id, opts.plannerId, "Retry", data);
+	if (!wrote) {
+		await logPlanner(
+			opts.plannerId,
+			`Post ${post.id}: cancelado durante o processamento — tentativa final ignorada (estado terminal preservado)`,
+			"warning",
+		).catch(() => {});
+		return;
+	}
 
 	if (tooLong) {
 		results.errors++;
@@ -880,14 +905,15 @@ async function publishYoutubePost(opts: {
 
 	const sessionId = getYoutubeSessionId(post.channel?.settings);
 	if (!sessionId) {
-		await prisma.post.update({
-			where: { id: post.id },
-			data: {
-				status: "failed",
-				error_message: "Canal YouTube sem sessão vinculada — reconecte em Canais",
-				failed_reason: "Missing Credentials",
-			},
+		// M13: escrita final com guard de status — post cancelado durante o
+		// processamento não pode ser sobrescrito para "failed".
+		const wrote = await finalizePostWrite(post.id, plannerId, "YouTube", {
+			status: "failed",
+			error_message:
+				"Canal YouTube sem sessão vinculada — reconecte em Canais",
+			failed_reason: "Missing Credentials",
 		});
+		if (!wrote) return;
 		results.errors++;
 		await logPlanner(
 			plannerId,
@@ -947,6 +973,16 @@ async function publishYoutubePost(opts: {
 					`[YouTube] Publicando post na Comunidade (apenas texto) do canal ${post.channel?.name || post.id}`,
 					"info",
 				);
+				// M13: re-checa o status antes do call externo — o usuário pode ter
+				// cancelado o post enquanto as imagens eram materializadas.
+				if (!(await isPostStillInFlight(post.id))) {
+					await logPlanner(
+						plannerId,
+						`[YouTube] Post ${post.id} cancelado antes do call externo — nada foi publicado`,
+						"warning",
+					).catch(() => {});
+					return;
+				}
 				const ytProxy = getChannelProxyUrl(post.channel as any);
 				created = await createCommunityPostText({ sessionId, message, proxyUrl: ytProxy });
 			} else {
@@ -1114,6 +1150,16 @@ async function publishYoutubePost(opts: {
 					`[YouTube] Publicando post na Comunidade (${imagesToUpload.length} imagem(ns)${failures.length > 0 ? `; ${failures.length} falharam` : ""}) do canal ${post.channel?.name || post.id}`,
 					"info",
 				);
+				// M13: re-checa o status antes do call externo (upload multipart) — um
+				// cancelamento durante materialização/adaptação não publica nada.
+				if (!(await isPostStillInFlight(post.id))) {
+					await logPlanner(
+						plannerId,
+						`[YouTube] Post ${post.id} cancelado antes do upload da Comunidade — nada foi publicado`,
+						"warning",
+					).catch(() => {});
+					return;
+				}
 				created = await uploadCommunityPost({
 					sessionId,
 					message,
@@ -1125,14 +1171,19 @@ async function publishYoutubePost(opts: {
 					proxyUrl: getChannelProxyUrl(post.channel as any),
 				});
 			}
-			await prisma.post.update({
-				where: { id: post.id },
-				data: {
-					status: "published",
-					published_at: now,
-					youtube_post_id: created.remote_post_id || String(created.id),
-				},
+			await logPlanner(
+				plannerId,
+				`[YouTube] Post na Comunidade publicado (id remoto ${created.remote_post_id})`,
+				"info",
+			);
+			// M13: escrita final com guard — se o post foi cancelado durante o
+			// upload (a API externa publicou, o banco mantém cancelled).
+			const wroteCommunity = await finalizePostWrite(post.id, plannerId, "YouTube", {
+				status: "published",
+				published_at: now,
+				youtube_post_id: created.remote_post_id || String(created.id),
 			});
+			if (!wroteCommunity) return;
 			results.published++;
 			await logPlanner(
 				plannerId,
@@ -1205,6 +1256,16 @@ async function publishYoutubePost(opts: {
 		}
 
 		const proxyForShort = getChannelProxyUrl(post.channel as any);
+		// M13: re-checa o status antes do call externo (upload do vídeo) — o
+		// usuário pode ter cancelado o post enquanto o arquivo era lido.
+		if (!(await isPostStillInFlight(post.id))) {
+			await logPlanner(
+				plannerId,
+				`[YouTube] Post ${post.id} cancelado antes do upload do Short — nada foi publicado`,
+				"warning",
+			).catch(() => {});
+			return;
+		}
 		const short =
 			productsRoute === "auto"
 				? await createAutoShort({
@@ -1269,21 +1330,22 @@ async function publishYoutubePost(opts: {
 			`[YouTube] Short enviado via ${productsRoute === "auto" ? "/api/shorts/auto" : "/api/shorts"} (${productNote}) para a API externa`,
 			"info",
 		).catch(() => {});
-		await prisma.post.update({
-			where: { id: post.id },
-			data: {
-				status: "published",
-				published_at: now,
-				youtube_video_id: short.video_id || null,
-				youtube_type: post.youtube_type ?? "short",
-			},
-		});
-		results.published++;
 		await logPlanner(
 			plannerId,
 			`[YouTube] Short publicado: ${short.title}${short.watch_url ? ` — ${short.watch_url}` : ""}`,
 			"info",
 		);
+		// M13: escrita final com guard — post cancelado durante o upload do
+		// vídeo permanece cancelled no banco (a API externa pode ter publicado;
+		// o desfecho registrado no log acima deixa o estado audível).
+		const wroteShort = await finalizePostWrite(post.id, plannerId, "YouTube", {
+			status: "published",
+			published_at: now,
+			youtube_video_id: short.video_id || null,
+			youtube_type: post.youtube_type ?? "short",
+		});
+		if (!wroteShort) return;
+		results.published++;
 	} catch (e: unknown) {
 		const rawMsg = e instanceof Error ? e.message : String(e ?? "Unknown error");
 
@@ -1300,19 +1362,19 @@ async function publishYoutubePost(opts: {
 				: "";
 			if (sessionStatus === "expired") {
 				const friendly = "Sessão do YouTube expirada — reconecte em Canais";
+				// M13: guard de status — cancelado no meio do processamento segue
+				// cancelado (sem overwrite para "failed").
+				const wrote = await finalizePostWrite(post.id, plannerId, "YouTube", {
+					status: "failed",
+					error_message: friendly,
+					failed_reason: "Session Expired",
+				});
+				if (!wrote) return;
 				await logPlanner(
 					plannerId,
 					`[YouTube] Post ${post.id}: ${friendly}`,
 					"error",
 				);
-				await prisma.post.update({
-					where: { id: post.id },
-					data: {
-						status: "failed",
-						error_message: friendly,
-						failed_reason: "Session Expired",
-					},
-				});
 				if (post.channel?.id) {
 					await prisma.channel
 						.update({
@@ -1388,15 +1450,15 @@ async function publishYoutubePost(opts: {
 			`[YouTube] Erro definitivo post=${post.id}: ${errMsg}`,
 			"error",
 		);
-		await prisma.post.update({
-			where: { id: post.id },
-			data: {
-				status: "failed",
-				error_message: errMsg,
-				failed_reason:
-					e instanceof MalformedDataError ? "Malformed Data" : "Publishing Failed",
-			},
+		// M13: guard de status na falha definitiva — post cancelado permanece
+		// cancelado (sem overwrite para "failed") e não gerar notificação.
+		const wroteDefinitive = await finalizePostWrite(post.id, plannerId, "YouTube", {
+			status: "failed",
+			error_message: errMsg,
+			failed_reason:
+				e instanceof MalformedDataError ? "Malformed Data" : "Publishing Failed",
 		});
+		if (!wroteDefinitive) return;
 		results.errors++;
 		await notifyPostFailed(post, errMsg);
 	}
@@ -1697,14 +1759,14 @@ async function handler(request: Request) {
 					// publisher, que reporta "Short do YouTube exige um vídeo".
 					const hasMedia = post.video_url || post.image_url || post.children_urls;
 					if (!hasMedia && !post.youtube_type) {
-						await prisma.post.update({
-							where: { id: post.id },
-							data: {
-								status: "failed",
-								error_message: "No media URL",
-								failed_reason: "Missing Media",
-							},
+						// M13: guard de status — cancelado durante o processamento segue
+						// cancelado (sem overwrite para "failed").
+						const wrote = await finalizePostWrite(post.id, plannerId, "IG", {
+							status: "failed",
+							error_message: "No media URL",
+							failed_reason: "Missing Media",
 						});
+						if (!wrote) continue;
 						results.errors++;
 						await notifyPostFailed(post, "No media URL");
 						continue;
@@ -1721,6 +1783,19 @@ async function handler(request: Request) {
 							where: { id: post.id, status: "processing" },
 							data: { status: "pending" },
 						});
+						continue;
+					}
+
+					// M13: re-checa o status após o claim — o usuário pode ter cancelado
+					// o post (bug-remove) entre a claim e o início do trabalho externo.
+					// Nenhum container IG é criado, nenhum vídeo é subido, para um post
+					// cancelado; os lanes YT re-checam de novo antes do call externo.
+					if (!(await isPostStillInFlight(post.id))) {
+						await logPlanner(
+							plannerId,
+							`Post ${post.id} cancelado após o claim — nenhuma chamada externa foi feita`,
+							"warning",
+						).catch(() => {});
 						continue;
 					}
 
@@ -1757,10 +1832,16 @@ async function handler(request: Request) {
 					// response was lost after a successful POST). Reuse it instead of creating
 					// a duplicate container.
 					if (post.instagram_container_id) {
-						await prisma.post.update({
-							where: { id: post.id },
-							data: { status: "processing_upload" },
-						});
+						// M13: escrita em voo com guard — um post cancelado (bug-remove)
+						// não pode ser ressuscitado para processing_upload (a Fase 2
+						// publicaria um container reciclado).
+						const wrote = await finalizePostWrite(
+							post.id,
+							plannerId,
+							"IG",
+							{ status: "processing_upload" },
+						);
+						if (!wrote) continue;
 						results.pending++;
 						continue;
 					}
@@ -1949,14 +2030,19 @@ async function handler(request: Request) {
 							mergedChildren.size > 0 &&
 							mergedChildren.size === childrenData.length
 						) {
-							await prisma.post.update({
-								where: { id: post.id },
-								data: {
+							// M13: escrita em voo com guard — cancelado no meio da Fase 1
+							// permanece cancelado (sem ressuscitar para processing_children).
+							const wrote = await finalizePostWrite(
+								post.id,
+								plannerId,
+								"IG",
+								{
 									status: "processing_children",
 									instagram_child_ids: serializeChildIdEntries(mergedChildren),
 									container_created_at: now,
 								},
-							});
+							);
+							if (!wrote) continue;
 							results.pending++;
 						} else {
 							throw new Error("No carousel child containers created (unknown reason)");
@@ -2053,14 +2139,20 @@ async function handler(request: Request) {
 					const data = await apiRes.json();
 
 					if (data.id) {
-						await prisma.post.update({
-							where: { id: post.id },
-							data: {
+						// M13: escrita em voo com guard — cancelado no meio do POST do
+						// container permanece cancelado (o container existe na API mas o
+						// post não entra na Fase 2 — cancelamento vence).
+						const wrote = await finalizePostWrite(
+							post.id,
+							plannerId,
+							"IG",
+							{
 								status: "processing_upload",
 								instagram_container_id: data.id,
 								container_created_at: now,
 							},
-						});
+						);
+						if (!wrote) continue;
 						results.pending++;
 					} else {
 						await logPlanner(
@@ -2117,17 +2209,16 @@ async function handler(request: Request) {
 						`Phase1 Error post=${post.id}: ${errMsg}`,
 						"error",
 					);
-					await prisma.post.update({
-						where: { id: post.id },
-						data: {
-							status: "failed",
-							error_message: errMsg,
-							failed_reason:
-								e instanceof MalformedDataError
-									? "Malformed Data"
-									: "Initialization Failed",
-						},
+					// M13: guard de status — cancelado segue cancelado (sem overwrite).
+					const wrote = await finalizePostWrite(post.id, plannerId, "IG", {
+						status: "failed",
+						error_message: errMsg,
+						failed_reason:
+							e instanceof MalformedDataError
+								? "Malformed Data"
+								: "Initialization Failed",
 					});
+					if (!wrote) continue;
 					results.errors++;
 					await notifyPostFailed(post, errMsg);
 				}
@@ -2356,14 +2447,18 @@ async function handler(request: Request) {
 								"error",
 								errored.body,
 							);
-							await prisma.post.update({
-								where: { id: post.id },
-								data: {
+							// M13: guard de status — cancelado segue cancelado (sem overwrite).
+							const wrote = await finalizePostWrite(
+								post.id,
+								post.planner_id || "unknown",
+								"IG",
+								{
 									status: "failed",
 									error_message: msg,
 									failed_reason: "Processing Failed",
 								},
-							});
+							);
+							if (!wrote) continue;
 							results.errors++;
 							await notifyPostFailed(post, msg);
 							continue;
@@ -2380,10 +2475,15 @@ async function handler(request: Request) {
 							// and orphan the first container. Hand the existing container to
 							// the poll lane instead.
 							if (post.instagram_container_id) {
-								await prisma.post.update({
-									where: { id: post.id },
-									data: { status: "processing_upload" },
-								});
+								// M13: escrita em voo com guard — cancelado (bug-remove) não
+								// entra na Fase 3 mesmo com container existente.
+								const wrote = await finalizePostWrite(
+									post.id,
+									post.planner_id || "unknown",
+									"IG",
+									{ status: "processing_upload" },
+								);
+								if (!wrote) continue;
 								continue;
 							}
 							const body = new URLSearchParams({
@@ -2415,14 +2515,19 @@ async function handler(request: Request) {
 							lastStatus = res.status;
 							const data = await res.json();
 							if (data.id) {
-								await prisma.post.update({
-									where: { id: post.id },
-									data: {
+								// M13: escrita em voo com guard — cancelado no meio do POST
+								// do container (Fase 2) permanece cancelado.
+								const wrote = await finalizePostWrite(
+									post.id,
+									post.planner_id || "unknown",
+									"IG",
+									{
 										status: "processing_upload",
 										instagram_container_id: data.id,
 										container_created_at: now,
 									},
-								});
+								);
+								if (!wrote) continue;
 							} else {
 								const err = withIgStatus(
 									data.error?.message || "Carousel container creation failed",
@@ -2449,10 +2554,16 @@ async function handler(request: Request) {
 							const createdRef = post.container_created_at ?? post.created_at;
 							const timeSinceCreation = Date.now() - (createdRef?.getTime() || 0);
 							if (timeSinceCreation > 3 * 60 * 1000) {
-								await prisma.post.update({
-									where: { id: post.id },
-									data: { status: "ready_to_publish" },
-								});
+								// M13: escrita em voo com guard — cancelado (bug-remove) não
+								// entra na Fase 3 (a Fase 3 tem re-check próprio, mas o
+								// ready_to_publish em si não pode ressuscitar o post).
+								const wrote = await finalizePostWrite(
+									post.id,
+									post.planner_id || "unknown",
+									"IG",
+									{ status: "ready_to_publish" },
+								);
+								if (!wrote) continue;
 							} else {
 								// Leave in processing state temporarily
 								await logPlanner(
@@ -2464,16 +2575,21 @@ async function handler(request: Request) {
 						} else if (data.status_code === "ERROR") {
 							const msg = `IG Processing Error: ${data.error?.message || JSON.stringify(data)}`;
 							await logPlanner(post.planner_id || "unknown", msg, "error", data);
-							await prisma.post.update({
-								where: { id: post.id },
-								data: {
+							// M13: guard de status — cancelado segue cancelado (sem overwrite).
+							const wrote = await finalizePostWrite(
+								post.id,
+								post.planner_id || "unknown",
+								"IG",
+								{
 									status: "failed",
 									error_message: msg,
 									failed_reason: "Processing Failed",
 								},
-							});
+							);
+							if (!wrote) continue;
 							results.errors++;
 							await notifyPostFailed(post, msg);
+							continue;
 						}
 						// else: still processing — will retry next tick
 					}
@@ -2518,9 +2634,12 @@ async function handler(request: Request) {
 						`Phase2 Error post=${post.id}: ${errMsg}`,
 						"error",
 					);
-					await prisma.post.update({
-						where: { id: post.id },
-						data: {
+					// M13: guard de status — cancelado segue cancelado (sem overwrite).
+					const wrote = await finalizePostWrite(
+						post.id,
+						post.planner_id || "unknown",
+						"IG",
+						{
 							status: "failed",
 							error_message: errMsg,
 							failed_reason:
@@ -2528,7 +2647,8 @@ async function handler(request: Request) {
 									? "Malformed Data"
 									: "Processing Exception",
 						},
-					});
+					);
+					if (!wrote) continue;
 					results.errors++;
 					await notifyPostFailed(post, errMsg);
 				}
@@ -2597,6 +2717,17 @@ async function handler(request: Request) {
 					);
 					const baseUrl = getGraphBaseUrl(accessToken);
 
+					// M13: re-checa o status no lane ready_to_publish — um post
+					// cancelado (bug-remove) não é publicado na API do IG.
+					if (!(await isPostStillInFlight(post.id))) {
+						await logPlanner(
+							post.planner_id || "unknown",
+							`[IG] Post ${post.id} cancelado antes do media_publish — nada foi publicado`,
+							"warning",
+						).catch(() => {});
+						continue;
+					}
+
 					const igProxyPublish = getChannelProxyUrl((post as any).channel as any);
 					const res = await fetchWithTimeout(
 						`${baseUrl}/${GRAPH_API_VERSION}/${post.channel?.account_id}/media_publish`,
@@ -2618,23 +2749,33 @@ async function handler(request: Request) {
 					const data = await res.json();
 
 					if (data.id) {
-						await prisma.post.update({
-							where: { id: post.id },
-							data: {
+						// M13: escrita final com guard — post cancelado durante o
+						// media_publish permanece cancelled no banco (a API pode ter
+						// publicado; o log de bloqueio deixa o estado audível).
+						const wrote = await finalizePostWrite(
+							post.id,
+							post.planner_id || "unknown",
+							"IG",
+							{
 								status: "published",
 								published_at: new Date(),
 								instagram_media_id: data.id,
 							},
-						});
+						);
+						if (!wrote) continue;
 						results.published++;
 					} else {
 						const msg = data.error?.message || "Publishing Failed";
 						if (msg.toLowerCase().includes("already published")) {
-							await prisma.post.update({
-								where: { id: post.id },
-								data: { status: "published", published_at: new Date() },
-							});
-							results.published++;
+							// M13: guard de status — idem (já publicado externamente em
+							// tentativa anterior; o banco só é marcado se ainda em voo).
+							const wroteAlready = await finalizePostWrite(
+								post.id,
+								post.planner_id || "unknown",
+								"IG",
+								{ status: "published", published_at: new Date() },
+							);
+							if (wroteAlready) results.published++;
 						} else {
 							const err = withIgStatus(msg, res.status);
 							throw err;
@@ -2681,14 +2822,18 @@ async function handler(request: Request) {
 						"error",
 						{ igStatus: lastStatus },
 					);
-					await prisma.post.update({
-						where: { id: post.id },
-						data: {
+					// M13: guard de status — cancelado segue cancelado (sem overwrite).
+					const wrote = await finalizePostWrite(
+						post.id,
+						post.planner_id || "unknown",
+						"IG",
+						{
 							status: "failed",
 							error_message: errMsg,
 							failed_reason: "Publishing Failed",
 						},
-					});
+					);
+					if (!wrote) continue;
 					results.errors++;
 					await notifyPostFailed(post, errMsg);
 				}

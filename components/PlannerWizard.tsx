@@ -999,29 +999,78 @@ export default function PlannerWizard({
 
 		// Carousel posts are built from FOLDERS only (the cron resolves each
 		// folder's children). Reject non-folder selections early with a clear error.
-		if (isCarousel && selectedContentIds.length > 0) {
-			try {
-				const params = new URLSearchParams({
-					types: "carousel_folder",
-					limit: "500",
-				});
-				const res = await fetch(`/api/content-items?${params.toString()}`);
-				if (res.ok) {
-					const payload = await res.json();
-					const folders = Array.isArray(payload) ? payload : payload.items || [];
-					const folderIds = new Set(
-						folders.map((f: { id?: string }) => f?.id).filter(Boolean),
-					);
-					const invalid = selectedContentIds.filter((id) => !folderIds.has(id));
-					if (invalid.length > 0) {
-						setFormError(
-							`Carrossel exige pastas — ${invalid.length} item(ns) selecionado(s) não são pastas. Remova-os e tente novamente.`,
+		// M10: além disso, cada carrossel exige 2..10 mídias (a API do Instagram
+		// rejeita 1 item de forma definitiva) — valida o número de filhos de cada
+		// pasta e a contagem de uploads diretos aqui, com erro PT-BR na origem.
+		if (isCarousel) {
+			if (selectedContentIds.length > 0) {
+				try {
+					const params = new URLSearchParams({
+						types: "carousel_folder",
+						limit: "500",
+					});
+					const res = await fetch(`/api/content-items?${params.toString()}`);
+					if (res.ok) {
+						const payload = await res.json();
+						const folders = Array.isArray(payload) ? payload : payload.items || [];
+						const folderById = new Map(
+							folders.map((f: { id?: string; name?: string }) => [
+								String(f?.id),
+								f?.name || "pasta",
+							]),
 						);
-						return;
+						const folderIds = new Set(folderById.keys());
+						const invalid = selectedContentIds.filter((id) => !folderIds.has(String(id)));
+						if (invalid.length > 0) {
+							setFormError(
+								`Carrossel exige pastas — ${invalid.length} item(ns) selecionado(s) não são pastas. Remova-os e tente novamente.`,
+							);
+							return;
+						}
+						// M10: conta os filhos de cada pasta (2..10 por post).
+						for (const fid of selectedContentIds) {
+							const childRes = await fetch(
+								`/api/content-items?parent_id=${encodeURIComponent(String(fid))}&limit=500`,
+							);
+							if (!childRes.ok) continue; // best-effort: valida só o que der
+							const childPayload = await childRes.json();
+							const children = Array.isArray(childPayload)
+								? childPayload
+								: childPayload.items || [];
+							const childCount = Array.isArray(children) ? children.length : 0;
+							if (childCount < 2 || childCount > 10) {
+								setFormError(
+									`O carrossel exige entre 2 e 10 mídias por post — a pasta "${folderById.get(String(fid)) || fid}" tem ${childCount}. Adicione itens à pasta ou escolha outra.`,
+								);
+								return;
+							}
+						}
+						// Uploads diretos junto com pastas: viram um post extra de
+						// carrossel quando há 2+ (1 arquivo seria descartado em silêncio).
+						if (files.length >= 1 && files.length < 2) {
+							setFormError(
+								"Carrossel exige entre 2 e 10 mídias — um arquivo avulso não forma um carrossel. Envie 2 a 10 arquivos ou adicione-os à pasta.",
+							);
+							return;
+						}
+						if (files.length > 10) {
+							setFormError(
+								`O carrossel aceita no máximo 10 mídias por post (${files.length} arquivos selecionados).`,
+							);
+							return;
+						}
 					}
+				} catch {
+					/* best-effort: o servidor também valida */
 				}
-			} catch {
-				/* best-effort: the server still validates */
+			} else {
+				// Carrossel só com uploads diretos (sem pastas): exige 2..10 arquivos.
+				if (files.length < 2 || files.length > 10) {
+					setFormError(
+						`O carrossel exige entre 2 e 10 mídias (${files.length} arquivo(s) selecionado(s)). Selecione uma pasta com 2 a 10 itens ou envie 2 a 10 arquivos.`,
+					);
+					return;
+				}
 			}
 		}
 

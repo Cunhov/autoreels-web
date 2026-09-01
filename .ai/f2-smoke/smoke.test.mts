@@ -23,6 +23,20 @@ function makePrisma(posts: AnyRec[]) {
         updates.push({ id: String((args.where as AnyRec).id), data: args.data as AnyRec });
         return { id: (args.where as AnyRec).id };
       },
+      updateMany: async (args: AnyRec) => {
+        updates.push({
+          id: String((args.where as AnyRec).id),
+          data: args.data as AnyRec,
+        });
+        // M13/M14: propagate usa updateMany com guard de status — o mock
+        // conta como atualizado somente quando o status do post ainda está
+        // em pending/scheduled/queued (simula o guard real).
+        const wanted = posts.find((p) => p.id === (args.where as AnyRec).id);
+        const ok =
+          wanted &&
+          ["pending", "scheduled", "queued"].includes(String(wanted.status));
+        return { count: ok ? 1 : 0 };
+      },
     },
     plannerLog: { create: async () => ({}) },
     channel: {

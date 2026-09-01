@@ -161,6 +161,24 @@ function selectContentIndex(
 	return { selectedIndex, nextState };
 }
 
+/**
+ * M15: detecta a falha de resolução causada por item de biblioteca DELETADO
+ * ("Library item not found"). É o ÚNICO caso em que o runtime avança o índice
+ * e tenta o próximo item — demais erros de resolução (mídia ausente,
+ * carrossel sem filhos) continuam com o comportamento R3 (não consomem tick).
+ */
+function isDeletedItemFailure(runtime: {
+	ok: boolean;
+	warnings?: string[];
+}): boolean {
+	return (
+		!runtime.ok &&
+		(runtime.warnings || []).some((w) =>
+			/Library item not found/i.test(String(w)),
+		)
+	);
+}
+
 export function getChannelHealth(channel: ChannelLike, now = new Date()) {
 	const issues: string[] = [];
 	const warnings: string[] = [];
@@ -809,6 +827,7 @@ export async function propagatePlannerConfigToPendingPosts(
     post: {
       findMany: (args: unknown) => Promise<Array<Record<string, unknown>>>;
       update: (args: unknown) => Promise<unknown>;
+      updateMany: (args: unknown) => Promise<{ count: number }>;
     };
     contentItem?: { findFirst: (args: unknown) => Promise<unknown> };
     plannerLog?: { create: (args: unknown) => Promise<unknown> };
@@ -944,12 +963,23 @@ export async function propagatePlannerConfigToPendingPosts(
     const data: Record<string, unknown> = { caption: newCaption };
     if (newYoutubeOptions !== undefined) data.youtube_options = newYoutubeOptions;
 
+    // M14: re-checa o status DENTRO do where — o publisher pode ter claimado
+    // (pending→processing) ou o usuário cancelado este post no instante da
+    // propagação; um update incondicional por id reescreveria um post que
+    // saiu do conjunto pending/scheduled/queued (race propagação×publisher).
+    // Quando o status mudou, o post é pulado (SKIP) com log — nunca sobrescrito.
     try {
-      await prismaClient.post.update({
-        where: { id: postId },
+      const res = (await prismaClient.post.updateMany({
+        where: { id: postId, status: { in: pendingStatuses } },
         data,
-      } as unknown);
-      updated++;
+      } as unknown)) as { count: number } | undefined;
+      if (res?.count && res.count > 0) {
+        updated++;
+      } else {
+        console.warn(
+          `[propagate] post ${postId}: status mudou durante a propagação (cancelado/claimado/published) — update ignorado; estado terminal preservado`,
+        );
+      }
     } catch (e) {
       console.warn("[propagate] update failed for post", postId, e);
     }
@@ -981,13 +1011,17 @@ export async function resolvePlannerRuntime(
 	prisma: PrismaLike,
 	planner: PlannerLike | null,
 	now = new Date(),
+	// M15: estado de publicação alternativo (avançado) para o retry de item
+	// deletado — resolve sempre seleciona a partir do estado informado em vez
+	// de re-ler planner.state (que não mudou num único run).
+	overrideState?: Record<string, unknown>,
 ) {
 	const config = parsePlannerConfig(planner?.config);
 	const contentList: PlannerContentItem[] = Array.isArray(config.content)
 		? (config.content as PlannerContentItem[])
 		: [];
 	const sortOrder = String(config.sort_order || "random_loop");
-	const state = parsePlannerState(planner?.state);
+	const state = overrideState || parsePlannerState(planner?.state);
 	const { selectedIndex, nextState } = selectContentIndex(
 		contentList,
 		sortOrder,
@@ -1108,6 +1142,20 @@ export async function resolvePlannerRuntime(
 	// em substituteCaptionTemplate quebraria a idempotência se um valor
 	// resolvido contiver "{".
 	const firstChannel = (planner.channels || [])[0];
+	// M11: STORIES não existe no YouTube — o wizard auto-corrige no load/save
+	// (PlannerWizard STORIES→REELS), mas configs grandfathered (nunca
+	// re-salvas) chegam ao runtime ainda como STORIES. Sem a normalização o
+	// post YT seria classificado como Short sem vídeo (imagem → video_url=null)
+	// → falha definitiva no publisher. Normaliza aqui: STORIES → REELS (o
+	// vídeo do story vira short com vídeo).
+	if (
+		firstChannel &&
+		String(firstChannel.platform || "").toLowerCase() === "youtube" &&
+		mediaType === "STORIES"
+	) {
+		mediaType = "REELS";
+		warnings.push("STORIES convertido para REELS — o YouTube não suporta Stories");
+	}
 	const channelName =
 		firstChannel && typeof firstChannel.name === "string"
 			? firstChannel.name
@@ -1176,8 +1224,9 @@ export async function resolvePlannerRuntime(
  *
  *   1. parse + validação do config (fonte única: planner-config)
  *   2. se !force: checa due (intervalo validado), start_time, sleep_schedule
- *   3. resolve o runtime ANTES do claim (um tick não é consumido por erro de
- *      resolução — item deletado/planner bloqueado não avança o state)
+ *   3. resolve o runtime ANTES do claim (um tick não é consumido por erro
+ *      de resolução — planner bloqueado NÃO avança o state; um ITEM DELETADO
+ *      avança o índice e pula ao próximo — M15, nunca fica wedged)
  *   4. claim atômico em last_run (updateMany condicional — runs sobrepostos
  *      não duplicam posts)
  *   5. cria 1 post por canal publicável (buildPostData: templates por post,
@@ -1273,7 +1322,48 @@ export async function runPlannerOnce(
 	}
 
 	// ── Resolução ANTES do claim (achado: tick não é consumido por erro) ──────
-	const runtime = await resolvePlannerRuntime(prisma, planner, now);
+	// M15: retry com avanço de índice para ITEM DELETADO — um content entry que
+	// aponta para library item removido não pode travar o planner para sempre
+	// (sequencial seleciona sempre o mesmo índice → nunca publica os seguintes).
+	// Cada resolve avança exatamente UM passo a partir do estado informado
+	// (runtime.nextState) — o avanço acontece DENTRO da re-resolução; aqui só
+	// espiramos o próximo índice (selectContentIndex sobre o mesmo estado, a
+	// MESMA função que resolvePlannerRuntime usa) para guardar o ciclo. Demais
+	// falhas de resolução continuam NÃO consumindo tick (R3 preservado).
+	const contentEntries: PlannerContentItem[] = Array.isArray(config.content)
+		? (config.content as PlannerContentItem[])
+		: [];
+	const sortOrderKey = String(config.sort_order || "random_loop");
+	let runtime = await resolvePlannerRuntime(prisma, planner, now);
+	// Warnings das tentativas com item deletado (acumulados para o resultado —
+	// o runtime final bem-sucedido não carrega as warnings do item pulado).
+	const skippedDeletedWarnings: string[] = [];
+	if (!runtime.ok && isDeletedItemFailure(runtime)) {
+		// A tentativa inicial (item deletado) também contribui warnings.
+		skippedDeletedWarnings.push(...(runtime.warnings || []));
+		let advanceState = runtime.nextState;
+		const attempted = new Set<number>([runtime.selectedIndex]);
+		const maxAttempts = Math.max(contentEntries.length, 1);
+		for (let attempt = 0; attempt < maxAttempts; attempt++) {
+			// Peek: qual índice o PRÓXIMO resolve selecionará a partir deste estado?
+			const peek = selectContentIndex(contentEntries, sortOrderKey, advanceState);
+			if (!peek || peek.selectedIndex === -1) break;
+			if (attempted.has(peek.selectedIndex)) break; // ciclo completo
+			attempted.add(peek.selectedIndex);
+			const nextRuntime = await resolvePlannerRuntime(
+				prisma,
+				planner,
+				now,
+				advanceState,
+			);
+			if (!nextRuntime.ok) {
+				skippedDeletedWarnings.push(...(nextRuntime.warnings || []));
+			}
+			runtime = nextRuntime;
+			advanceState = runtime.nextState;
+			if (runtime.ok || !isDeletedItemFailure(runtime)) break;
+		}
+	}
 	if (!runtime.ok) {
 		return {
 			ok: false,
@@ -1371,6 +1461,7 @@ export async function runPlannerOnce(
 		created: postDatas.length,
 		warnings: [
 			...(runtime.warnings || []),
+			...skippedDeletedWarnings,
 			...(blocked > 0 ? [`${blocked} channel(s) blocked`] : []),
 		],
 	};

@@ -45,6 +45,18 @@ function makePrisma(opts: {
         });
         return { id: (args.where as AnyRec).id };
       },
+      updateMany: async (args: AnyRec) => {
+        updates.push({
+          id: String((args.where as AnyRec).id),
+          data: args.data as AnyRec,
+        });
+        // M13/M14: guard de status — só atualiza post ainda em voo.
+        const wanted = opts.posts.find((p) => p.id === (args.where as AnyRec).id);
+        const ok =
+          wanted &&
+          ["pending", "scheduled", "queued"].includes(String(wanted.status));
+        return { count: ok ? 1 : 0 };
+      },
     },
     plannerLog: { create: async () => ({}) },
     channel: {
