@@ -1194,8 +1194,23 @@ async function publishYoutubePost(opts: {
 			try {
 				const parsed = JSON.parse(options.products);
 				if (Array.isArray(parsed)) itemsArr = parsed;
+				else if (typeof parsed === "string" && parsed.trim()) {
+					// CSV cru dentro do JSON (legado): nomes, não itens
+					itemsArr = parsed
+						.split(",")
+						.map((s: string) => s.trim())
+						.filter(Boolean);
+				}
 			} catch {
-				itemsArr = [];
+				// não-JSON: CSV cru de posts MUITO antigos — nomes, não itens
+				if (options.products.includes(",") || options.products.trim()) {
+					itemsArr = options.products
+						.split(",")
+						.map((s) => s.trim())
+						.filter(Boolean);
+				} else {
+					itemsArr = [];
+				}
 			}
 		} else if (Array.isArray(options.products)) {
 			itemsArr = options.products;
@@ -1236,6 +1251,9 @@ async function publishYoutubePost(opts: {
 		if (legacyNameStrings.length > 0) {
 			namesArr.push(...legacyNameStrings.map((s) => s.trim()));
 		}
+		// lixo de configs pré-B1 (array de objetos virou "[object Object]"):
+		// nunca vira nome de busca — descartado
+		namesArr = namesArr.filter((n) => n !== "[object Object]");
 
 		const proxyForShort = getChannelProxyUrl(post.channel as any);
 		const productsRoute =
