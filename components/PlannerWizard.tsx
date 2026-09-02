@@ -11,6 +11,7 @@ import {
 	Youtube,
 	Music,
 	Video,
+	Info,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
 import MediaUploader from "./MediaUploader";
@@ -91,7 +92,7 @@ function plannerMediaLabel(
 	youtubeMode: "only" | "mixed" | "none",
 	tiktokMode = false,
 ): string {
-	if (tiktokMode) return "Vídeo TikTok";
+	if (tiktokMode) return mediaType === "IMAGE" ? "Foto TikTok" : "Vídeo TikTok";
 	const igLabel = isCarousel
 		? "Carrossel"
 		: mediaType === "REELS"
@@ -337,10 +338,11 @@ export default function PlannerWizard({
 		}
 	}, [youtubeSelected, tiktokSelected, mediaType]);
 
-	// TikTok v1: apenas vídeo — força REELS quando só TikTok (IMAGE/CAROUSEL
-	// são bloqueados no submit; aqui a UI já esconde as opções inválidas).
+	// TikTok T1 foto: IMAGE é suportado (content/init PULL_FROM_URL). O auto-fix
+	// agora só força REELS para CAROUSEL (carrossel é bloqueado no submit —
+	// habilitado em fase própria).
 	useEffect(() => {
-		if (onlyTiktokSelected && (isCarousel || mediaType === "IMAGE" || mediaType === "CAROUSEL")) {
+		if (onlyTiktokSelected && (isCarousel || mediaType === "CAROUSEL")) {
 			setMediaType("REELS");
 			setIsCarousel(false);
 		}
@@ -1256,10 +1258,16 @@ export default function PlannerWizard({
 			return;
 		}
 
-		// TikTok v1: apenas vídeo — bloqueia IMAGE/CAROUSEL quando só TikTok
+		// TikTok T1 foto: bloqueia apenas CAROUSEL (ainda não habilitado). IMAGE é
+		// válido — o publisher publica via content/init com PULL_FROM_URL da URL do
+		// item (/api/file/...) e valida https lá (MalformedDataError PT-BR).
 		if (onlyTiktokSelected) {
-			if (isCarousel || mediaType === "IMAGE") {
-				setFormError("TikTok v1: apenas vídeo é suportado. Imagens e carrosséis serão habilitados na fase 2.");
+			if (isCarousel || mediaType === "CAROUSEL") {
+				setFormError("TikTok: carrossel de fotos ainda não é suportado — use Vídeo TikTok ou Foto TikTok.");
+				return;
+			}
+			if (mediaType === "IMAGE" && files.length === 0 && selectedContentIds.length === 0) {
+				setFormError("TikTok FOTO exige uma imagem — envie um arquivo ou selecione um item da biblioteca (a publicação usa a URL do item).");
 				return;
 			}
 			if (!tiktokCaption.trim()) {
@@ -1270,7 +1278,7 @@ export default function PlannerWizard({
 				setFormError("Legenda do TikTok deve ter no máximo 2200 caracteres.");
 				return;
 			}
-			if (tiktokCoverTimestampMs.trim() && (!Number.isInteger(Number(tiktokCoverTimestampMs)) || Number(tiktokCoverTimestampMs) < 0)) {
+			if (mediaType !== "IMAGE" && tiktokCoverTimestampMs.trim() && (!Number.isInteger(Number(tiktokCoverTimestampMs)) || Number(tiktokCoverTimestampMs) < 0)) {
 				setFormError("Cover Timestamp deve ser um número inteiro >= 0 (ms).");
 				return;
 			}
@@ -1972,7 +1980,10 @@ export default function PlannerWizard({
 											className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
 										>
 											{onlyTiktokSelected ? (
+												<>
 												<option value="REELS">Vídeo TikTok</option>
+												<option value="IMAGE">Foto TikTok</option>
+												</>
 											) : (
 												<>
 												<option value="REELS">
@@ -2020,6 +2031,16 @@ export default function PlannerWizard({
 											<Music size={14} className="text-black dark:text-white" />
 											Configurações TikTok
 										</h4>
+										{mediaType === "IMAGE" && (
+											<div className="rounded-lg bg-ios-blue/10 border border-ios-blue/20 px-3 py-2 text-[11px] text-ios-blue flex gap-2 items-start">
+												<Info size={13} className="shrink-0 mt-0.5" />
+												<span>
+													<strong>Foto:</strong> usa a URL do item (PULL_FROM_URL) —
+													envie uma imagem ou selecione um item da biblioteca; a
+													publicação exige URL https em domínio verificado no app TikTok.
+												</span>
+											</div>
+										)}
 										<div>
 											<div className="flex justify-between items-center mb-1.5">
 												<label className="text-xs font-medium text-ios-text block">
@@ -2095,6 +2116,7 @@ export default function PlannerWizard({
 												</div>
 											))}
 										</div>
+										{mediaType !== "IMAGE" && (
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
 												Cover Timestamp (ms)
@@ -2114,6 +2136,7 @@ export default function PlannerWizard({
 												1000 = 1s. 0 (vazio) = capa automática do TikTok.
 											</p>
 										</div>
+										)}
 										<div className="space-y-2">
 											<div
 													onClick={() => { setTiktokBrandContentToggle(!tiktokBrandContentToggle); setSettingsTouched(true); }}

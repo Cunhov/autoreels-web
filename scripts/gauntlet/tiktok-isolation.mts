@@ -9,7 +9,7 @@
  *  - canal único YT / IG liberado
  *  - detectChannelPlatform por settings (tiktok_open_id / sessionId) e platform
  *  - mensagem de erro PT-BR
- *  - validateTiktokMediaType (v1 só vídeo; imagem/carousel bloqueado)
+ *  - validateTiktokMediaType (T1 foto: IMAGE liberado; carousel/stories bloqueado)
  */
 import {
   isTiktokMixBlocked,
@@ -52,11 +52,11 @@ async function run() {
   const both = detectChannelPlatform({ platform: null, settings: JSON.stringify({ tiktok_open_id: "a", sessionId: "b" }) });
   check("detect com ambos prioriza tiktok", both === "tiktok", String(both));
 
-  // validateTiktokMediaType (v1 só vídeo)
+  // validateTiktokMediaType (T1 foto: IMAGE liberado via content/init; carousel/stories bloqueado)
   check("media REELS ok", validateTiktokMediaType("REELS").ok === true);
   check("media VIDEO ok", validateTiktokMediaType("VIDEO").ok === true);
-  check("media IMAGE bloqueado", validateTiktokMediaType("IMAGE").ok === false && /apenas vídeo/.test(validateTiktokMediaType("IMAGE").error || ""));
-  check("media CAROUSEL bloqueado", validateTiktokMediaType("CAROUSEL").ok === false && /apenas vídeo/.test(validateTiktokMediaType("CAROUSEL").error || ""));
+  check("media IMAGE ok (T1 foto)", validateTiktokMediaType("IMAGE").ok === true, validateTiktokMediaType("IMAGE").error || "");
+  check("media CAROUSEL bloqueado (T3)", validateTiktokMediaType("CAROUSEL").ok === false && /carrossel/.test(validateTiktokMediaType("CAROUSEL").error || ""), validateTiktokMediaType("CAROUSEL").error || "");
   check("media STORIES bloqueado", validateTiktokMediaType("STORIES").ok === false && /Stories/.test(validateTiktokMediaType("STORIES").error || ""));
 
   console.log(`\n=== Smoke A5 ISOLATION: ${pass} PASS, ${fail} FAIL ===`);
