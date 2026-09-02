@@ -19,6 +19,7 @@ import {
 	adaptImageToSquareWithBlur,
 	type AdaptOutput,
 } from "@/lib/youtube-community-image";
+import { getVideoDurationSec } from "@/lib/ffmpeg";
 import {
 	YoutubeApiError,
 	createAutoShort,
@@ -1133,7 +1134,7 @@ const SHORT_MAX_FILE_BYTES = 512 * 1024 * 1024; // ~512 MB
 async function readLocalUploadFile(
 	mediaUrl: string,
 	maxBytes?: number,
-): Promise<{ buffer: Buffer; contentType: string; filename: string }> {
+): Promise<{ buffer: Buffer; contentType: string; filename: string; path: string }> {
 	const relative = mediaUrl.startsWith("/api/file/")
 		? mediaUrl.slice("/api/file/".length)
 		: mediaUrl.replace(/^\//, "");
@@ -1170,6 +1171,7 @@ async function readLocalUploadFile(
 					buffer,
 					contentType: YT_MIME_TYPES[ext] || "application/octet-stream",
 					filename: rel.split("/").pop() || "midia",
+					path: candidate,
 				};
 			} catch (err) {
 				if (err instanceof MalformedDataError) throw err;
@@ -1708,6 +1710,27 @@ async function publishYoutubePost(opts: {
 			post.video_url,
 			SHORT_MAX_FILE_BYTES,
 		);
+		// Shorts do YouTube: limite de 3 minutos (180s). Vídeos acima disso
+		// viram vídeo longo e o YouTube rejeita/desclassifica — bloqueia ANTES
+		// do upload (erro definitivo, sem retry).
+		const YT_SHORT_MAX_SEC = 180;
+		try {
+			const sec = await getVideoDurationSec(videoFile.path);
+			if (Number.isFinite(sec) && sec > YT_SHORT_MAX_SEC) {
+				throw new MalformedDataError(
+					`Vídeo de ${Math.round(sec)}s excede o limite de 3 minutos para Shorts do YouTube. Publicar como Short exige no máximo 180s.`,
+				);
+			}
+		} catch (err) {
+			if (err instanceof MalformedDataError) throw err;
+			// ffprobe indisponível/falha: deixa passar (melhor não bloquear por
+			// infra; a validação de duração é best-effort nesse caso).
+			await logPlanner(
+				plannerId,
+				`[YouTube] Não foi possível validar a duração do vídeo (${videoFile.filename}): ${err instanceof Error ? err.message : String(err)}`,
+				"warning",
+			).catch(() => {});
+		}
 		// Título: opção salva ou caption (limite de 100 chars da API)
 		const title = (options.title?.trim() || (post.caption || "").trim()).slice(
 			0,
