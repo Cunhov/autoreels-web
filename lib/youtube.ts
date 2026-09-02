@@ -510,7 +510,7 @@ export async function createAutoShort(input: {
 	if (input.pinnedCommentText) {
 		form.append("pinned_comment_text", input.pinnedCommentText);
 	}
-	form.append("video", input.video.blob, input.video.filename);
+	form.append("video_file", input.video.blob, input.video.filename);
 
 	const data = (await youtubeFetch(
 		"/api/shorts/auto",
