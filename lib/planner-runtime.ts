@@ -939,6 +939,21 @@ export function validateTiktokMediaType(mediaType: string | undefined | null): {
 	return { ok: true };
 }
 
+/**
+ * Mapeia o media_type do runtime (REELS/VIDEO/IMAGE/CAROUSEL/STORIES) para o
+ * media_type que o preview/API TikTok usam ('video' | 'photo' | 'carousel').
+ * v1 só publica 'video' (photo/carousel são bloqueados na criação); o preview
+ * já os expõe para o card "O que será enviado" mostrar a intenção.
+ */
+export function mapTiktokMediaType(
+	mediaType: string | null | undefined,
+): "video" | "photo" | "carousel" {
+	const m = String(mediaType || "").toUpperCase();
+	if (m === "IMAGE") return "photo";
+	if (m === "CAROUSEL") return "carousel";
+	return "video";
+}
+
 export async function buildPostData(opts: {
 	prisma: PrismaLike;
 	planner: { user_id: string; id: string };
