@@ -841,11 +841,23 @@ export async function buildTiktokOptionsForPost(opts: {
 	now: Date;
 	caption: string;
 	platform?: string | null;
+	// T1 foto: mediaType/mediaUrl resolvidos pelo runtime (URL final é atributo do
+	// Post — tiktok_options.photo_urls é apenas espelho p/ o publisher, que
+	// sempre prioriza post.image_url).
+	mediaType?: string | null;
+	mediaUrl?: string | null;
 }): Promise<string | null> {
 	const { config, caption } = opts;
 	const cfg = config as Record<string, unknown>;
 	const isTiktok = String(opts.platform || "").toLowerCase() === "tiktok";
 	if (!isTiktok) return null;
+	// T1: foto = media_type IMAGE (config do item selecionado; buildPostData passa
+	// o runtime resolvido — propagação usa selectedContent.media_type).
+	const selectedMediaType = (
+		(opts.mediaType || "") ||
+		String((opts.selectedContent as PlannerContentItem | null | undefined)?.media_type || "")
+	).toUpperCase();
+	const isPhoto = selectedMediaType === "IMAGE";
 	// Resolve privacy com fallback
 	const rawPrivacy =
 		(typeof cfg["tiktok_privacy_level"] === "string" ? String(cfg["tiktok_privacy_level"]) : null) ??
@@ -872,7 +884,8 @@ export async function buildTiktokOptionsForPost(opts: {
 		cfg["video_cover_timestamp_ms"] ??
 		cfg["tiktok_cover_timestamp_ms"];
 	let video_cover_timestamp_ms: number | undefined = undefined;
-	if (coverRaw !== undefined && coverRaw !== null && coverRaw !== "") {
+	// T1: capa por timestamp é só de vídeo — foto usa photo_cover_index (0-based).
+	if (!isPhoto && coverRaw !== undefined && coverRaw !== null && coverRaw !== "") {
 		const n = Number(coverRaw);
 		if (Number.isFinite(n) && n >= 0) video_cover_timestamp_ms = Math.floor(n);
 	}
@@ -901,18 +914,28 @@ export async function buildTiktokOptionsForPost(opts: {
 		...(brand_content_toggle ? { brand_content_toggle: true } : {}),
 		...(brand_organic_toggle ? { brand_organic_toggle: true } : {}),
 	};
+	// T1 foto: espelha a URL única do item (PULL_FROM_URL exige URL https — o
+	// publisher valida o https e usa post.image_url como fonte da verdade).
+	if (isPhoto) {
+		const photoUrl = String(
+			(opts.mediaUrl || "") ||
+				((opts.selectedContent as PlannerContentItem | null | undefined)?.url || ""),
+		).trim();
+		payload["photo_urls"] = photoUrl ? [photoUrl] : [];
+		payload["photo_cover_index"] = 0;
+	}
 	return JSON.stringify(payload);
 }
 
-/** Valida se o mediaType é suportado para TikTok v1 (apenas vídeo). */
+/** Valida se o mediaType é suportado para TikTok (v2: vídeo + foto; carrossel na fase própria). */
 export function validateTiktokMediaType(mediaType: string | undefined | null): { ok: boolean; error?: string } {
 	const m = String(mediaType || "").toUpperCase();
-	if (m === "REELS" || m === "VIDEO") return { ok: true };
-	if (m === "IMAGE" || m === "CAROUSEL") {
-		return { ok: false, error: "TikTok v1: apenas vídeo é suportado. Imagens e carrosséis serão habilitados na fase 2." };
+	if (m === "REELS" || m === "VIDEO" || m === "IMAGE") return { ok: true };
+	if (m === "CAROUSEL") {
+		return { ok: false, error: "TikTok: carrossel de fotos ainda não é suportado — use Vídeo TikTok ou Foto TikTok." };
 	}
 	// STORIES também bloqueado para TikTok
-	if (m === "STORIES") return { ok: false, error: "TikTok v1: apenas vídeo é suportado. Stories não são suportados." };
+	if (m === "STORIES") return { ok: false, error: "TikTok: apenas vídeo ou foto é suportado. Stories não são suportados." };
 	return { ok: true };
 }
 
@@ -999,11 +1022,11 @@ export async function buildPostData(opts: {
 	// ── TikTok branch (A3 isolation) ────────────────────────────────────────
 	const isTiktokChannel =
 		(opts.channel.platform || "").toLowerCase() === "tiktok";
-	// Bloqueio v1: IMAGE/CAROUSEL não são suportados para TikTok
+	// T1 foto: IMAGE é suportado (content/init); CAROUSEL/STORIES continuam bloqueados.
 	if (isTiktokChannel) {
 		const tiktokMediaCheck = validateTiktokMediaType(runtime.mediaType ?? "");
 		if (!tiktokMediaCheck.ok) {
-			throw new Error(tiktokMediaCheck.error || "TikTok v1: apenas vídeo");
+			throw new Error(tiktokMediaCheck.error || "TikTok: tipo de mídia inválido");
 		}
 		// Também bloqueia tiktok_type vs youtube_type mutuamente exclusivos
 		// (defesa: se config contém youtube_type, não cria post tiktok)
@@ -1015,7 +1038,9 @@ export async function buildPostData(opts: {
 	let tiktokOptions: string | null = null;
 	let tiktokType: string | null = null;
 	if (isTiktokChannel) {
-		tiktokType = "video";
+		const isPhoto =
+			String(runtime.mediaType || "").toUpperCase() === "IMAGE";
+		tiktokType = isPhoto ? "photo" : "video";
 		tiktokOptions = await buildTiktokOptionsForPost({
 			prisma: opts.prisma,
 			planner: { user_id: opts.planner.user_id },
@@ -1026,6 +1051,8 @@ export async function buildPostData(opts: {
 			now: opts.now,
 			caption,
 			platform: opts.channel.platform,
+			mediaType: isPhoto ? "IMAGE" : "REELS",
+			mediaUrl: runtime.mediaUrl,
 		});
 	}
 
@@ -1311,14 +1338,14 @@ export async function propagatePlannerConfigToPendingPosts(
       newYoutubeOptions = undefined;
     }
 
-    // tiktok_options: só para posts de canal TikTok com tiktok_type=video.
+    // tiktok_options: só para posts de canal TikTok com tiktok_type=video|photo.
     // Re-deriva via buildTiktokOptionsForPost (MESMA função da criação — M5:
     // editar planner produz o MESMO tiktok_options). Se null (sem título
     // resolvível), preserva o existente do post pendente (regra M5/B2).
     const tkType = post.tiktok_type ? String(post.tiktok_type).toLowerCase() : null;
     const isTiktokChannel = channelPlatform ? channelPlatform.toLowerCase() === "tiktok" : tkType !== null;
     let newTiktokOptions: string | null | undefined = undefined; // undefined = não alterar
-    if (isTiktokChannel && tkType === "video") {
+    if (isTiktokChannel && (tkType === "video" || tkType === "photo")) {
       try {
         const rebuilt = await buildTiktokOptionsForPost({
           prisma: prismaClient as PrismaLike,

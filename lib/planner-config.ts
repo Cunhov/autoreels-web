@@ -982,15 +982,15 @@ export function validatePlannerConfig(config: unknown): {
             if (!okBool) errors.push(`${flag} deve ser verdadeiro ou falso`);
         }
     }
-    // tiktok_type: só "video" em v1
+    // tiktok_type: v2 aceita video | photo (foto via content/init)
     if (
         (c as PlannerJson)["tiktok_type"] !== undefined &&
         (c as PlannerJson)["tiktok_type"] !== null &&
         (c as PlannerJson)["tiktok_type"] !== ""
     ) {
         const v = String((c as PlannerJson)["tiktok_type"]).toLowerCase().trim();
-        if (v !== "video") {
-            errors.push('tiktok_type deve ser "video" (TikTok v1: apenas vídeo)');
+        if (v !== "video" && v !== "photo") {
+            errors.push('tiktok_type deve ser "video" ou "photo"');
         }
     }
     // mutual exclusivity: youtube_type vs tiktok_type
