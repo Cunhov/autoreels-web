@@ -25,8 +25,10 @@ import {
 	type YoutubeProductEntry,
 } from "@/lib/planner-config";
 
-const PLANNER_MIX_ERROR = "Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
-const PLANNER_TIKTOK_MIX_ERROR = "Planners TikTok não podem misturar canais de outras plataformas.";
+const PLANNER_MIX_ERROR =
+	"Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
+const PLANNER_TIKTOK_MIX_ERROR =
+	"Planners TikTok não podem misturar canais de outras plataformas.";
 
 // B1 — produtos afiliados: resultado da busca live (mesmo shape do payload
 // GET /api/youtube/products: { item, title, vendor, price, commission_pct }).
@@ -61,7 +63,10 @@ function insertYoutubeTemplateTag(
 ) {
 	const start = el?.selectionStart ?? current.length;
 	const end = el?.selectionEnd ?? current.length;
-	const next = (current.slice(0, start) + tag + current.slice(end)).slice(0, max);
+	const next = (current.slice(0, start) + tag + current.slice(end)).slice(
+		0,
+		max,
+	);
 	setter(next);
 	requestAnimationFrame(() => {
 		if (!el) return;
@@ -250,31 +255,42 @@ export default function PlannerWizard({
 	const [aiSuggestError, setAiSuggestError] = useState("");
 	const [aiSuggestOk, setAiSuggestOk] = useState("");
 	// B1: produtos afiliados — lista dinâmica de {query, item?} (nunca CSV cru)
-	const [youtubeProductDrafts, setYoutubeProductDrafts] = useState<YoutubeProductDraft[]>([]);
+	const [youtubeProductDrafts, setYoutubeProductDrafts] = useState<
+		YoutubeProductDraft[]
+	>([]);
 	const youtubeProductKeyRef = useRef(1);
 	// timers de debounce por entrada (busca live ~600ms)
 	const youtubeProductTimersRef = useRef<Record<string, number>>({});
-	const [youtubePrivacy, setYoutubePrivacy] = useState<"PUBLIC"|"PRIVATE"|"UNLISTED">("PUBLIC");
+	const [youtubePrivacy, setYoutubePrivacy] = useState<
+		"PUBLIC" | "PRIVATE" | "UNLISTED"
+	>("PUBLIC");
 	const [youtubeMadeForKids, setYoutubeMadeForKids] = useState(false);
 	const [youtubeMonetizeWithAds, setYoutubeMonetizeWithAds] = useState(false);
 	const [youtubeCategoryId, setYoutubeCategoryId] = useState("");
 	const [youtubePinnedComment, setYoutubePinnedComment] = useState("");
 	// TikTok planner fields (só quando onlyTiktokSelected)
 	const [tiktokCaption, setTiktokCaption] = useState("");
-	const [tiktokPrivacyLevel, setTiktokPrivacyLevel] = useState<string>("SELF_ONLY");
-	const [tiktokPrivacyOptions, setTiktokPrivacyOptions] = useState<string[]>([...TIKTOK_PRIVACY_FALLBACK]);
+	const [tiktokPrivacyLevel, setTiktokPrivacyLevel] =
+		useState<string>("SELF_ONLY");
+	const [tiktokPrivacyOptions, setTiktokPrivacyOptions] = useState<string[]>([
+		...TIKTOK_PRIVACY_FALLBACK,
+	]);
 	const [tiktokDisableDuet, setTiktokDisableDuet] = useState(false);
 	const [tiktokDisableStitch, setTiktokDisableStitch] = useState(false);
 	const [tiktokDisableComment, setTiktokDisableComment] = useState(false);
 	const [tiktokCoverTimestampMs, setTiktokCoverTimestampMs] = useState("");
 	// T3: foto de capa do carrossel de fotos TikTok (índice 0-based; default 0 = 1ª foto)
 	const [tiktokPhotoCoverIndex, setTiktokPhotoCoverIndex] = useState("0");
-	const [tiktokBrandContentToggle, setTiktokBrandContentToggle] = useState(false);
-	const [tiktokBrandOrganicToggle, setTiktokBrandOrganicToggle] = useState(false);
+	const [tiktokBrandContentToggle, setTiktokBrandContentToggle] =
+		useState(false);
+	const [tiktokBrandOrganicToggle, setTiktokBrandOrganicToggle] =
+		useState(false);
 	// REGRA ITEM > FIXO (produtos por vídeo na library): mapa itemId → CSV de
 	// nomes dos itens selecionados. Quando um item tem produtos, eles vencem o
 	// youtube_products fixo do planner na publicação — informado na UI.
-	const [selectedItemProducts, setSelectedItemProducts] = useState<Record<string, string>>({});
+	const [selectedItemProducts, setSelectedItemProducts] = useState<
+		Record<string, string>
+	>({});
 	// Flags de carregamento: setters usados para preservar sequência; o valor não
 	// é lido em lugar nenhum (estado de sincronização apenas).
 	const [, setSelectedItemProductsLoaded] = useState(false);
@@ -372,10 +388,13 @@ export default function PlannerWizard({
 		let cancelled = false;
 		(async () => {
 			try {
-				const res = await fetch(`/api/tiktok/creator-info?channelId=${encodeURIComponent(channelId)}`);
+				const res = await fetch(
+					`/api/tiktok/creator-info?channelId=${encodeURIComponent(channelId)}`,
+				);
 				if (!res.ok) return;
 				const data = await res.json();
-				const opts = data?.privacy_level_options || data?.privacy_options || data?.options;
+				const opts =
+					data?.privacy_level_options || data?.privacy_options || data?.options;
 				if (!cancelled && Array.isArray(opts) && opts.length > 0) {
 					setTiktokPrivacyOptions(opts.map((v: unknown) => String(v)));
 					// se o atual não está nas opções, cai para fallback
@@ -387,7 +406,9 @@ export default function PlannerWizard({
 				/* opções de privacidade inválidas — mantém a atual */
 			}
 		})();
-		return () => { cancelled = true; };
+		return () => {
+			cancelled = true;
+		};
 	}, [onlyTiktokSelected, selectedChannels]);
 
 	// Modo YouTube do rótulo de mídia: só-YouTube / misto IG+YT / nenhum.
@@ -397,21 +418,32 @@ export default function PlannerWizard({
 	}, [youtubeSelected, onlyYoutubeSelected]);
 
 	// Isolation: tipo do planner e detecção de mix (3 pilares)
-	const selectedPlatformType = useMemo<"youtube" | "instagram" | "tiktok" | null>(() => {
+	const selectedPlatformType = useMemo<
+		"youtube" | "instagram" | "tiktok" | null
+	>(() => {
 		if (selectedChannels.length === 0) return null;
 		if (onlyTiktokSelected) return "tiktok";
 		if (onlyYoutubeSelected) return "youtube";
 		if (!youtubeSelected && !tiktokSelected) return "instagram";
 		return null; // nunca misto quando isolamento ativo (bloqueado antes)
-	}, [selectedChannels, onlyYoutubeSelected, onlyTiktokSelected, youtubeSelected, tiktokSelected]);
+	}, [
+		selectedChannels,
+		onlyYoutubeSelected,
+		onlyTiktokSelected,
+		youtubeSelected,
+		tiktokSelected,
+	]);
 
 	const isChannelDisabled = (channel: Channel) => {
 		if (selectedChannels.length === 0) return false;
 		if (selectedChannels.includes(channel.id)) return false;
 		const chPlatform = (channel.platform || "").toLowerCase();
-		if (selectedPlatformType === "youtube" && chPlatform !== "youtube") return true;
-		if (selectedPlatformType === "instagram" && chPlatform === "youtube") return true;
-		if (selectedPlatformType === "instagram" && chPlatform === "tiktok") return true;
+		if (selectedPlatformType === "youtube" && chPlatform !== "youtube")
+			return true;
+		if (selectedPlatformType === "instagram" && chPlatform === "youtube")
+			return true;
+		if (selectedPlatformType === "instagram" && chPlatform === "tiktok")
+			return true;
 		if (selectedPlatformType === "tiktok" && chPlatform !== "tiktok") return true;
 		return false;
 	};
@@ -419,7 +451,9 @@ export default function PlannerWizard({
 	const hasMixSelected = useMemo(() => {
 		const platforms = new Set(
 			selectedChannels
-				.map((id) => (channels.find((c) => c.id === id)?.platform || "").toLowerCase())
+				.map((id) =>
+					(channels.find((c) => c.id === id)?.platform || "").toLowerCase(),
+				)
 				.filter(Boolean),
 		);
 		return platforms.size > 1;
@@ -428,7 +462,9 @@ export default function PlannerWizard({
 	const tiktokMixSelected = useMemo(() => {
 		const platforms = new Set(
 			selectedChannels
-				.map((id) => (channels.find((c) => c.id === id)?.platform || "").toLowerCase())
+				.map((id) =>
+					(channels.find((c) => c.id === id)?.platform || "").toLowerCase(),
+				)
 				.filter(Boolean),
 		);
 		return platforms.has("tiktok") && platforms.size > 1;
@@ -639,32 +675,146 @@ export default function PlannerWizard({
 						audioConfig.video_volume !== undefined ? audioConfig.video_volume : 20,
 					);
 					// YouTube fields do config (planner YT)
-					setYoutubeTitle(typeof config.youtube_title === "string" ? String(config.youtube_title) : typeof config.youtube_title === "number" ? String(config.youtube_title) : "");
-					setYoutubeDescription(typeof config.youtube_description === "string" ? String(config.youtube_description) : "");
+					setYoutubeTitle(
+						typeof config.youtube_title === "string"
+							? String(config.youtube_title)
+							: typeof config.youtube_title === "number"
+								? String(config.youtube_title)
+								: "",
+					);
+					setYoutubeDescription(
+						typeof config.youtube_description === "string"
+							? String(config.youtube_description)
+							: "",
+					);
 					loadYoutubeProductsFromConfig(config.youtube_products);
-					setYoutubePrivacy(["PUBLIC","PRIVATE","UNLISTED"].includes(String(config.youtube_privacy || "").toUpperCase()) ? String(config.youtube_privacy).toUpperCase() as "PUBLIC"|"PRIVATE"|"UNLISTED" : "PUBLIC");
-					setYoutubeMadeForKids(Boolean(config.youtube_made_for_kids === true || String(config.youtube_made_for_kids).toLowerCase() === "true" || config.youtube_made_for_kids === 1));
-					setYoutubeMonetizeWithAds(Boolean(config.youtube_monetize_with_ads === true || String(config.youtube_monetize_with_ads).toLowerCase() === "true" || config.youtube_monetize_with_ads === 1));
-					setYoutubeCategoryId(config.youtube_category_id !== undefined && config.youtube_category_id !== null && config.youtube_category_id !== "" ? String(config.youtube_category_id) : "");
-					setYoutubePinnedComment(typeof config.youtube_pinned_comment === "string" ? String(config.youtube_pinned_comment) : typeof config.youtube_pinned_comment_text === "string" ? String(config.youtube_pinned_comment_text) : "");
+					setYoutubePrivacy(
+						["PUBLIC", "PRIVATE", "UNLISTED"].includes(
+							String(config.youtube_privacy || "").toUpperCase(),
+						)
+							? (String(config.youtube_privacy).toUpperCase() as
+									| "PUBLIC"
+									| "PRIVATE"
+									| "UNLISTED")
+							: "PUBLIC",
+					);
+					setYoutubeMadeForKids(
+						Boolean(
+							config.youtube_made_for_kids === true ||
+								String(config.youtube_made_for_kids).toLowerCase() === "true" ||
+								config.youtube_made_for_kids === 1,
+						),
+					);
+					setYoutubeMonetizeWithAds(
+						Boolean(
+							config.youtube_monetize_with_ads === true ||
+								String(config.youtube_monetize_with_ads).toLowerCase() === "true" ||
+								config.youtube_monetize_with_ads === 1,
+						),
+					);
+					setYoutubeCategoryId(
+						config.youtube_category_id !== undefined &&
+							config.youtube_category_id !== null &&
+							config.youtube_category_id !== ""
+							? String(config.youtube_category_id)
+							: "",
+					);
+					setYoutubePinnedComment(
+						typeof config.youtube_pinned_comment === "string"
+							? String(config.youtube_pinned_comment)
+							: typeof config.youtube_pinned_comment_text === "string"
+								? String(config.youtube_pinned_comment_text)
+								: "",
+					);
 					// TikTok fields do config (planner TikTok)
-					const rawTiktokCaption = (config as Record<string, unknown>).tiktok_caption ?? (config as Record<string, unknown>).tiktok_title ?? (config as Record<string, unknown>).tiktok_description;
-					setTiktokCaption(typeof rawTiktokCaption === "string" ? String(rawTiktokCaption) : "");
-					const rawPrivacy = (config as Record<string, unknown>).tiktok_privacy_level ?? (config as Record<string, unknown>).tiktok_privacy ?? (config as Record<string, unknown>).privacy_level;
-					setTiktokPrivacyLevel(typeof rawPrivacy === "string" && rawPrivacy.trim() ? String(rawPrivacy).trim() : "SELF_ONLY");
+					const rawTiktokCaption =
+						(config as Record<string, unknown>).tiktok_caption ??
+						(config as Record<string, unknown>).tiktok_title ??
+						(config as Record<string, unknown>).tiktok_description;
+					setTiktokCaption(
+						typeof rawTiktokCaption === "string" ? String(rawTiktokCaption) : "",
+					);
+					const rawPrivacy =
+						(config as Record<string, unknown>).tiktok_privacy_level ??
+						(config as Record<string, unknown>).tiktok_privacy ??
+						(config as Record<string, unknown>).privacy_level;
+					setTiktokPrivacyLevel(
+						typeof rawPrivacy === "string" && rawPrivacy.trim()
+							? String(rawPrivacy).trim()
+							: "SELF_ONLY",
+					);
 					// privacy options: tenta usar creator_info cache se houver, senão fallback
-					const privOpts = Array.isArray((config as Record<string, unknown>).tiktok_privacy_options) ? (config as Record<string, unknown>).tiktok_privacy_options as string[] : null;
+					const privOpts = Array.isArray(
+						(config as Record<string, unknown>).tiktok_privacy_options,
+					)
+						? ((config as Record<string, unknown>).tiktok_privacy_options as string[])
+						: null;
 					if (privOpts && privOpts.length > 0) setTiktokPrivacyOptions(privOpts);
-					setTiktokDisableDuet(Boolean((config as Record<string, unknown>).tiktok_disable_duet === true || String((config as Record<string, unknown>).tiktok_disable_duet).toLowerCase() === "true" || (config as Record<string, unknown>).disable_duet === true));
-					setTiktokDisableStitch(Boolean((config as Record<string, unknown>).tiktok_disable_stitch === true || String((config as Record<string, unknown>).tiktok_disable_stitch).toLowerCase() === "true" || (config as Record<string, unknown>).disable_stitch === true));
-					setTiktokDisableComment(Boolean((config as Record<string, unknown>).tiktok_disable_comment === true || String((config as Record<string, unknown>).tiktok_disable_comment).toLowerCase() === "true" || (config as Record<string, unknown>).disable_comment === true));
-					const coverRaw2 = (config as Record<string, unknown>).tiktok_video_cover_timestamp_ms ?? (config as Record<string, unknown>).video_cover_timestamp_ms;
-					setTiktokCoverTimestampMs(coverRaw2 !== undefined && coverRaw2 !== null && coverRaw2 !== "" ? String(coverRaw2) : "");
+					setTiktokDisableDuet(
+						Boolean(
+							(config as Record<string, unknown>).tiktok_disable_duet === true ||
+								String(
+									(config as Record<string, unknown>).tiktok_disable_duet,
+								).toLowerCase() === "true" ||
+								(config as Record<string, unknown>).disable_duet === true,
+						),
+					);
+					setTiktokDisableStitch(
+						Boolean(
+							(config as Record<string, unknown>).tiktok_disable_stitch === true ||
+								String(
+									(config as Record<string, unknown>).tiktok_disable_stitch,
+								).toLowerCase() === "true" ||
+								(config as Record<string, unknown>).disable_stitch === true,
+						),
+					);
+					setTiktokDisableComment(
+						Boolean(
+							(config as Record<string, unknown>).tiktok_disable_comment === true ||
+								String(
+									(config as Record<string, unknown>).tiktok_disable_comment,
+								).toLowerCase() === "true" ||
+								(config as Record<string, unknown>).disable_comment === true,
+						),
+					);
+					const coverRaw2 =
+						(config as Record<string, unknown>).tiktok_video_cover_timestamp_ms ??
+						(config as Record<string, unknown>).video_cover_timestamp_ms;
+					setTiktokCoverTimestampMs(
+						coverRaw2 !== undefined && coverRaw2 !== null && coverRaw2 !== ""
+							? String(coverRaw2)
+							: "",
+					);
 					// T3: foto de capa do carrossel de fotos TikTok
-					const photoCoverRaw = (config as Record<string, unknown>).tiktok_photo_cover_index;
-					setTiktokPhotoCoverIndex(photoCoverRaw !== undefined && photoCoverRaw !== null && photoCoverRaw !== "" ? String(photoCoverRaw) : "0");
-					setTiktokBrandContentToggle(Boolean((config as Record<string, unknown>).tiktok_brand_content_toggle === true || String((config as Record<string, unknown>).tiktok_brand_content_toggle).toLowerCase() === "true" || (config as Record<string, unknown>).brand_content_toggle === true));
-					setTiktokBrandOrganicToggle(Boolean((config as Record<string, unknown>).tiktok_brand_organic_toggle === true || String((config as Record<string, unknown>).tiktok_brand_organic_toggle).toLowerCase() === "true" || (config as Record<string, unknown>).brand_organic_toggle === true));
+					const photoCoverRaw = (config as Record<string, unknown>)
+						.tiktok_photo_cover_index;
+					setTiktokPhotoCoverIndex(
+						photoCoverRaw !== undefined &&
+							photoCoverRaw !== null &&
+							photoCoverRaw !== ""
+							? String(photoCoverRaw)
+							: "0",
+					);
+					setTiktokBrandContentToggle(
+						Boolean(
+							(config as Record<string, unknown>).tiktok_brand_content_toggle ===
+								true ||
+								String(
+									(config as Record<string, unknown>).tiktok_brand_content_toggle,
+								).toLowerCase() === "true" ||
+								(config as Record<string, unknown>).brand_content_toggle === true,
+						),
+					);
+					setTiktokBrandOrganicToggle(
+						Boolean(
+							(config as Record<string, unknown>).tiktok_brand_organic_toggle ===
+								true ||
+								String(
+									(config as Record<string, unknown>).tiktok_brand_organic_toggle,
+								).toLowerCase() === "true" ||
+								(config as Record<string, unknown>).brand_organic_toggle === true,
+						),
+					);
 				} else {
 					setSelectedContentIds([]);
 					setFiles([]);
@@ -771,7 +921,9 @@ export default function PlannerWizard({
 					? data.filter(
 							(c: Channel) =>
 								(c.platform ?? "") !== "" &&
-								["instagram", "youtube", "tiktok"].includes((c.platform as string).toLowerCase()) &&
+								["instagram", "youtube", "tiktok"].includes(
+									(c.platform as string).toLowerCase(),
+								) &&
 								c.status === "active",
 						)
 					: [],
@@ -840,7 +992,10 @@ export default function PlannerWizard({
 
 	// ── Produtos afiliados (B1): lista dinâmica + busca live debounce ────────
 
-	const updateYoutubeProductDraft = (key: string, patch: Partial<YoutubeProductDraft>) => {
+	const updateYoutubeProductDraft = (
+		key: string,
+		patch: Partial<YoutubeProductDraft>,
+	) => {
 		setYoutubeProductDrafts((prev) =>
 			prev.map((d) => (d.key === key ? { ...d, ...patch } : d)),
 		);
@@ -880,9 +1035,11 @@ export default function PlannerWizard({
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ description: source }),
 			});
-			const data = (await res
-				.json()
-				.catch(() => null)) as { title?: unknown; products?: unknown; error?: unknown } | null;
+			const data = (await res.json().catch(() => null)) as {
+				title?: unknown;
+				products?: unknown;
+				error?: unknown;
+			} | null;
 			if (!res.ok || !data) {
 				setAiSuggestError(
 					data && typeof data.error === "string"
@@ -897,9 +1054,7 @@ export default function PlannerWizard({
 				applied = true;
 			}
 			const names = Array.isArray(data.products)
-				? data.products
-						.map((p) => String(p).trim().slice(0, 60))
-						.filter(Boolean)
+				? data.products.map((p) => String(p).trim().slice(0, 60)).filter(Boolean)
 				: [];
 			if (names.length > 0) {
 				// nomes entram como drafts {query} (status name) — auto-select no publish
@@ -918,7 +1073,9 @@ export default function PlannerWizard({
 			if (applied) {
 				setAiSuggestOk("Título e produtos preenchidos — revise antes de salvar.");
 			} else {
-				setAiSuggestError("A IA respondeu, mas sem título nem produtos aproveitáveis.");
+				setAiSuggestError(
+					"A IA respondeu, mas sem título nem produtos aproveitáveis.",
+				);
 			}
 		} catch {
 			setAiSuggestError("Falha de rede ao chamar o gerador — tente novamente.");
@@ -936,7 +1093,11 @@ export default function PlannerWizard({
 	const searchYoutubeProduct = async (key: string, rawQuery: string) => {
 		const query = rawQuery.trim();
 		if (!query) {
-			updateYoutubeProductDraft(key, { status: "idle", results: [], error: undefined });
+			updateYoutubeProductDraft(key, {
+				status: "idle",
+				results: [],
+				error: undefined,
+			});
 			return;
 		}
 		if (!onlyYoutubeSelected || selectedChannels.length === 0) {
@@ -994,7 +1155,7 @@ export default function PlannerWizard({
 										error:
 											"Nenhum vídeo publicado ainda — publique um Short primeiro para buscar o catálogo. Você ainda pode deixar só o nome: a publicação auto-seleciona o melhor produto.",
 										results: [],
-								  }
+									}
 								: d,
 						),
 					);
@@ -1002,18 +1163,19 @@ export default function PlannerWizard({
 				}
 				updateYoutubeProductDraft(key, {
 					status: "error",
-					error: (data?.error as string) || `Falha ao buscar produtos (${res.status})`,
+					error:
+						(data?.error as string) || `Falha ao buscar produtos (${res.status})`,
 					results: [],
 				});
 				return;
 			}
 			const products: YoutubeProductSearchResult[] =
 				data && typeof data === "object" && Array.isArray(data.products)
-					? ((data.products as unknown[]) as YoutubeProductSearchResult[])
+					? (data.products as unknown[] as YoutubeProductSearchResult[])
 					: [];
 			// guard anti-race: só aplica resultado se o query ainda é o atual
 			setYoutubeProductDrafts((prev) =>
-					prev.map((d) =>
+				prev.map((d) =>
 					d.key === key && d.query.trim() === query
 						? {
 								...d,
@@ -1023,7 +1185,7 @@ export default function PlannerWizard({
 									products.length > 0
 										? undefined
 										: "Nenhum produto encontrado para este termo.",
-						  }
+							}
 						: d,
 				),
 			);
@@ -1059,7 +1221,10 @@ export default function PlannerWizard({
 	};
 
 	/** Clicou num resultado: fixa o item verbatim (status selected). */
-	const selectYoutubeProduct = (key: string, product: YoutubeProductSearchResult) => {
+	const selectYoutubeProduct = (
+		key: string,
+		product: YoutubeProductSearchResult,
+	) => {
 		updateYoutubeProductDraft(key, {
 			status: "selected",
 			item: product.item,
@@ -1148,7 +1313,11 @@ export default function PlannerWizard({
 				const map: Record<string, string> = {};
 				for (const it of items) {
 					const id = String(it.id || "");
-					if (id && typeof it.youtube_products === "string" && it.youtube_products.trim()) {
+					if (
+						id &&
+						typeof it.youtube_products === "string" &&
+						it.youtube_products.trim()
+					) {
 						map[id] = it.youtube_products.trim();
 					}
 				}
@@ -1248,7 +1417,7 @@ export default function PlannerWizard({
 			const libraryTitlesAvailable = await selectedLibraryItemsHaveTitles();
 			if (!libraryTitlesAvailable) {
 				setFormError(
-					"Shorts do YouTube exigem um título — preencha o campo \"Título\" em Configurações YouTube, ou informe uma legenda com texto literal.",
+					'Shorts do YouTube exigem um título — preencha o campo "Título" em Configurações YouTube, ou informe uma legenda com texto literal.',
 				);
 				return;
 			}
@@ -1275,7 +1444,7 @@ export default function PlannerWizard({
 		) {
 			setFormError(
 				onlyYoutubeSelected
-					? "Posts na Comunidade do YouTube exigem texto — preencha o campo \"Texto da Publicação\" em Configurações YouTube."
+					? 'Posts na Comunidade do YouTube exigem texto — preencha o campo "Texto da Publicação" em Configurações YouTube.'
 					: "Posts na Comunidade do YouTube exigem um texto — informe uma legenda com texto literal, a Legenda reserva (via {post_caption}), ou um template com conteúdo fixo.",
 			);
 			return;
@@ -1285,8 +1454,14 @@ export default function PlannerWizard({
 		// válido — o publisher publica via content/init com PULL_FROM_URL da URL do
 		// item (/api/file/...) e valida https lá (MalformedDataError PT-BR).
 		if (onlyTiktokSelected) {
-			if (mediaType === "IMAGE" && files.length === 0 && selectedContentIds.length === 0) {
-				setFormError("TikTok FOTO exige uma imagem — envie um arquivo ou selecione um item da biblioteca (a publicação usa a URL do item).");
+			if (
+				mediaType === "IMAGE" &&
+				files.length === 0 &&
+				selectedContentIds.length === 0
+			) {
+				setFormError(
+					"TikTok FOTO exige uma imagem — envie um arquivo ou selecione um item da biblioteca (a publicação usa a URL do item).",
+				);
 				return;
 			}
 			// T3: carrossel de fotos TikTok — foto de capa deve ser índice 0..9; a
@@ -1294,9 +1469,11 @@ export default function PlannerWizard({
 			if (isCarousel) {
 				const ci = Number(tiktokPhotoCoverIndex);
 				if (!Number.isInteger(ci) || ci < 0 || ci > 9) {
-					setFormError("Foto de capa do carrossel TikTok deve ser um índice inteiro entre 1 e 10.");
+					setFormError(
+						"Foto de capa do carrossel TikTok deve ser um índice inteiro entre 1 e 10.",
+					);
 					return;
-			}
+				}
 			}
 			if (!tiktokCaption.trim()) {
 				setFormError("Legenda do TikTok é obrigatória (1..2200 caracteres).");
@@ -1306,7 +1483,12 @@ export default function PlannerWizard({
 				setFormError("Legenda do TikTok deve ter no máximo 2200 caracteres.");
 				return;
 			}
-			if (!isCarousel && tiktokCoverTimestampMs.trim() && (!Number.isInteger(Number(tiktokCoverTimestampMs)) || Number(tiktokCoverTimestampMs) < 0)) {
+			if (
+				!isCarousel &&
+				tiktokCoverTimestampMs.trim() &&
+				(!Number.isInteger(Number(tiktokCoverTimestampMs)) ||
+					Number(tiktokCoverTimestampMs) < 0)
+			) {
 				setFormError("Cover Timestamp deve ser um número inteiro >= 0 (ms).");
 				return;
 			}
@@ -1335,7 +1517,9 @@ export default function PlannerWizard({
 							]),
 						);
 						const folderIds = new Set(folderById.keys());
-						const invalid = selectedContentIds.filter((id) => !folderIds.has(String(id)));
+						const invalid = selectedContentIds.filter(
+							(id) => !folderIds.has(String(id)),
+						);
 						if (invalid.length > 0) {
 							setFormError(
 								`Carrossel exige pastas — ${invalid.length} item(ns) selecionado(s) não são pastas. Remova-os e tente novamente.`,
@@ -1577,10 +1761,12 @@ export default function PlannerWizard({
 			const serializedProducts = serializeYoutubeProducts(productEntries);
 			const ytFields: Record<string, unknown> = {};
 			if (onlyYoutubeSelected) {
-				if (youtubeTitle.trim()) ytFields.youtube_title = youtubeTitle.trim().slice(0, 100);
+				if (youtubeTitle.trim())
+					ytFields.youtube_title = youtubeTitle.trim().slice(0, 100);
 				if (youtubeDescription.trim() || youtubeDescription === "") {
 					// só envia se preenchido ou se usuário limpou explicitamente (permite vazio)
-					if (youtubeDescription) ytFields.youtube_description = youtubeDescription.slice(0, 5000);
+					if (youtubeDescription)
+						ytFields.youtube_description = youtubeDescription.slice(0, 5000);
 				}
 				if (serializedProducts && serializedProducts.length)
 					ytFields.youtube_products = serializedProducts;
@@ -1589,30 +1775,41 @@ export default function PlannerWizard({
 				else ytFields.youtube_made_for_kids = false;
 				if (youtubeMonetizeWithAds) ytFields.youtube_monetize_with_ads = true;
 				else ytFields.youtube_monetize_with_ads = false;
-				if (youtubeCategoryId.trim()) ytFields.youtube_category_id = Number(youtubeCategoryId);
+				if (youtubeCategoryId.trim())
+					ytFields.youtube_category_id = Number(youtubeCategoryId);
 				if (youtubePinnedComment.trim()) {
-					ytFields.youtube_pinned_comment = youtubePinnedComment.trim().slice(0, 10000);
-					ytFields.youtube_pinned_comment_text = youtubePinnedComment.trim().slice(0, 10000);
+					ytFields.youtube_pinned_comment = youtubePinnedComment
+						.trim()
+						.slice(0, 10000);
+					ytFields.youtube_pinned_comment_text = youtubePinnedComment
+						.trim()
+						.slice(0, 10000);
 				}
 			}
 			const tiktokFields: Record<string, unknown> = {};
 			if (onlyTiktokSelected) {
-				if (tiktokCaption.trim()) tiktokFields.tiktok_caption = tiktokCaption.trim().slice(0, 2200);
-				if (tiktokPrivacyLevel) tiktokFields.tiktok_privacy_level = tiktokPrivacyLevel;
+				if (tiktokCaption.trim())
+					tiktokFields.tiktok_caption = tiktokCaption.trim().slice(0, 2200);
+				if (tiktokPrivacyLevel)
+					tiktokFields.tiktok_privacy_level = tiktokPrivacyLevel;
 				if (tiktokDisableDuet) tiktokFields.tiktok_disable_duet = true;
 				if (tiktokDisableStitch) tiktokFields.tiktok_disable_stitch = true;
 				if (tiktokDisableComment) tiktokFields.tiktok_disable_comment = true;
 				if (tiktokCoverTimestampMs.trim()) {
 					const n = Number(tiktokCoverTimestampMs.trim());
-					if (Number.isInteger(n) && n >= 0) tiktokFields.tiktok_video_cover_timestamp_ms = n;
+					if (Number.isInteger(n) && n >= 0)
+						tiktokFields.tiktok_video_cover_timestamp_ms = n;
 				}
 				// T3: foto de capa do carrossel de fotos TikTok (0-based; default 0 = 1ª foto)
 				if (isCarousel && tiktokPhotoCoverIndex.trim()) {
 					const ci = Number(tiktokPhotoCoverIndex.trim());
-					if (Number.isInteger(ci) && ci >= 0 && ci <= 9) tiktokFields.tiktok_photo_cover_index = ci;
+					if (Number.isInteger(ci) && ci >= 0 && ci <= 9)
+						tiktokFields.tiktok_photo_cover_index = ci;
 				}
-				if (tiktokBrandContentToggle) tiktokFields.tiktok_brand_content_toggle = true;
-				if (tiktokBrandOrganicToggle) tiktokFields.tiktok_brand_organic_toggle = true;
+				if (tiktokBrandContentToggle)
+					tiktokFields.tiktok_brand_content_toggle = true;
+				if (tiktokBrandOrganicToggle)
+					tiktokFields.tiktok_brand_organic_toggle = true;
 			}
 			const plannerConfig = {
 				frequency: {
@@ -1637,7 +1834,9 @@ export default function PlannerWizard({
 
 			// Isolation: bloquear submit misto no client (defesa além do server 400)
 			if (hasMixSelected) {
-				setFormError(tiktokMixSelected ? PLANNER_TIKTOK_MIX_ERROR : PLANNER_MIX_ERROR);
+				setFormError(
+					tiktokMixSelected ? PLANNER_TIKTOK_MIX_ERROR : PLANNER_MIX_ERROR,
+				);
 				setLoading(false);
 				setUploading(false);
 				return;
@@ -1803,67 +2002,71 @@ export default function PlannerWizard({
 								{channels.map((channel) => {
 									const disabled = isChannelDisabled(channel);
 									return (
-									<div
-										key={channel.id}
-										onClick={() => {
-											if (disabled) return;
-											toggleChannel(channel.id);
-										}}
-										title={disabled ? mixErrorMessage : undefined}
-										aria-disabled={disabled}
-										className={`p-4 rounded-xl border flex items-center gap-4 transition-all ${
-											disabled
-												? "bg-gray-100 border-gray-200 opacity-50 cursor-not-allowed"
-												: selectedChannels.includes(channel.id)
-													? "bg-ios-blue/10 border-ios-blue cursor-pointer"
-													: "bg-ios-card border-ios-separator hover:border-ios-blue/30 cursor-pointer"
-										}`}
-									>
 										<div
-											className={`w-6 h-6 rounded-full border flex items-center justify-center ${
-												selectedChannels.includes(channel.id)
-													? "bg-ios-blue border-ios-blue text-white"
-													: "bg-transparent border-gray-300"
+											key={channel.id}
+											onClick={() => {
+												if (disabled) return;
+												toggleChannel(channel.id);
+											}}
+											title={disabled ? mixErrorMessage : undefined}
+											aria-disabled={disabled}
+											className={`p-4 rounded-xl border flex items-center gap-4 transition-all ${
+												disabled
+													? "bg-gray-100 border-gray-200 opacity-50 cursor-not-allowed"
+													: selectedChannels.includes(channel.id)
+														? "bg-ios-blue/10 border-ios-blue cursor-pointer"
+														: "bg-ios-card border-ios-separator hover:border-ios-blue/30 cursor-pointer"
 											}`}
 										>
-											{selectedChannels.includes(channel.id) && <Check size={14} />}
-										</div>
-										{channel.platform === "youtube" ? (
-											<div className="w-10 h-10 rounded-full bg-ios-red/10 flex items-center justify-center">
-												<Youtube size={20} className="text-ios-red" />
+											<div
+												className={`w-6 h-6 rounded-full border flex items-center justify-center ${
+													selectedChannels.includes(channel.id)
+														? "bg-ios-blue border-ios-blue text-white"
+														: "bg-transparent border-gray-300"
+												}`}
+											>
+												{selectedChannels.includes(channel.id) && <Check size={14} />}
 											</div>
-										) : channel.platform === "tiktok" ? (
-											<div className="w-10 h-10 rounded-full bg-black flex items-center justify-center">
-												<Music size={20} className="text-white" />
-											</div>
-										) : (
-											<div className="w-10 h-10 rounded-full bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 p-[2px]">
-												<div className="w-full h-full rounded-full bg-white flex items-center justify-center">
-													<Instagram size={20} className="text-black" />
+											{channel.platform === "youtube" ? (
+												<div className="w-10 h-10 rounded-full bg-ios-red/10 flex items-center justify-center">
+													<Youtube size={20} className="text-ios-red" />
 												</div>
+											) : channel.platform === "tiktok" ? (
+												<div className="w-10 h-10 rounded-full bg-black flex items-center justify-center">
+													<Music size={20} className="text-white" />
+												</div>
+											) : (
+												<div className="w-10 h-10 rounded-full bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 p-[2px]">
+													<div className="w-full h-full rounded-full bg-white flex items-center justify-center">
+														<Instagram size={20} className="text-black" />
+													</div>
+												</div>
+											)}
+											<div>
+												<h4 className="font-semibold text-ios-text flex items-center gap-2">
+													{channel.name}
+													{channel.platform === "tiktok" && (
+														<span className="text-[9px] font-bold uppercase tracking-wide bg-black text-white px-1.5 py-0.5 rounded-full">
+															TikTok
+														</span>
+													)}
+													{channel.platform === "youtube" && (
+														<span className="text-[9px] font-bold uppercase tracking-wide bg-ios-red/10 text-ios-red px-1.5 py-0.5 rounded-full">
+															YouTube
+														</span>
+													)}
+												</h4>
+												<p className="text-xs text-ios-secondary font-mono">
+													{channel.account_id}
+												</p>
 											</div>
-										)}
-										<div>
-											<h4 className="font-semibold text-ios-text flex items-center gap-2">
-												{channel.name}
-												{channel.platform === "tiktok" && (
-													<span className="text-[9px] font-bold uppercase tracking-wide bg-black text-white px-1.5 py-0.5 rounded-full">TikTok</span>
-												)}
-												{channel.platform === "youtube" && (
-													<span className="text-[9px] font-bold uppercase tracking-wide bg-ios-red/10 text-ios-red px-1.5 py-0.5 rounded-full">YouTube</span>
-												)}
-											</h4>
-											<p className="text-xs text-ios-secondary font-mono">
-												{channel.account_id}
-											</p>
+											{disabled && (
+												<div className="ml-auto text-[10px] text-amber-600 font-medium hidden sm:block">
+													{mixErrorMessage}
+												</div>
+											)}
 										</div>
-									{disabled && (
-											<div className="ml-auto text-[10px] text-amber-600 font-medium hidden sm:block">
-												{mixErrorMessage}
-											</div>
-										)}
-									</div>
-								);
+									);
 								})}
 								{channels.length === 0 && (
 									<div className="text-center py-10 text-ios-secondary">
@@ -1973,28 +2176,29 @@ export default function PlannerWizard({
 									<h3 className="text-[13px] font-bold text-ios-secondary uppercase tracking-wide">
 										Post Configuration
 									</h3>
-									{files.length + selectedContentIds.length > 1 && !onlyTiktokSelected && (
-										<div
-											onClick={() => {
-												const next = !isCarousel;
-												setIsCarousel(next);
-												setMediaType(next ? "CAROUSEL" : "REELS");
-												setSettingsTouched(true);
-											}}
-											className="flex items-center gap-2 cursor-pointer"
-										>
+									{files.length + selectedContentIds.length > 1 &&
+										!onlyTiktokSelected && (
 											<div
-												className={`w-8 h-5 rounded-full relative transition-colors ${isCarousel ? "bg-ios-blue" : "bg-gray-300"}`}
+												onClick={() => {
+													const next = !isCarousel;
+													setIsCarousel(next);
+													setMediaType(next ? "CAROUSEL" : "REELS");
+													setSettingsTouched(true);
+												}}
+												className="flex items-center gap-2 cursor-pointer"
 											>
 												<div
-													className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform ${isCarousel ? "translate-x-[14px]" : "translate-x-1"}`}
-												/>
+													className={`w-8 h-5 rounded-full relative transition-colors ${isCarousel ? "bg-ios-blue" : "bg-gray-300"}`}
+												>
+													<div
+														className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-transform ${isCarousel ? "translate-x-[14px]" : "translate-x-1"}`}
+													/>
+												</div>
+												<span className="text-xs text-ios-text font-medium">
+													Group as Carousel
+												</span>
 											</div>
-											<span className="text-xs text-ios-text font-medium">
-												Group as Carousel
-											</span>
-										</div>
-									)}
+										)}
 								</div>
 
 								<div className="grid grid-cols-2 gap-4">
@@ -2014,49 +2218,52 @@ export default function PlannerWizard({
 										>
 											{onlyTiktokSelected ? (
 												<>
-												<option value="REELS">Vídeo TikTok</option>
-												<option value="IMAGE">Foto TikTok</option>
-												<option value="CAROUSEL">Carrossel de fotos TikTok</option>
+													<option value="REELS">Vídeo TikTok</option>
+													<option value="IMAGE">Foto TikTok</option>
+													<option value="CAROUSEL">Carrossel de fotos TikTok</option>
 												</>
 											) : (
 												<>
-												<option value="REELS">
-													{onlyYoutubeSelected ? "Short do YouTube" : "Reels"}
-												</option>
-												<option value="IMAGE">
-													{onlyYoutubeSelected ? "Post na Comunidade" : "Post / Image"}
-												</option>
-												<option value="CAROUSEL">
-													{onlyYoutubeSelected
-														? "Carrossel · Post na Comunidade"
-														: "Carousel"}
-												</option>
-												{!youtubeSelected && <option value="STORIES">Story</option>}
+													<option value="REELS">
+														{onlyYoutubeSelected ? "Short do YouTube" : "Reels"}
+													</option>
+													<option value="IMAGE">
+														{onlyYoutubeSelected ? "Post na Comunidade" : "Post / Image"}
+													</option>
+													<option value="CAROUSEL">
+														{onlyYoutubeSelected
+															? "Carrossel · Post na Comunidade"
+															: "Carousel"}
+													</option>
+													{!youtubeSelected && <option value="STORIES">Story</option>}
 												</>
 											)}
 										</select>
 									</div>
-									{mediaType === "REELS" && !isCarousel && !onlyYoutubeSelected && !onlyTiktokSelected && (
-										<div className="flex flex-col justify-center">
-											<label className="text-xs font-medium text-ios-text mb-1.5 block">
-												Options
-											</label>
-											<div
-												onClick={() => {
-													setShareToFeed(!shareToFeed);
-													setSettingsTouched(true);
-												}}
-												className="flex items-center gap-2 cursor-pointer"
-											>
+									{mediaType === "REELS" &&
+										!isCarousel &&
+										!onlyYoutubeSelected &&
+										!onlyTiktokSelected && (
+											<div className="flex flex-col justify-center">
+												<label className="text-xs font-medium text-ios-text mb-1.5 block">
+													Options
+												</label>
 												<div
-													className={`w-4 h-4 border rounded flex items-center justify-center ${shareToFeed ? "bg-ios-blue border-ios-blue" : "border-gray-300"}`}
+													onClick={() => {
+														setShareToFeed(!shareToFeed);
+														setSettingsTouched(true);
+													}}
+													className="flex items-center gap-2 cursor-pointer"
 												>
-													{shareToFeed && <Check size={10} className="text-white" />}
+													<div
+														className={`w-4 h-4 border rounded flex items-center justify-center ${shareToFeed ? "bg-ios-blue border-ios-blue" : "border-gray-300"}`}
+													>
+														{shareToFeed && <Check size={10} className="text-white" />}
+													</div>
+													<span className="text-sm text-ios-text">Share to Feed</span>
 												</div>
-												<span className="text-sm text-ios-text">Share to Feed</span>
 											</div>
-										</div>
-									)}
+										)}
 								</div>
 
 								{onlyTiktokSelected && (
@@ -2069,9 +2276,9 @@ export default function PlannerWizard({
 											<div className="rounded-lg bg-ios-blue/10 border border-ios-blue/20 px-3 py-2 text-[11px] text-ios-blue flex gap-2 items-start">
 												<Info size={13} className="shrink-0 mt-0.5" />
 												<span>
-													<strong>Foto:</strong> usa a URL do item (PULL_FROM_URL) —
-													envie uma imagem ou selecione um item da biblioteca; a
-													publicação exige URL https em domínio verificado no app TikTok.
+													<strong>Foto:</strong> usa a URL do item (PULL_FROM_URL) — envie
+													uma imagem ou selecione um item da biblioteca; a publicação exige
+													URL https em domínio verificado no app TikTok.
 												</span>
 											</div>
 										)}
@@ -2080,7 +2287,9 @@ export default function PlannerWizard({
 												<label className="text-xs font-medium text-ios-text block">
 													Legenda TikTok <span className="text-ios-red">*</span>
 												</label>
-												<span className="text-[11px] text-gray-400">{tiktokCaption.length}/2200</span>
+												<span className="text-[11px] text-gray-400">
+													{tiktokCaption.length}/2200
+												</span>
 											</div>
 											<textarea
 												value={tiktokCaption}
@@ -2093,7 +2302,13 @@ export default function PlannerWizard({
 												maxLength={2200}
 											/>
 											<div className="flex flex-wrap gap-1 mt-2">
-												{["{post_title}", "{post_caption}", "{date}", "{channel_name}", "{hashtags}"].map((v) => (
+												{[
+													"{post_title}",
+													"{post_caption}",
+													"{date}",
+													"{channel_name}",
+													"{hashtags}",
+												].map((v) => (
 													<button
 														key={v}
 														type="button"
@@ -2105,8 +2320,8 @@ export default function PlannerWizard({
 												))}
 											</div>
 											<p className="text-[10px] text-gray-400 mt-1">
-												Variáveis são resolvidas na publicação; {"{hashtags}"} usa as tags do
-												conteúdo selecionado.
+												Variáveis são resolvidas na publicação; {"{hashtags}"} usa as tags
+												do conteúdo selecionado.
 											</p>
 										</div>
 										<div>
@@ -2129,239 +2344,281 @@ export default function PlannerWizard({
 											</select>
 											<p className="text-[10px] text-gray-400 mt-1">
 												Opções vindas do creator_info do canal (fallback: Público (todos),
-												Amigos mútuos, Só eu). O valor salvo é o código cru exigido pela API.
+												Amigos mútuos, Só eu). O valor salvo é o código cru exigido pela
+												API.
 											</p>
 										</div>
 										<div className="space-y-3">
 											{[
-												{ key: "duet", label: "Desativar Duet", state: tiktokDisableDuet, set: setTiktokDisableDuet },
-												{ key: "stitch", label: "Desativar Stitch", state: tiktokDisableStitch, set: setTiktokDisableStitch },
-												{ key: "comment", label: "Desativar Comentários", state: tiktokDisableComment, set: setTiktokDisableComment },
+												{
+													key: "duet",
+													label: "Desativar Duet",
+													state: tiktokDisableDuet,
+													set: setTiktokDisableDuet,
+												},
+												{
+													key: "stitch",
+													label: "Desativar Stitch",
+													state: tiktokDisableStitch,
+													set: setTiktokDisableStitch,
+												},
+												{
+													key: "comment",
+													label: "Desativar Comentários",
+													state: tiktokDisableComment,
+													set: setTiktokDisableComment,
+												},
 											].map((t) => (
 												<div
 													key={t.key}
-													onClick={() => { t.set(!t.state); setSettingsTouched(true); }}
+													onClick={() => {
+														t.set(!t.state);
+														setSettingsTouched(true);
+													}}
 													className="flex items-center justify-between cursor-pointer"
 												>
 													<span className="text-sm text-ios-text">{t.label}</span>
-													<div className={`w-10 h-6 rounded-full relative transition-colors ${t.state ? "bg-ios-blue" : "bg-gray-300"}`}>
-														<div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${t.state ? "translate-x-5" : "translate-x-1"}`} />
+													<div
+														className={`w-10 h-6 rounded-full relative transition-colors ${t.state ? "bg-ios-blue" : "bg-gray-300"}`}
+													>
+														<div
+															className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${t.state ? "translate-x-5" : "translate-x-1"}`}
+														/>
 													</div>
 												</div>
 											))}
 										</div>
 										{mediaType !== "IMAGE" && !isCarousel && (
-										<div>
-											<label className="text-xs font-medium text-ios-text mb-1.5 block">
-												Cover Timestamp (ms)
-											</label>
-											<input
-												type="number"
-												min={0}
-												value={tiktokCoverTimestampMs}
-												onChange={(e) => {
-													setTiktokCoverTimestampMs(e.target.value);
-													setSettingsTouched(true);
-												}}
-												className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none"
-												placeholder="Ex.: 1000"
-											/>
-											<p className="text-[10px] text-gray-400 mt-1">
-												1000 = 1s. 0 (vazio) = capa automática do TikTok.
-											</p>
-										</div>
+											<div>
+												<label className="text-xs font-medium text-ios-text mb-1.5 block">
+													Cover Timestamp (ms)
+												</label>
+												<input
+													type="number"
+													min={0}
+													value={tiktokCoverTimestampMs}
+													onChange={(e) => {
+														setTiktokCoverTimestampMs(e.target.value);
+														setSettingsTouched(true);
+													}}
+													className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none"
+													placeholder="Ex.: 1000"
+												/>
+												<p className="text-[10px] text-gray-400 mt-1">
+													1000 = 1s. 0 (vazio) = capa automática do TikTok.
+												</p>
+											</div>
 										)}
 										{isCarousel && (
-										<div>
-											<label className="text-xs font-medium text-ios-text mb-1.5 block">
-												Foto de capa
-											</label>
-											<select
-												value={tiktokPhotoCoverIndex}
-												onChange={(e) => {
-													setTiktokPhotoCoverIndex(e.target.value);
-													setSettingsTouched(true);
-												}}
-												className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
-											>
-												{Array.from({ length: 10 }, (_, i) => (
-													<option key={i} value={String(i)}>
-														{i + 1}ª foto
-													</option>
-												))}
-											</select>
-											<p className="text-[10px] text-gray-400 mt-1">
-												Define qual imagem aparece como capa no perfil (índice 0-based; padrão: 1ª foto). O carrossel aceita 2 a 10 imagens.
-											</p>
-										</div>
+											<div>
+												<label className="text-xs font-medium text-ios-text mb-1.5 block">
+													Foto de capa
+												</label>
+												<select
+													value={tiktokPhotoCoverIndex}
+													onChange={(e) => {
+														setTiktokPhotoCoverIndex(e.target.value);
+														setSettingsTouched(true);
+													}}
+													className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
+												>
+													{Array.from({ length: 10 }, (_, i) => (
+														<option key={i} value={String(i)}>
+															{i + 1}ª foto
+														</option>
+													))}
+												</select>
+												<p className="text-[10px] text-gray-400 mt-1">
+													Define qual imagem aparece como capa no perfil (índice 0-based;
+													padrão: 1ª foto). O carrossel aceita 2 a 10 imagens.
+												</p>
+											</div>
 										)}
 										<div className="space-y-2">
 											<div
-													onClick={() => { setTiktokBrandContentToggle(!tiktokBrandContentToggle); setSettingsTouched(true); }}
+												onClick={() => {
+													setTiktokBrandContentToggle(!tiktokBrandContentToggle);
+													setSettingsTouched(true);
+												}}
 												className="flex items-center justify-between cursor-pointer"
 											>
-												<span className="text-sm text-ios-text">Conteúdo de marca (Brand Content)</span>
-												<div className={`w-10 h-6 rounded-full relative transition-colors ${tiktokBrandContentToggle ? "bg-ios-blue" : "bg-gray-300"}`}>
-													<div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${tiktokBrandContentToggle ? "translate-x-5" : "translate-x-1"}`} />
+												<span className="text-sm text-ios-text">
+													Conteúdo de marca (Brand Content)
+												</span>
+												<div
+													className={`w-10 h-6 rounded-full relative transition-colors ${tiktokBrandContentToggle ? "bg-ios-blue" : "bg-gray-300"}`}
+												>
+													<div
+														className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${tiktokBrandContentToggle ? "translate-x-5" : "translate-x-1"}`}
+													/>
 												</div>
 											</div>
 											<div
-												onClick={() => { setTiktokBrandOrganicToggle(!tiktokBrandOrganicToggle); setSettingsTouched(true); }}
+												onClick={() => {
+													setTiktokBrandOrganicToggle(!tiktokBrandOrganicToggle);
+													setSettingsTouched(true);
+												}}
 												className="flex items-center justify-between cursor-pointer"
 											>
 												<span className="text-sm text-ios-text">Brand Organic</span>
-												<div className={`w-10 h-6 rounded-full relative transition-colors ${tiktokBrandOrganicToggle ? "bg-ios-blue" : "bg-gray-300"}`}>
-													<div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${tiktokBrandOrganicToggle ? "translate-x-5" : "translate-x-1"}`} />
+												<div
+													className={`w-10 h-6 rounded-full relative transition-colors ${tiktokBrandOrganicToggle ? "bg-ios-blue" : "bg-gray-300"}`}
+												>
+													<div
+														className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${tiktokBrandOrganicToggle ? "translate-x-5" : "translate-x-1"}`}
+													/>
 												</div>
 											</div>
 											<p className="text-[10px] text-gray-400">
-												⚠️ Requer elegibilidade do criador no TikTok — se a publicação falhar, o
-												erro será exibido em PT-BR.
+												⚠️ Requer elegibilidade do criador no TikTok — se a publicação
+												falhar, o erro será exibido em PT-BR.
 											</p>
 										</div>
 									</div>
 								)}
 
 								{!onlyYoutubeSelected && !onlyTiktokSelected && (
-								<div>
-									<div className="flex justify-between items-center mb-1.5">
-										<label className="text-xs font-medium text-ios-text block">
-											Caption
-										</label>
-										<div className="flex gap-2">
-											<button
-												onClick={() => setCaption((prev) => prev + " {post_title}")}
-												className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
-											>
-												+ Title
-											</button>
-											<button
-												onClick={() => setCaption((prev) => prev + " {post_caption}")}
-												className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
-											>
-												+ Caption
-											</button>
-										</div>
-									</div>
-									<textarea
-										value={caption}
-										onChange={(e) => {
-											setCaption(e.target.value);
-											setSettingsTouched(true);
-										}}
-										className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
-										placeholder="Write a caption... Use tags for dynamic content."
-									/>
-								</div>
-								)}
-
-								{!onlyYoutubeSelected && !onlyTiktokSelected && (
-								<div className="space-y-3 pt-4 border-t border-ios-separator">
-									<div className="flex items-center justify-between">
-										<label className="text-xs font-medium text-ios-text block">
-											Caption Templates
-										</label>
-										<select
-											value={captionRotation}
-											onChange={(e) =>
-												setCaptionRotation(
-													e.target.value as "off" | "sequential" | "random",
-												)
-											}
-											className="bg-ios-background border border-ios-separator rounded-lg px-2 py-1 text-xs focus:border-ios-blue outline-none"
-										>
-											<option value="off">Rotation: Off</option>
-											<option value="sequential">Rotation: Sequential</option>
-											<option value="random">Rotation: Random</option>
-										</select>
-									</div>
-									<textarea
-										value={captionTemplates}
-										onChange={(e) => {
-											setCaptionTemplates(e.target.value);
-											// Templates with rotation "off" are silently ignored by
-											// the runtime (bug report: "templates don't work"). When
-											// the user types a template, default the rotation to
-											// sequential so it actually applies — they can still pick
-											// random or off from the selector.
-											if (e.target.value.trim() && captionRotation === "off") {
-												setCaptionRotation("sequential");
-											}
-										}}
-										className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-20 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
-										placeholder={"One template per line\nTemplate 1\nTemplate 2"}
-									/>
 									<div>
-										<p className="text-[11px] text-gray-400 mb-1">Available variables:</p>
-										<div className="flex flex-wrap gap-1">
-											{[
-												"{post_title}",
-												"{post_caption}",
-												"{date}",
-												"{channel_name}",
-												"{hashtags}",
-											].map((v) => (
+										<div className="flex justify-between items-center mb-1.5">
+											<label className="text-xs font-medium text-ios-text block">
+												Caption
+											</label>
+											<div className="flex gap-2">
 												<button
-													key={v}
-													onClick={() =>
-														setCaptionTemplates(
-															(prev) => prev + (prev && !prev.endsWith("\n") ? "\n" : "") + v,
-														)
-													}
+													onClick={() => setCaption((prev) => prev + " {post_title}")}
 													className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
 												>
-													+ {v}
+													+ Title
 												</button>
-											))}
+												<button
+													onClick={() => setCaption((prev) => prev + " {post_caption}")}
+													className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
+												>
+													+ Caption
+												</button>
+											</div>
 										</div>
+										<textarea
+											value={caption}
+											onChange={(e) => {
+												setCaption(e.target.value);
+												setSettingsTouched(true);
+											}}
+											className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
+											placeholder="Write a caption... Use tags for dynamic content."
+										/>
 									</div>
-									<p className="text-[11px] text-gray-400">
-										When rotation is active, templates replace the caption above.{" "}
-										{"{date}"} uses the post date; {"{hashtags}"} is empty unless the
-										selected content has tags.
-									</p>
-								</div>
 								)}
 
 								{!onlyYoutubeSelected && !onlyTiktokSelected && (
-								<div className="space-y-4 pt-4 border-t border-ios-separator">
-									<div>
-										<label className="text-xs font-medium text-ios-text mb-1.5 block">
-											Fallback Title
-										</label>
-										<p className="text-[11px] text-gray-400 mb-2">
-											Used if the selected content has an empty title and {"{post_title}"}{" "}
-											is used.
-										</p>
-										<input
-											value={titleFallback}
-											onChange={(e) => {
-												setTitleFallback(e.target.value);
-												setSettingsTouched(true);
-											}}
-											className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
-											placeholder="Example: AutoReels Magic"
-										/>
-									</div>
-									<div>
-										<label className="text-xs font-medium text-ios-text mb-1.5 block">
-											Fallback Caption
-										</label>
-										<p className="text-[11px] text-gray-400 mb-2">
-											Used if the selected content has an empty caption and{" "}
-											{"{post_caption}"} is used.
-										</p>
+									<div className="space-y-3 pt-4 border-t border-ios-separator">
+										<div className="flex items-center justify-between">
+											<label className="text-xs font-medium text-ios-text block">
+												Caption Templates
+											</label>
+											<select
+												value={captionRotation}
+												onChange={(e) =>
+													setCaptionRotation(
+														e.target.value as "off" | "sequential" | "random",
+													)
+												}
+												className="bg-ios-background border border-ios-separator rounded-lg px-2 py-1 text-xs focus:border-ios-blue outline-none"
+											>
+												<option value="off">Rotation: Off</option>
+												<option value="sequential">Rotation: Sequential</option>
+												<option value="random">Rotation: Random</option>
+											</select>
+										</div>
 										<textarea
-											value={captionFallback}
+											value={captionTemplates}
 											onChange={(e) => {
-												setCaptionFallback(e.target.value);
-												setSettingsTouched(true);
+												setCaptionTemplates(e.target.value);
+												// Templates with rotation "off" are silently ignored by
+												// the runtime (bug report: "templates don't work"). When
+												// the user types a template, default the rotation to
+												// sequential so it actually applies — they can still pick
+												// random or off from the selector.
+												if (e.target.value.trim() && captionRotation === "off") {
+													setCaptionRotation("sequential");
+												}
 											}}
-											className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-16 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400"
-											placeholder="Example: Check out this amazing content!"
+											className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-20 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
+											placeholder={"One template per line\nTemplate 1\nTemplate 2"}
 										/>
+										<div>
+											<p className="text-[11px] text-gray-400 mb-1">
+												Available variables:
+											</p>
+											<div className="flex flex-wrap gap-1">
+												{[
+													"{post_title}",
+													"{post_caption}",
+													"{date}",
+													"{channel_name}",
+													"{hashtags}",
+												].map((v) => (
+													<button
+														key={v}
+														onClick={() =>
+															setCaptionTemplates(
+																(prev) => prev + (prev && !prev.endsWith("\n") ? "\n" : "") + v,
+															)
+														}
+														className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
+													>
+														+ {v}
+													</button>
+												))}
+											</div>
+										</div>
+										<p className="text-[11px] text-gray-400">
+											When rotation is active, templates replace the caption above.{" "}
+											{"{date}"} uses the post date; {"{hashtags}"} is empty unless the
+											selected content has tags.
+										</p>
 									</div>
-								</div>
+								)}
+
+								{!onlyYoutubeSelected && !onlyTiktokSelected && (
+									<div className="space-y-4 pt-4 border-t border-ios-separator">
+										<div>
+											<label className="text-xs font-medium text-ios-text mb-1.5 block">
+												Fallback Title
+											</label>
+											<p className="text-[11px] text-gray-400 mb-2">
+												Used if the selected content has an empty title and {"{post_title}"}{" "}
+												is used.
+											</p>
+											<input
+												value={titleFallback}
+												onChange={(e) => {
+													setTitleFallback(e.target.value);
+													setSettingsTouched(true);
+												}}
+												className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
+												placeholder="Example: AutoReels Magic"
+											/>
+										</div>
+										<div>
+											<label className="text-xs font-medium text-ios-text mb-1.5 block">
+												Fallback Caption
+											</label>
+											<p className="text-[11px] text-gray-400 mb-2">
+												Used if the selected content has an empty caption and{" "}
+												{"{post_caption}"} is used.
+											</p>
+											<textarea
+												value={captionFallback}
+												onChange={(e) => {
+													setCaptionFallback(e.target.value);
+													setSettingsTouched(true);
+												}}
+												className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-16 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400"
+												placeholder="Example: Check out this amazing content!"
+											/>
+										</div>
+									</div>
 								)}
 
 								<div className="space-y-4">
@@ -2382,28 +2639,31 @@ export default function PlannerWizard({
 										</div>
 									)}
 
-									{mediaType !== "STORIES" && !onlyYoutubeSelected && !onlyTiktokSelected && (
-										<div>
-											<label className="text-xs font-medium text-ios-text mb-1.5 block">
-												Collaborators (Optional)
-											</label>
-											<input
-												value={collaborators}
-												onChange={(e) => {
-													setCollaborators(e.target.value);
-													setSettingsTouched(true);
-												}}
-												className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
-												placeholder="e.g. user1, user2"
-											/>
-											<p className="text-[10px] text-gray-400 mt-1">
-												Comma-separated Instagram usernames to invite as collaborators.
-											</p>
-										</div>
-									)}
+									{mediaType !== "STORIES" &&
+										!onlyYoutubeSelected &&
+										!onlyTiktokSelected && (
+											<div>
+												<label className="text-xs font-medium text-ios-text mb-1.5 block">
+													Collaborators (Optional)
+												</label>
+												<input
+													value={collaborators}
+													onChange={(e) => {
+														setCollaborators(e.target.value);
+														setSettingsTouched(true);
+													}}
+													className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
+													placeholder="e.g. user1, user2"
+												/>
+												<p className="text-[10px] text-gray-400 mt-1">
+													Comma-separated Instagram usernames to invite as collaborators.
+												</p>
+											</div>
+										)}
 
 									{(mediaType === "IMAGE" || mediaType === "CAROUSEL") &&
-										!onlyYoutubeSelected && !onlyTiktokSelected && (
+										!onlyYoutubeSelected &&
+										!onlyTiktokSelected && (
 											<div>
 												<label className="text-xs font-medium text-ios-text mb-1.5 block">
 													User Tags (Optional)
@@ -2423,58 +2683,67 @@ export default function PlannerWizard({
 											</div>
 										)}
 
-									{onlyYoutubeSelected &&
-										(isCarousel || mediaType === "IMAGE") && (
-											<div className="space-y-4 p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-200 dark:border-red-900/30">
-												<h4 className="text-xs font-bold text-ios-text uppercase tracking-wide flex items-center gap-2">
-													<Youtube size={14} className="text-ios-red" />
-													Configurações YouTube
-												</h4>
-												<div>
-													<div className="flex justify-between items-center mb-1.5">
-														<label className="text-xs font-medium text-ios-text block">
-															Texto da Publicação <span className="text-ios-red">*</span>
-														</label>
-														<span className="text-[11px] text-gray-400">
-															{caption.length}/5000
-														</span>
-													</div>
-													<textarea
-														value={caption}
-														onChange={(e) => {
-															setCaption(e.target.value.slice(0, 5000));
-															setSettingsTouched(true);
-														}}
-														className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm h-28 resize-none focus:border-ios-blue outline-none"
-														placeholder="Escreva o texto do post na Comunidade..."
-														maxLength={5000}
-													/>
-													<p className="text-[10px] text-gray-400 mt-1">
-														Este texto é a mensagem publicada na Comunidade do
-														YouTube (a Comunidade não recebe produtos afiliados).
-													</p>
-												</div>
-											</div>
-										)}
-										{onlyYoutubeSelected &&
-											!isCarousel &&
-											mediaType === "REELS" && (
-												<div className="space-y-4 p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-200 dark:border-red-900/30">
+									{onlyYoutubeSelected && (isCarousel || mediaType === "IMAGE") && (
+										<div className="space-y-4 p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-200 dark:border-red-900/30">
 											<h4 className="text-xs font-bold text-ios-text uppercase tracking-wide flex items-center gap-2">
 												<Youtube size={14} className="text-ios-red" />
 												Configurações YouTube
 											</h4>
 											<div>
 												<div className="flex justify-between items-center mb-1.5">
-													<label className="text-xs font-medium text-ios-text block">Título <span className="text-ios-red">*</span></label>
-													<span className="text-[11px] text-gray-400">{youtubeTitle.length}/100</span>
+													<label className="text-xs font-medium text-ios-text block">
+														Texto da Publicação <span className="text-ios-red">*</span>
+													</label>
+													<span className="text-[11px] text-gray-400">
+														{caption.length}/5000
+													</span>
+												</div>
+												<textarea
+													value={caption}
+													onChange={(e) => {
+														setCaption(e.target.value.slice(0, 5000));
+														setSettingsTouched(true);
+													}}
+													className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm h-28 resize-none focus:border-ios-blue outline-none"
+													placeholder="Escreva o texto do post na Comunidade..."
+													maxLength={5000}
+												/>
+												<p className="text-[10px] text-gray-400 mt-1">
+													Este texto é a mensagem publicada na Comunidade do YouTube (a
+													Comunidade não recebe produtos afiliados).
+												</p>
+											</div>
+										</div>
+									)}
+									{onlyYoutubeSelected && !isCarousel && mediaType === "REELS" && (
+										<div className="space-y-4 p-4 bg-red-50 dark:bg-red-900/10 rounded-xl border border-red-200 dark:border-red-900/30">
+											<h4 className="text-xs font-bold text-ios-text uppercase tracking-wide flex items-center gap-2">
+												<Youtube size={14} className="text-ios-red" />
+												Configurações YouTube
+											</h4>
+											<div>
+												<div className="flex justify-between items-center mb-1.5">
+													<label className="text-xs font-medium text-ios-text block">
+														Título <span className="text-ios-red">*</span>
+													</label>
+													<span className="text-[11px] text-gray-400">
+														{youtubeTitle.length}/100
+													</span>
 												</div>
 												<div className="flex flex-wrap gap-1 mb-1.5">
 													{YOUTUBE_TEMPLATE_TAGS.map((tag) => (
 														<button
 															key={tag}
 															type="button"
-															onClick={() => insertYoutubeTemplateTag(youtubeTitleRef.current, youtubeTitle, setYoutubeTitle, tag, 100)}
+															onClick={() =>
+																insertYoutubeTemplateTag(
+																	youtubeTitleRef.current,
+																	youtubeTitle,
+																	setYoutubeTitle,
+																	tag,
+																	100,
+																)
+															}
 															className="px-1.5 py-0.5 rounded bg-ios-blue/10 text-ios-blue text-[10px] font-mono hover:bg-ios-blue/20 transition-colors"
 														>
 															{tag}
@@ -2484,7 +2753,7 @@ export default function PlannerWizard({
 												<input
 													ref={youtubeTitleRef}
 													value={youtubeTitle}
-													onChange={(e) => setYoutubeTitle(e.target.value.slice(0,100))}
+													onChange={(e) => setYoutubeTitle(e.target.value.slice(0, 100))}
 													className="w-full bg-white dark:bg-ios-card text-ios-text placeholder:text-gray-400 border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none"
 													placeholder="Título do Short (máx 100 caracteres)"
 													maxLength={100}
@@ -2492,15 +2761,27 @@ export default function PlannerWizard({
 											</div>
 											<div>
 												<div className="flex justify-between items-center mb-1.5">
-													<label className="text-xs font-medium text-ios-text block">Descrição</label>
-													<span className="text-[11px] text-gray-400">{youtubeDescription.length}/5000</span>
+													<label className="text-xs font-medium text-ios-text block">
+														Descrição
+													</label>
+													<span className="text-[11px] text-gray-400">
+														{youtubeDescription.length}/5000
+													</span>
 												</div>
 												<div className="flex flex-wrap gap-1 mb-1.5">
 													{YOUTUBE_TEMPLATE_TAGS.map((tag) => (
 														<button
 															key={tag}
 															type="button"
-															onClick={() => insertYoutubeTemplateTag(youtubeDescRef.current, youtubeDescription, setYoutubeDescription, tag, 5000)}
+															onClick={() =>
+																insertYoutubeTemplateTag(
+																	youtubeDescRef.current,
+																	youtubeDescription,
+																	setYoutubeDescription,
+																	tag,
+																	5000,
+																)
+															}
 															className="px-1.5 py-0.5 rounded bg-ios-blue/10 text-ios-blue text-[10px] font-mono hover:bg-ios-blue/20 transition-colors"
 														>
 															{tag}
@@ -2510,7 +2791,9 @@ export default function PlannerWizard({
 												<textarea
 													ref={youtubeDescRef}
 													value={youtubeDescription}
-													onChange={(e) => setYoutubeDescription(e.target.value.slice(0,5000))}
+													onChange={(e) =>
+														setYoutubeDescription(e.target.value.slice(0, 5000))
+													}
 													className="w-full bg-white dark:bg-ios-card text-ios-text placeholder:text-gray-400 border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none"
 													placeholder="Descrição do vídeo (máx 5000 caracteres). Suporta templates {post_title}, {post_caption}..."
 													maxLength={5000}
@@ -2545,13 +2828,15 @@ export default function PlannerWizard({
 												</p>
 											)}
 											<div>
-												<label className="text-xs font-medium text-ios-text mb-1.5 block">Produtos Afiliados</label>
+												<label className="text-xs font-medium text-ios-text mb-1.5 block">
+													Produtos Afiliados
+												</label>
 												{finalSelectedItemProducts.length > 0 && (
 													<div className="mb-1.5 p-2 rounded-lg bg-ios-blue/5 border border-ios-blue/20">
 														<p className="text-[11px] text-ios-blue">
-															✨ Este vídeo tem {finalSelectedItemProducts.length} produto(s) marcado(s)
-															na biblioteca — serão usados na publicação (prioridade do vídeo sobre
-															este fixo).
+															✨ Este vídeo tem {finalSelectedItemProducts.length} produto(s)
+															marcado(s) na biblioteca — serão usados na publicação (prioridade
+															do vídeo sobre este fixo).
 														</p>
 													</div>
 												)}
@@ -2566,15 +2851,15 @@ export default function PlannerWizard({
 												</div>
 												{youtubeProductDrafts.length === 0 && (
 													<p className="text-[10px] text-gray-400 mb-1">
-														Nenhum produto fixo. Adicione para buscar no catálogo do canal ou deixar
-														só o nome (auto-seleção na publicação).
+														Nenhum produto fixo. Adicione para buscar no catálogo do canal ou
+														deixar só o nome (auto-seleção na publicação).
 													</p>
 												)}
 												<div className="space-y-2">
 													{youtubeProductDrafts.map((draft) => (
 														<div
 															key={draft.key}
-														className="border border-ios-separator rounded-lg p-2 bg-white dark:bg-ios-card"
+															className="border border-ios-separator rounded-lg p-2 bg-white dark:bg-ios-card"
 														>
 															<div className="flex items-center gap-2">
 																<input
@@ -2606,7 +2891,9 @@ export default function PlannerWizard({
 																	<span className="text-gray-400 whitespace-nowrap">
 																		{draft.vendor || "?"}
 																		{draft.price ? ` — ${draft.price}` : ""}
-																		{draft.commissionPct != null ? ` · ${draft.commissionPct}%` : ""}
+																		{draft.commissionPct != null
+																			? ` · ${draft.commissionPct}%`
+																			: ""}
 																	</span>
 																	<button
 																		type="button"
@@ -2620,7 +2907,9 @@ export default function PlannerWizard({
 															{draft.status === "name" &&
 																draft.results.length === 0 &&
 																draft.error && (
-																	<p className="text-[11px] text-amber-600 mt-1">{draft.error}</p>
+																	<p className="text-[11px] text-amber-600 mt-1">
+																		{draft.error}
+																	</p>
 																)}
 															{draft.status === "error" && draft.error && (
 																<p className="text-[11px] text-ios-red mt-1">{draft.error}</p>
@@ -2629,8 +2918,7 @@ export default function PlannerWizard({
 																draft.results.length > 0 && (
 																	<div className="mt-1.5 border border-ios-separator rounded-lg bg-white dark:bg-ios-card max-h-40 overflow-y-auto">
 																		{draft.results.map((pr, idx) => {
-																			const title =
-																				String(pr.title || "Produto sem título");
+																			const title = String(pr.title || "Produto sem título");
 																			const vendor = pr.vendor ? String(pr.vendor) : "";
 																			const price = pr.price ? String(pr.price) : "";
 																			const pct =
@@ -2641,9 +2929,7 @@ export default function PlannerWizard({
 																				<button
 																					key={idx}
 																					type="button"
-																					onClick={() =>
-																						selectYoutubeProduct(draft.key, pr)
-																					}
+																					onClick={() => selectYoutubeProduct(draft.key, pr)}
 																					className="w-full text-left px-2.5 py-1.5 hover:bg-ios-blue/10 border-b border-ios-separator last:border-0 flex items-start justify-between gap-2"
 																				>
 																					<span className="text-[11px] leading-tight">
@@ -2661,31 +2947,36 @@ export default function PlannerWizard({
 																		})}
 																	</div>
 																)}
-																{draft.status === "name" && draft.results.length > 0 && (
-																	<p className="text-[10px] text-gray-400 mt-1">
-																		Selecione um item acima para fixar (verbatim) ou deixe só o nome —
-																		a publicação auto-seleciona o melhor produto.
-																	</p>
-																)}
-																{draft.status === "idle" && (
-																	<p className="text-[10px] text-gray-400 mt-1">
-																		Digite um termo para buscar no catálogo do canal.
-																	</p>
-																)}
-															</div>
-															))}
+															{draft.status === "name" && draft.results.length > 0 && (
+																<p className="text-[10px] text-gray-400 mt-1">
+																	Selecione um item acima para fixar (verbatim) ou deixe só o
+																	nome — a publicação auto-seleciona o melhor produto.
+																</p>
+															)}
+															{draft.status === "idle" && (
+																<p className="text-[10px] text-gray-400 mt-1">
+																	Digite um termo para buscar no catálogo do canal.
+																</p>
+															)}
+														</div>
+													))}
 												</div>
 												<p className="text-[10px] text-gray-400 mt-1">
 													Item fixado vai verbatim na tagagem (POST /api/shorts); só nome usa
-													auto-select (POST /api/shorts/auto) — sem vírgulas na conta, sem JSON cru.
+													auto-select (POST /api/shorts/auto) — sem vírgulas na conta, sem
+													JSON cru.
 												</p>
 											</div>
 											<div className="grid grid-cols-2 gap-3">
 												<div>
-													<label className="text-xs font-medium text-ios-text mb-1.5 block">Privacidade</label>
+													<label className="text-xs font-medium text-ios-text mb-1.5 block">
+														Privacidade
+													</label>
 													<select
 														value={youtubePrivacy}
-														onChange={(e) => setYoutubePrivacy(e.target.value as typeof youtubePrivacy)}
+														onChange={(e) =>
+															setYoutubePrivacy(e.target.value as typeof youtubePrivacy)
+														}
 														className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm"
 													>
 														<option value="PUBLIC">Público</option>
@@ -2694,10 +2985,14 @@ export default function PlannerWizard({
 													</select>
 												</div>
 												<div>
-													<label className="text-xs font-medium text-ios-text mb-1.5 block">Categoria ID</label>
+													<label className="text-xs font-medium text-ios-text mb-1.5 block">
+														Categoria ID
+													</label>
 													<input
 														value={youtubeCategoryId}
-														onChange={(e) => setYoutubeCategoryId(e.target.value.replace(/[^0-9]/g,""))}
+														onChange={(e) =>
+															setYoutubeCategoryId(e.target.value.replace(/[^0-9]/g, ""))
+														}
 														className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm"
 														placeholder="22 (People & Blogs)"
 													/>
@@ -2705,19 +3000,33 @@ export default function PlannerWizard({
 											</div>
 											<div className="flex flex-col gap-2">
 												<label className="flex items-center gap-2 cursor-pointer">
-													<input type="checkbox" checked={youtubeMadeForKids} onChange={(e)=>setYoutubeMadeForKids(e.target.checked)} className="rounded" />
+													<input
+														type="checkbox"
+														checked={youtubeMadeForKids}
+														onChange={(e) => setYoutubeMadeForKids(e.target.checked)}
+														className="rounded"
+													/>
 													<span className="text-xs font-medium">Feito para crianças</span>
 												</label>
 												<label className="flex items-center gap-2 cursor-pointer">
-													<input type="checkbox" checked={youtubeMonetizeWithAds} onChange={(e)=>setYoutubeMonetizeWithAds(e.target.checked)} className="rounded" />
+													<input
+														type="checkbox"
+														checked={youtubeMonetizeWithAds}
+														onChange={(e) => setYoutubeMonetizeWithAds(e.target.checked)}
+														className="rounded"
+													/>
 													<span className="text-xs font-medium">Monetizar com anúncios</span>
 												</label>
 											</div>
 											<div>
-												<label className="text-xs font-medium text-ios-text mb-1.5 block">Comentário fixado</label>
+												<label className="text-xs font-medium text-ios-text mb-1.5 block">
+													Comentário fixado
+												</label>
 												<textarea
 													value={youtubePinnedComment}
-													onChange={(e)=>setYoutubePinnedComment(e.target.value.slice(0,10000))}
+													onChange={(e) =>
+														setYoutubePinnedComment(e.target.value.slice(0, 10000))
+													}
 													className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm h-16 resize-none"
 													placeholder="Texto do comentário fixado (opcional)"
 													maxLength={10000}
@@ -2725,63 +3034,65 @@ export default function PlannerWizard({
 											</div>
 										</div>
 									)}
-									{mediaType === "REELS" && !onlyYoutubeSelected && !onlyTiktokSelected && (
-										<div className="space-y-3 p-3 bg-ios-gray-6 rounded-xl border border-ios-separator">
-											<span className="text-xs font-semibold text-ios-text block">
-												Meta Audio Settings (Optional)
-											</span>
-											<div>
-												<label className="text-[11px] font-medium text-ios-text mb-1 block">
-													Audio ID
-												</label>
-												<input
-													value={audioId}
-													onChange={(e) => {
-														setAudioId(e.target.value);
-														setSettingsTouched(true);
-													}}
-													className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-xs focus:border-ios-blue outline-none placeholder:text-gray-400"
-													placeholder="Meta Audio Track ID"
-												/>
-											</div>
-											{audioId && (
-												<div className="grid grid-cols-2 gap-3">
-													<div>
-														<label className="text-[10px] font-medium text-ios-text mb-1 block">
-															Music Volume ({audioVolume}%)
-														</label>
-														<input
-															type="range"
-															min="0"
-															max="100"
-															value={audioVolume}
-															onChange={(e) => {
-																setAudioVolume(parseInt(e.target.value));
-																setSettingsTouched(true);
-															}}
-															className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-ios-blue"
-														/>
-													</div>
-													<div>
-														<label className="text-[10px] font-medium text-ios-text mb-1 block">
-															Video Volume ({videoVolume}%)
-														</label>
-														<input
-															type="range"
-															min="0"
-															max="100"
-															value={videoVolume}
-															onChange={(e) => {
-																setVideoVolume(parseInt(e.target.value));
-																setSettingsTouched(true);
-															}}
-															className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-ios-blue"
-														/>
-													</div>
+									{mediaType === "REELS" &&
+										!onlyYoutubeSelected &&
+										!onlyTiktokSelected && (
+											<div className="space-y-3 p-3 bg-ios-gray-6 rounded-xl border border-ios-separator">
+												<span className="text-xs font-semibold text-ios-text block">
+													Meta Audio Settings (Optional)
+												</span>
+												<div>
+													<label className="text-[11px] font-medium text-ios-text mb-1 block">
+														Audio ID
+													</label>
+													<input
+														value={audioId}
+														onChange={(e) => {
+															setAudioId(e.target.value);
+															setSettingsTouched(true);
+														}}
+														className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-xs focus:border-ios-blue outline-none placeholder:text-gray-400"
+														placeholder="Meta Audio Track ID"
+													/>
 												</div>
-											)}
-										</div>
-									)}
+												{audioId && (
+													<div className="grid grid-cols-2 gap-3">
+														<div>
+															<label className="text-[10px] font-medium text-ios-text mb-1 block">
+																Music Volume ({audioVolume}%)
+															</label>
+															<input
+																type="range"
+																min="0"
+																max="100"
+																value={audioVolume}
+																onChange={(e) => {
+																	setAudioVolume(parseInt(e.target.value));
+																	setSettingsTouched(true);
+																}}
+																className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-ios-blue"
+															/>
+														</div>
+														<div>
+															<label className="text-[10px] font-medium text-ios-text mb-1 block">
+																Video Volume ({videoVolume}%)
+															</label>
+															<input
+																type="range"
+																min="0"
+																max="100"
+																value={videoVolume}
+																onChange={(e) => {
+																	setVideoVolume(parseInt(e.target.value));
+																	setSettingsTouched(true);
+																}}
+																className="w-full h-1 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-ios-blue"
+															/>
+														</div>
+													</div>
+												)}
+											</div>
+										)}
 								</div>
 							</div>
 						</div>
@@ -2983,8 +3294,16 @@ export default function PlannerWizard({
 									<div className="flex items-center justify-between gap-4">
 										<span className="text-ios-secondary">Media</span>
 										<span className="font-medium text-right">
-											{plannerMediaLabel(mediaType, isCarousel, youtubeMode, onlyTiktokSelected)}
-											{!onlyTiktokSelected && youtubeMode !== "only" && mediaType === "REELS" && !shareToFeed
+											{plannerMediaLabel(
+												mediaType,
+												isCarousel,
+												youtubeMode,
+												onlyTiktokSelected,
+											)}
+											{!onlyTiktokSelected &&
+											youtubeMode !== "only" &&
+											mediaType === "REELS" &&
+											!shareToFeed
 												? " · sem feed"
 												: ""}
 										</span>

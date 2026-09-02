@@ -164,10 +164,7 @@ export function resolveRotationStrategy(
 ): RotationStrategy {
 	if (itemRotation?.mode) {
 		return {
-			kind:
-				itemRotation.mode === "random"
-					? "dedupe-random"
-					: "dedupe-sequential",
+			kind: itemRotation.mode === "random" ? "dedupe-random" : "dedupe-sequential",
 			repeat: itemRotation.repeat,
 		};
 	}
@@ -202,7 +199,10 @@ export function selectContentIndex(
 	const nextState = cloneState(state);
 	let selectedIndex = -1;
 
-	if (strategy.kind === "dedupe-random" || strategy.kind === "dedupe-sequential") {
+	if (
+		strategy.kind === "dedupe-random" ||
+		strategy.kind === "dedupe-sequential"
+	) {
 		const published = Array.isArray(nextState.published_indexes)
 			? (nextState.published_indexes as unknown[])
 			: [];
@@ -211,9 +211,7 @@ export function selectContentIndex(
 				(n): n is number => typeof n === "number" && Number.isFinite(n),
 			),
 		);
-		const available = contentList
-			.map((_, i) => i)
-			.filter((i) => !used.has(i));
+		const available = contentList.map((_, i) => i).filter((i) => !used.has(i));
 
 		if (available.length === 0) {
 			// Fila esgotada: todos os itens da library já foram usados.
@@ -237,8 +235,7 @@ export function selectContentIndex(
 				if (contentList.length > 1 && lastIndex !== -1) {
 					candidates = candidates.filter((i) => i !== lastIndex);
 				}
-				selectedIndex =
-					candidates[Math.floor(Math.random() * candidates.length)];
+				selectedIndex = candidates[Math.floor(Math.random() * candidates.length)];
 			}
 			nextState.published_indexes = [selectedIndex];
 		} else if (strategy.kind === "dedupe-random") {
@@ -329,7 +326,12 @@ export function getChannelHealth(channel: ChannelLike, now = new Date()) {
 		}
 	}
 
-	if (!isYoutube && !isTiktok && channel.token_source !== "redis" && channel.token_expires_at) {
+	if (
+		!isYoutube &&
+		!isTiktok &&
+		channel.token_source !== "redis" &&
+		channel.token_expires_at
+	) {
 		const expiresAt = new Date(channel.token_expires_at);
 		const daysLeft =
 			(expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
@@ -442,21 +444,29 @@ export async function resolveCaptionTemplateVars(
 	if (libId) {
 		const libItem = await prisma.contentItem.findFirst({
 			where: { id: libId, user_id: planner.user_id },
-			select: { title: true, caption: true, caption_youtube: true, caption_instagram: true, caption_tiktok: true, tags: true, youtube_products: true },
+			select: {
+				title: true,
+				caption: true,
+				caption_youtube: true,
+				caption_instagram: true,
+				caption_tiktok: true,
+				tags: true,
+				youtube_products: true,
+			},
 		});
 		if (libItem) {
 			title = libItem.title || "";
 			// F4/M9: {post_caption} resolve a caption da PLATAFORMA do canal do
 			// post (youtube.txt/instagram.txt), com fallback para a caption
 			// genérica — régua única resolveFinalCaption.
-			itemCaption = resolveFinalCaption(
-				platform,
-				libItem as FinalCaptionSource,
-			);
+			itemCaption = resolveFinalCaption(platform, libItem as FinalCaptionSource);
 			libTags = libItem.tags;
 			// {post_products}: ITEM > FIXO — produtos do vídeo na library vencem
 			// os do planner (mesma regra da publicação).
-			if (typeof libItem.youtube_products === "string" && libItem.youtube_products.trim()) {
+			if (
+				typeof libItem.youtube_products === "string" &&
+				libItem.youtube_products.trim()
+			) {
 				itemProducts = libItem.youtube_products.trim();
 			}
 		}
@@ -637,7 +647,10 @@ async function buildYoutubeOptionsForPost(opts: {
 	const cfg = config as Record<string, unknown>;
 	// SAFETY: selected veio de PlannerContentItem (= config.content já parseado defensivamente);
 	// o cast gera o acesso genérico usado pela herança config>item>youtube_options.
-	const selAny = selected as unknown as Record<string, unknown> | null | undefined;
+	const selAny = selected as unknown as
+		| Record<string, unknown>
+		| null
+		| undefined;
 
 	// Resolve youtube_title/description templates (se contiver {var}). `{date}`
 	// usa `now` — propagação passa o now do run; buildPostData o do post.
@@ -675,7 +688,9 @@ async function buildYoutubeOptionsForPost(opts: {
 				itemName = libItem?.name
 					? String(libItem.name).replace(/\.[A-Za-z0-9]+$/, "")
 					: "";
-			} catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
+			} catch {
+				/* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */
+			}
 		}
 	}
 
@@ -707,16 +722,12 @@ async function buildYoutubeOptionsForPost(opts: {
 	const selPrivacy = selAny?.["privacy"];
 	if (
 		typeof cfgPrivacy === "string" &&
-		["PUBLIC", "UNLISTED", "PRIVATE"].includes(
-			String(cfgPrivacy).toUpperCase(),
-		)
+		["PUBLIC", "UNLISTED", "PRIVATE"].includes(String(cfgPrivacy).toUpperCase())
 	) {
 		youtubePrivacy = String(cfgPrivacy).toUpperCase();
 	} else if (
 		typeof selPrivacy === "string" &&
-		["PUBLIC", "UNLISTED", "PRIVATE"].includes(
-			String(selPrivacy).toUpperCase(),
-		)
+		["PUBLIC", "UNLISTED", "PRIVATE"].includes(String(selPrivacy).toUpperCase())
 	) {
 		youtubePrivacy = String(selPrivacy).toUpperCase();
 	} else {
@@ -736,7 +747,9 @@ async function buildYoutubeOptionsForPost(opts: {
 				) {
 					youtubePrivacy = String(parsed.privacy).toUpperCase();
 				}
-			} catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
+			} catch {
+				/* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */
+			}
 		}
 	}
 	// made_for_kids / monetize: config > item > youtube_options
@@ -755,7 +768,9 @@ async function buildYoutubeOptionsForPost(opts: {
 						: (rawYtOpt as Record<string, unknown>);
 				if (parsed.made_for_kids !== undefined)
 					madeForKids = toStrictBool(parsed.made_for_kids);
-			} catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
+			} catch {
+				/* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */
+			}
 		}
 	}
 	let monetizeWithAds: boolean | null = null;
@@ -773,7 +788,9 @@ async function buildYoutubeOptionsForPost(opts: {
 						: (rawYtOpt as Record<string, unknown>);
 				if (parsed.monetize_with_ads !== undefined)
 					monetizeWithAds = toStrictBool(parsed.monetize_with_ads);
-			} catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
+			} catch {
+				/* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */
+			}
 		}
 	}
 
@@ -803,7 +820,9 @@ async function buildYoutubeOptionsForPost(opts: {
 				// Productos do item só podem ser NOMES (CSV) — a UI da library
 				// não monta {query,item?} verbatim; resolução fiel no routing.
 			}
-		} catch { /* SAFETY: best-effort opcional — item inexistente cai no fixo do planner */ }
+		} catch {
+			/* SAFETY: best-effort opcional — item inexistente cai no fixo do planner */
+		}
 	}
 	const productsPayload = toYoutubeProductsJson(itemProductSource);
 	let productsJson: string | null = null;
@@ -819,9 +838,12 @@ async function buildYoutubeOptionsForPost(opts: {
 
 	// categoria e descricao: usar config quando houver, senão defaults (com
 	// template resolvido — M18: a propagação antes mandava a descrição crua).
-	const descriptionVal = (rawYtDescTpl ? rawYtDescTpl : opts.caption || "") as string;
+	const descriptionVal = (
+		rawYtDescTpl ? rawYtDescTpl : opts.caption || ""
+	) as string;
 	const categoryIdRaw = cfg["youtube_category_id"];
-	const categoryId = categoryIdRaw !== undefined ? Number(categoryIdRaw) : undefined;
+	const categoryId =
+		categoryIdRaw !== undefined ? Number(categoryIdRaw) : undefined;
 	// G4: alias youtube_pinned_comment ?? youtube_pinned_comment_text (o wizard
 	// grava ambos; runtime lê o alias primeiro, config/preview idem).
 	const pinnedRaw =
@@ -865,7 +887,8 @@ async function buildYoutubeOptionsForPost(opts: {
  * Rótulos PT-BR são exclusivos de UI via labelTiktokPrivacy (planner-config).
  */
 export function getTiktokPrivacyOptions(fallback?: string[]): string[] {
-	if (fallback && Array.isArray(fallback) && fallback.length > 0) return fallback;
+	if (fallback && Array.isArray(fallback) && fallback.length > 0)
+		return fallback;
 	return [...TIKTOK_PRIVACY_FALLBACK];
 }
 
@@ -916,16 +939,27 @@ export async function buildTiktokOptionsForPost(opts: {
 	// Foto TikTok = IMAGE (foto única, T1) ou CAROUSEL (2..10 imagens, T3).
 	// buildPostData passa o runtime resolvido; propagação usa selectedContent.media_type.
 	const selectedMediaType = (
-		(opts.mediaType || "") ||
-		String((opts.selectedContent as PlannerContentItem | null | undefined)?.media_type || "")
+		opts.mediaType ||
+		"" ||
+		String(
+			(opts.selectedContent as PlannerContentItem | null | undefined)
+				?.media_type || "",
+		)
 	).toUpperCase();
-	const isPhoto = selectedMediaType === "IMAGE" || selectedMediaType === "CAROUSEL";
+	const isPhoto =
+		selectedMediaType === "IMAGE" || selectedMediaType === "CAROUSEL";
 	const isCarouselPhoto = selectedMediaType === "CAROUSEL";
 	// Resolve privacy com fallback
 	const rawPrivacy =
-		(typeof cfg["tiktok_privacy_level"] === "string" ? String(cfg["tiktok_privacy_level"]) : null) ??
-		(typeof cfg["tiktok_privacy"] === "string" ? String(cfg["tiktok_privacy"]) : null) ??
-		(typeof cfg["privacy_level"] === "string" ? String(cfg["privacy_level"]) : null);
+		(typeof cfg["tiktok_privacy_level"] === "string"
+			? String(cfg["tiktok_privacy_level"])
+			: null) ??
+		(typeof cfg["tiktok_privacy"] === "string"
+			? String(cfg["tiktok_privacy"])
+			: null) ??
+		(typeof cfg["privacy_level"] === "string"
+			? String(cfg["privacy_level"])
+			: null);
 	const privacy_level = rawPrivacy || "SELF_ONLY";
 	const disable_duet = Boolean(
 		cfg["tiktok_disable_duet"] === true ||
@@ -948,7 +982,12 @@ export async function buildTiktokOptionsForPost(opts: {
 		cfg["tiktok_cover_timestamp_ms"];
 	let video_cover_timestamp_ms: number | undefined = undefined;
 	// T1: capa por timestamp é só de vídeo — foto usa photo_cover_index (0-based).
-	if (!isPhoto && coverRaw !== undefined && coverRaw !== null && coverRaw !== "") {
+	if (
+		!isPhoto &&
+		coverRaw !== undefined &&
+		coverRaw !== null &&
+		coverRaw !== ""
+	) {
 		const n = Number(coverRaw);
 		if (Number.isFinite(n) && n >= 0) video_cover_timestamp_ms = Math.floor(n);
 	}
@@ -964,16 +1003,26 @@ export async function buildTiktokOptionsForPost(opts: {
 	);
 	// title: caption TikTok (1..2200) — usa tiktok_caption/tiktok_title ou caption resolvida
 	const rawTitle =
-		(typeof cfg["tiktok_caption"] === "string" ? String(cfg["tiktok_caption"]) : null) ??
-		(typeof cfg["tiktok_title"] === "string" ? String(cfg["tiktok_title"]) : null);
-	const title = rawTitle ? String(rawTitle).trim().slice(0, 2200) : String(caption || "").trim().slice(0, 2200);
+		(typeof cfg["tiktok_caption"] === "string"
+			? String(cfg["tiktok_caption"])
+			: null) ??
+		(typeof cfg["tiktok_title"] === "string"
+			? String(cfg["tiktok_title"])
+			: null);
+	const title = rawTitle
+		? String(rawTitle).trim().slice(0, 2200)
+		: String(caption || "")
+				.trim()
+				.slice(0, 2200);
 	const payload: Record<string, unknown> = {
 		title,
 		privacy_level,
 		disable_duet,
 		disable_stitch,
 		disable_comment,
-		...(video_cover_timestamp_ms !== undefined ? { video_cover_timestamp_ms } : {}),
+		...(video_cover_timestamp_ms !== undefined
+			? { video_cover_timestamp_ms }
+			: {}),
 		...(brand_content_toggle ? { brand_content_toggle: true } : {}),
 		...(brand_organic_toggle ? { brand_organic_toggle: true } : {}),
 	};
@@ -981,7 +1030,10 @@ export async function buildTiktokOptionsForPost(opts: {
 	// tiktok_options (PULL_FROM_URL exige URL https — o publisher valida o https
 	// após makeAbsoluteUrl e usa photo_urls como fonte da verdade).
 	if (isPhoto) {
-		const selectedContent = opts.selectedContent as PlannerContentItem | null | undefined;
+		const selectedContent = opts.selectedContent as
+			| PlannerContentItem
+			| null
+			| undefined;
 		let photoUrls: string[];
 		if (isCarouselPhoto) {
 			// T3 carrossel: 2..10 URLs — dos children resolvidos (runtime), das
@@ -1013,7 +1065,7 @@ export async function buildTiktokOptionsForPost(opts: {
 			}
 		} else {
 			const single = String(
-				(opts.mediaUrl || "") || (selectedContent?.url || ""),
+				opts.mediaUrl || "" || selectedContent?.url || "",
 			).trim();
 			photoUrls = single ? [single] : [];
 		}
@@ -1025,7 +1077,10 @@ export async function buildTiktokOptionsForPost(opts: {
 			const n = Number(coverRaw);
 			if (Number.isInteger(n) && n >= 0) coverIndex = n;
 		}
-		if (photoUrls.length > 0 && (coverIndex < 0 || coverIndex >= photoUrls.length)) {
+		if (
+			photoUrls.length > 0 &&
+			(coverIndex < 0 || coverIndex >= photoUrls.length)
+		) {
 			throw new Error(
 				`Foto de capa do carrossel TikTok inválida: índice ${coverIndex} fora de 0..${photoUrls.length - 1}`,
 			);
@@ -1038,11 +1093,20 @@ export async function buildTiktokOptionsForPost(opts: {
 
 /** Valida se o mediaType é suportado para TikTok (v2: vídeo + foto única;
  *  T3: carrossel de fotos 2..10 via content/init). */
-export function validateTiktokMediaType(mediaType: string | undefined | null): { ok: boolean; error?: string } {
+export function validateTiktokMediaType(mediaType: string | undefined | null): {
+	ok: boolean;
+	error?: string;
+} {
 	const m = String(mediaType || "").toUpperCase();
-	if (m === "REELS" || m === "VIDEO" || m === "IMAGE" || m === "CAROUSEL") return { ok: true };
+	if (m === "REELS" || m === "VIDEO" || m === "IMAGE" || m === "CAROUSEL")
+		return { ok: true };
 	// STORIES também bloqueado para TikTok
-	if (m === "STORIES") return { ok: false, error: "TikTok: apenas vídeo ou foto é suportado. Stories não são suportados." };
+	if (m === "STORIES")
+		return {
+			ok: false,
+			error:
+				"TikTok: apenas vídeo ou foto é suportado. Stories não são suportados.",
+		};
 	return { ok: true };
 }
 
@@ -1112,10 +1176,10 @@ export async function buildPostData(opts: {
 		}
 	}
 
-	const isYtChannel =
-		(opts.channel.platform || "").toLowerCase() === "youtube";
+	const isYtChannel = (opts.channel.platform || "").toLowerCase() === "youtube";
 	const ytTypeForPost =
-		isYtChannel && (runtime.mediaType === "IMAGE" || runtime.mediaType === "CAROUSEL")
+		isYtChannel &&
+		(runtime.mediaType === "IMAGE" || runtime.mediaType === "CAROUSEL")
 			? "community"
 			: isYtChannel
 				? "short"
@@ -1132,8 +1196,10 @@ export async function buildPostData(opts: {
 			prisma: opts.prisma,
 			planner: { user_id: opts.planner.user_id },
 			config,
-			selectedContent:
-				runtime.selectedContent as PlannerContentItem | null | undefined,
+			selectedContent: runtime.selectedContent as
+				| PlannerContentItem
+				| null
+				| undefined,
 			channelName: opts.channel.name || "",
 			now: opts.now,
 			caption,
@@ -1169,15 +1235,21 @@ export async function buildPostData(opts: {
 			prisma: opts.prisma,
 			planner: { user_id: opts.planner.user_id },
 			config,
-			selectedContent:
-				runtime.selectedContent as PlannerContentItem | null | undefined,
+			selectedContent: runtime.selectedContent as
+				| PlannerContentItem
+				| null
+				| undefined,
 			channelName: opts.channel.name || "",
 			now: opts.now,
 			caption,
 			platform: opts.channel.platform,
-			mediaType: isPhoto ? (mediaUpper === "CAROUSEL" ? "CAROUSEL" : "IMAGE") : "REELS",
+			mediaType: isPhoto
+				? mediaUpper === "CAROUSEL"
+					? "CAROUSEL"
+					: "IMAGE"
+				: "REELS",
 			mediaUrl: runtime.mediaUrl,
-			children: isPhoto ? (runtime.children || []) : undefined,
+			children: isPhoto ? runtime.children || [] : undefined,
 		});
 	}
 
@@ -1220,42 +1292,41 @@ export async function buildPostData(opts: {
 		first_comment: firstComment,
 		scheduled_at: opts.now,
 		planner_id: opts.planner.id,
-	// SAFETY: o objeto montado acima já é o shape completo de PostUncheckedCreateInput
-	// (campos verificados um a um contra o schema); o cast `as unknown as` existe
-	// só para o Prisma aceitar literais sem campos opcionais — o TypeScript não
-	// infere findFirst dinâmico com selects parciais.
+		// SAFETY: o objeto montado acima já é o shape completo de PostUncheckedCreateInput
+		// (campos verificados um a um contra o schema); o cast `as unknown as` existe
+		// só para o Prisma aceitar literais sem campos opcionais — o TypeScript não
+		// infere findFirst dinâmico com selects parciais.
 	} as unknown as Prisma.PostUncheckedCreateInput;
 }
 
-
 /** Campos do config que impactam caption/youtube_options — usados para detectar diff. */
 const CAPTION_PROPAGATION_KEYS = [
-  "caption",
-  "caption_templates",
-  "caption_rotation",
-  "caption_fallback",
-  "title_fallback",
-  "youtube_title",
-  "youtube_description",
-  "youtube_privacy",
-  "youtube_made_for_kids",
-  "youtube_monetize_with_ads",
-  "youtube_category_id",
-  "youtube_pinned_comment_text",
-  "youtube_pinned_comment",
-  "youtube_products",
-  "tiktok_caption",
-  "tiktok_title",
-  "tiktok_privacy_level",
-  "tiktok_disable_duet",
-  "tiktok_disable_stitch",
-  "tiktok_disable_comment",
-  "tiktok_video_cover_timestamp_ms",
-  "tiktok_photo_cover_index",
-  "tiktok_brand_content_toggle",
-  "tiktok_brand_organic_toggle",
-  "collaborators",
-  "user_tags",
+	"caption",
+	"caption_templates",
+	"caption_rotation",
+	"caption_fallback",
+	"title_fallback",
+	"youtube_title",
+	"youtube_description",
+	"youtube_privacy",
+	"youtube_made_for_kids",
+	"youtube_monetize_with_ads",
+	"youtube_category_id",
+	"youtube_pinned_comment_text",
+	"youtube_pinned_comment",
+	"youtube_products",
+	"tiktok_caption",
+	"tiktok_title",
+	"tiktok_privacy_level",
+	"tiktok_disable_duet",
+	"tiktok_disable_stitch",
+	"tiktok_disable_comment",
+	"tiktok_video_cover_timestamp_ms",
+	"tiktok_photo_cover_index",
+	"tiktok_brand_content_toggle",
+	"tiktok_brand_organic_toggle",
+	"collaborators",
+	"user_tags",
 ] as const;
 
 /**
@@ -1263,34 +1334,57 @@ const CAPTION_PROPAGATION_KEYS = [
  * Usado para evitar propagação desnecessária quando só frequency/sleep mudou.
  */
 export function shouldPropagateConfig(
-  oldConfig: Record<string, unknown> | null | undefined,
-  newConfig: Record<string, unknown> | null | undefined
+	oldConfig: Record<string, unknown> | null | undefined,
+	newConfig: Record<string, unknown> | null | undefined,
 ): boolean {
-  if (!oldConfig || !newConfig) return true;
-  for (const k of CAPTION_PROPAGATION_KEYS) {
-    const a = JSON.stringify((oldConfig as Record<string, unknown>)[k] ?? null);
-    const b = JSON.stringify((newConfig as Record<string, unknown>)[k] ?? null);
-    if (a !== b) return true;
-  }
-  // Também detecta mudança no array content[].caption individual (o wizard
-  // duplica a descrição em cada entrada). Compara captions agregados.
-  const oldContent = Array.isArray(oldConfig.content) ? oldConfig.content as unknown[] : [];
-  const newContent = Array.isArray(newConfig.content) ? newConfig.content as unknown[] : [];
-  if (oldContent.length !== newContent.length) {
-    // Só considera diff se houver mudança de caption dentro dos itens
-    const oldCaps = JSON.stringify(oldContent.map((c: unknown) => (c as Record<string, unknown>)?.caption ?? null));
-    const newCaps = JSON.stringify(newContent.map((c: unknown) => (c as Record<string, unknown>)?.caption ?? null));
-    if (oldCaps !== newCaps) return true;
-  } else {
-    for (let i = 0; i < oldContent.length; i++) {
-      const oc = oldContent[i] as Record<string, unknown>;
-      const nc = newContent[i] as Record<string, unknown>;
-      if (JSON.stringify(oc?.caption ?? null) !== JSON.stringify(nc?.caption ?? null)) return true;
-      if (JSON.stringify(oc?.caption_fallback ?? null) !== JSON.stringify(nc?.caption_fallback ?? null)) return true;
-      if (JSON.stringify(oc?.title_fallback ?? null) !== JSON.stringify(nc?.title_fallback ?? null)) return true;
-    }
-  }
-  return false;
+	if (!oldConfig || !newConfig) return true;
+	for (const k of CAPTION_PROPAGATION_KEYS) {
+		const a = JSON.stringify((oldConfig as Record<string, unknown>)[k] ?? null);
+		const b = JSON.stringify((newConfig as Record<string, unknown>)[k] ?? null);
+		if (a !== b) return true;
+	}
+	// Também detecta mudança no array content[].caption individual (o wizard
+	// duplica a descrição em cada entrada). Compara captions agregados.
+	const oldContent = Array.isArray(oldConfig.content)
+		? (oldConfig.content as unknown[])
+		: [];
+	const newContent = Array.isArray(newConfig.content)
+		? (newConfig.content as unknown[])
+		: [];
+	if (oldContent.length !== newContent.length) {
+		// Só considera diff se houver mudança de caption dentro dos itens
+		const oldCaps = JSON.stringify(
+			oldContent.map(
+				(c: unknown) => (c as Record<string, unknown>)?.caption ?? null,
+			),
+		);
+		const newCaps = JSON.stringify(
+			newContent.map(
+				(c: unknown) => (c as Record<string, unknown>)?.caption ?? null,
+			),
+		);
+		if (oldCaps !== newCaps) return true;
+	} else {
+		for (let i = 0; i < oldContent.length; i++) {
+			const oc = oldContent[i] as Record<string, unknown>;
+			const nc = newContent[i] as Record<string, unknown>;
+			if (
+				JSON.stringify(oc?.caption ?? null) !== JSON.stringify(nc?.caption ?? null)
+			)
+				return true;
+			if (
+				JSON.stringify(oc?.caption_fallback ?? null) !==
+				JSON.stringify(nc?.caption_fallback ?? null)
+			)
+				return true;
+			if (
+				JSON.stringify(oc?.title_fallback ?? null) !==
+				JSON.stringify(nc?.title_fallback ?? null)
+			)
+				return true;
+		}
+	}
+	return false;
 }
 
 /**
@@ -1308,242 +1402,297 @@ export function shouldPropagateConfig(
  * Batch: atualiza em lotes de 50 para evitar transação gigante em SQLite.
  */
 export async function propagatePlannerConfigToPendingPosts(
-  prismaClient: {
-    post: {
-      findMany: (args: unknown) => Promise<Array<Record<string, unknown>>>;
-      update: (args: unknown) => Promise<unknown>;
-      updateMany: (args: unknown) => Promise<{ count: number }>;
-    };
-    contentItem?: { findFirst: (args: unknown) => Promise<unknown> };
-    plannerLog?: { create: (args: unknown) => Promise<unknown> };
-    channel?: { findUnique: (args: unknown) => Promise<unknown>; findMany?: (args: unknown) => Promise<unknown[]> };
-  } & PrismaLike,
-  planner: { id: string; user_id: string },
-  newConfig: PlannerConfig,
-  now: Date = new Date()
+	prismaClient: {
+		post: {
+			findMany: (args: unknown) => Promise<Array<Record<string, unknown>>>;
+			update: (args: unknown) => Promise<unknown>;
+			updateMany: (args: unknown) => Promise<{ count: number }>;
+		};
+		contentItem?: { findFirst: (args: unknown) => Promise<unknown> };
+		plannerLog?: { create: (args: unknown) => Promise<unknown> };
+		channel?: {
+			findUnique: (args: unknown) => Promise<unknown>;
+			findMany?: (args: unknown) => Promise<unknown[]>;
+		};
+	} & PrismaLike,
+	planner: { id: string; user_id: string },
+	newConfig: PlannerConfig,
+	now: Date = new Date(),
 ): Promise<{ updated: number; total: number }> {
-  const pendingStatuses = ["pending", "scheduled", "queued"];
-  let posts: Array<Record<string, unknown>>;
-  try {
-    posts = await prismaClient.post.findMany({
-      where: { planner_id: planner.id, status: { in: pendingStatuses } },
-      orderBy: [{ scheduled_at: "asc" }, { created_at: "asc" }],
-    } as unknown) as Array<Record<string, unknown>>;
-  } catch (e) {
-    console.warn("[propagate] findMany failed", e);
-    return { updated: 0, total: 0 };
-  }
-  if (!posts || posts.length === 0) return { updated: 0, total: 0 };
+	const pendingStatuses = ["pending", "scheduled", "queued"];
+	let posts: Array<Record<string, unknown>>;
+	try {
+		posts = (await prismaClient.post.findMany({
+			where: { planner_id: planner.id, status: { in: pendingStatuses } },
+			orderBy: [{ scheduled_at: "asc" }, { created_at: "asc" }],
+		} as unknown)) as Array<Record<string, unknown>>;
+	} catch (e) {
+		console.warn("[propagate] findMany failed", e);
+		return { updated: 0, total: 0 };
+	}
+	if (!posts || posts.length === 0) return { updated: 0, total: 0 };
 
-  const contentList: PlannerContentItem[] = Array.isArray(newConfig.content)
-    ? (newConfig.content as PlannerContentItem[])
-    : [];
+	const contentList: PlannerContentItem[] = Array.isArray(newConfig.content)
+		? (newConfig.content as PlannerContentItem[])
+		: [];
 
-  // Mapa channel_id -> {name, platform} para evitar N+1 quando possível
-  const channelIds = [...new Set(posts.map((p) => p.channel_id).filter(Boolean) as string[])];
-  const channelMap = new Map<string, { name: string | null; platform: string | null }>();
-  if (channelIds.length > 0 && prismaClient.channel?.findMany) {
-    try {
-      const channels = await (prismaClient.channel.findMany as (args: unknown) => Promise<Array<Record<string, unknown>>>)({
-        where: { id: { in: channelIds } },
-        select: { id: true, name: true, platform: true },
-      });
-      for (const ch of channels) channelMap.set(String(ch.id), { name: (ch.name as string) || null, platform: (ch.platform as string) || null });
-    } catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
-  }
+	// Mapa channel_id -> {name, platform} para evitar N+1 quando possível
+	const channelIds = [
+		...new Set(posts.map((p) => p.channel_id).filter(Boolean) as string[]),
+	];
+	const channelMap = new Map<
+		string,
+		{ name: string | null; platform: string | null }
+	>();
+	if (channelIds.length > 0 && prismaClient.channel?.findMany) {
+		try {
+			const channels = await (
+				prismaClient.channel.findMany as (
+					args: unknown,
+				) => Promise<Array<Record<string, unknown>>>
+			)({
+				where: { id: { in: channelIds } },
+				select: { id: true, name: true, platform: true },
+			});
+			for (const ch of channels)
+				channelMap.set(String(ch.id), {
+					name: (ch.name as string) || null,
+					platform: (ch.platform as string) || null,
+				});
+		} catch {
+			/* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */
+		}
+	}
 
-  let updated = 0;
-  const BATCH = 50;
-  for (let i = 0; i < posts.length; i++) {
-    const post = posts[i];
-    const postId = String(post.id);
-    const channelId = post.channel_id ? String(post.channel_id) : null;
-    let channelName = "";
-    let channelPlatform: string | null = null;
-    if (channelId && channelMap.has(channelId)) {
-      const ch = channelMap.get(channelId)!;
-      channelName = ch.name || "";
-      channelPlatform = ch.platform || null;
-    } else if (channelId && prismaClient.channel?.findUnique) {
-      try {
-        const ch = await prismaClient.channel.findUnique({ where: { id: channelId }, select: { name: true, platform: true } }) as Record<string, unknown> | null;
-        channelName = (ch?.name as string) || "";
-        channelPlatform = (ch?.platform as string) || null;
-        if (ch) channelMap.set(channelId, { name: channelName, platform: channelPlatform });
-      } catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
-    }
+	let updated = 0;
+	const BATCH = 50;
+	for (let i = 0; i < posts.length; i++) {
+		const post = posts[i];
+		const postId = String(post.id);
+		const channelId = post.channel_id ? String(post.channel_id) : null;
+		let channelName = "";
+		let channelPlatform: string | null = null;
+		if (channelId && channelMap.has(channelId)) {
+			const ch = channelMap.get(channelId)!;
+			channelName = ch.name || "";
+			channelPlatform = ch.platform || null;
+		} else if (channelId && prismaClient.channel?.findUnique) {
+			try {
+				const ch = (await prismaClient.channel.findUnique({
+					where: { id: channelId },
+					select: { name: true, platform: true },
+				})) as Record<string, unknown> | null;
+				channelName = (ch?.name as string) || "";
+				channelPlatform = (ch?.platform as string) || null;
+				if (ch)
+					channelMap.set(channelId, {
+						name: channelName,
+						platform: channelPlatform,
+					});
+			} catch {
+				/* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */
+			}
+		}
 
-    // Heurística para selectedContent: tenta casar post com entrada do content
-    // pelo URL (video_url/image_url) quando o content tem id de library.
-    // Fallback: primeira entrada do content ou objeto sintético com a caption
-    // global (planners sem content ainda).
-    let selectedContent: PlannerContentItem | null | undefined = null;
-    const urlCandidates = [
-      post.video_url ? String(post.video_url) : null,
-      post.image_url ? String(post.image_url) : null,
-      post.thumbnail_url ? String(post.thumbnail_url) : null,
-    ].filter(Boolean) as string[];
+		// Heurística para selectedContent: tenta casar post com entrada do content
+		// pelo URL (video_url/image_url) quando o content tem id de library.
+		// Fallback: primeira entrada do content ou objeto sintético com a caption
+		// global (planners sem content ainda).
+		let selectedContent: PlannerContentItem | null | undefined = null;
+		const urlCandidates = [
+			post.video_url ? String(post.video_url) : null,
+			post.image_url ? String(post.image_url) : null,
+			post.thumbnail_url ? String(post.thumbnail_url) : null,
+		].filter(Boolean) as string[];
 
-    if (contentList.length > 0) {
-      // Tenta casar por URL (quando content tem url explícito)
-      let matched: PlannerContentItem | null = null;
-      for (const c of contentList) {
-        const cUrl = (c as Record<string, unknown>).url ? String((c as Record<string, unknown>).url) : null;
-        if (cUrl && urlCandidates.includes(cUrl)) { matched = c; break; }
-      }
-      // Fallback: se não casou por URL, usa a entrada na posição cíclica
-      // (ordem de criação dos posts = ordem do contentList em random_loop off)
-      selectedContent = matched || contentList[i % contentList.length] || contentList[0];
-    } else {
-      // Planner sem content (caso raro): sintetiza selectedContent vazio mas com
-      // caption global se houver (ex.: config.caption)
-      const globalCap = (newConfig as Record<string, unknown>).caption;
-      selectedContent = globalCap ? { caption: String(globalCap) } as PlannerContentItem : null;
-    }
+		if (contentList.length > 0) {
+			// Tenta casar por URL (quando content tem url explícito)
+			let matched: PlannerContentItem | null = null;
+			for (const c of contentList) {
+				const cUrl = (c as Record<string, unknown>).url
+					? String((c as Record<string, unknown>).url)
+					: null;
+				if (cUrl && urlCandidates.includes(cUrl)) {
+					matched = c;
+					break;
+				}
+			}
+			// Fallback: se não casou por URL, usa a entrada na posição cíclica
+			// (ordem de criação dos posts = ordem do contentList em random_loop off)
+			selectedContent =
+				matched || contentList[i % contentList.length] || contentList[0];
+		} else {
+			// Planner sem content (caso raro): sintetiza selectedContent vazio mas com
+			// caption global se houver (ex.: config.caption)
+			const globalCap = (newConfig as Record<string, unknown>).caption;
+			selectedContent = globalCap
+				? ({ caption: String(globalCap) } as PlannerContentItem)
+				: null;
+		}
 
-    // F4: re-deriva o primeiro comentário do item de library (MESMO caminho
-    // do buildPostData). undefined = não alterar o post (falha de lookup ou
-    // item sem id não sobrescreve o valor existente — regra M5/B2).
-    let newFirstComment: string | null | undefined = undefined;
-    const fcLibId = selectedContent?.id || selectedContent?.folder_id;
-    if (fcLibId) {
-      try {
-        const fcItem = await (prismaClient as PrismaLike).contentItem.findFirst({
-          where: { id: fcLibId, user_id: planner.user_id },
-          select: { first_comment: true },
-        });
-        const fc = (fcItem?.first_comment || "").trim();
-        newFirstComment = fc ? fc.slice(0, 500) : null;
-      } catch { /* SAFETY: mantém o primeiro comentário existente do post */ }
-    }
+		// F4: re-deriva o primeiro comentário do item de library (MESMO caminho
+		// do buildPostData). undefined = não alterar o post (falha de lookup ou
+		// item sem id não sobrescreve o valor existente — regra M5/B2).
+		let newFirstComment: string | null | undefined = undefined;
+		const fcLibId = selectedContent?.id || selectedContent?.folder_id;
+		if (fcLibId) {
+			try {
+				const fcItem = await (prismaClient as PrismaLike).contentItem.findFirst({
+					where: { id: fcLibId, user_id: planner.user_id },
+					select: { first_comment: true },
+				});
+				const fc = (fcItem?.first_comment || "").trim();
+				newFirstComment = fc ? fc.slice(0, 500) : null;
+			} catch {
+				/* SAFETY: mantém o primeiro comentário existente do post */
+			}
+		}
 
-    // Resolve nova caption via applyCaptionTemplate (mesma semântica do buildPostData)
-    let newCaption: string;
-    try {
-      newCaption = await applyCaptionTemplate({
-        prisma: prismaClient as PrismaLike,
-        selectedContent,
-        planner: { user_id: planner.user_id },
-        config: newConfig,
-        channelName,
-        now,
-        templateIndex: 0,
-        postOrdinal: i,
-        // F4/M9: cada post já tem canal; a caption por plataforma vem dele.
-        platform: channelPlatform,
-      });
-    } catch (e) {
-      console.warn("[propagate] caption resolve failed for post", postId, e);
-      continue;
-    }
+		// Resolve nova caption via applyCaptionTemplate (mesma semântica do buildPostData)
+		let newCaption: string;
+		try {
+			newCaption = await applyCaptionTemplate({
+				prisma: prismaClient as PrismaLike,
+				selectedContent,
+				planner: { user_id: planner.user_id },
+				config: newConfig,
+				channelName,
+				now,
+				templateIndex: 0,
+				postOrdinal: i,
+				// F4/M9: cada post já tem canal; a caption por plataforma vem dele.
+				platform: channelPlatform,
+			});
+		} catch (e) {
+			console.warn("[propagate] caption resolve failed for post", postId, e);
+			continue;
+		}
 
-    // youtube_options: só para posts de canal YouTube com youtube_type
-    const ytType = post.youtube_type ? String(post.youtube_type).toLowerCase() : null;
-    const isYtChannel = channelPlatform ? channelPlatform.toLowerCase() === "youtube" : ytType !== null;
-    let newYoutubeOptions: string | null | undefined = undefined; // undefined = não alterar
-    if (isYtChannel && ytType === "short") {
-      try {
-        const rebuilt = await buildYoutubeOptionsForPost({
-          prisma: prismaClient as PrismaLike,
-          planner: { user_id: planner.user_id },
-          config: newConfig,
-          selectedContent,
-          channelName,
-          now,
-          caption: newCaption,
-          platform: channelPlatform,
-        });
-        // F7/QA: buildYoutubeOptionsForPost retorna null quando NENHUM título
-        // é resolvível (config patológico legado: youtube_title e caption
-        // vazios no post). Nesse caso NÃO apagar youtube_options existente do
-        // post pendente — regra M5/B2: editar planner nunca apaga dados de
-        // publicação (products/título antigos preservados); o post continua
-        // pendente e a falha real (se houver) será de publicação, não de
-        // propagação silenciosa.
-        if (rebuilt !== null) newYoutubeOptions = rebuilt;
-      } catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
-    } else if (isYtChannel && ytType === "community") {
-      // Comunidade não tem youtube_options (usa caption); não reescreve
-      // youtube_options — propagação só toca caption nesses posts.
-      newYoutubeOptions = undefined;
-    }
+		// youtube_options: só para posts de canal YouTube com youtube_type
+		const ytType = post.youtube_type
+			? String(post.youtube_type).toLowerCase()
+			: null;
+		const isYtChannel = channelPlatform
+			? channelPlatform.toLowerCase() === "youtube"
+			: ytType !== null;
+		let newYoutubeOptions: string | null | undefined = undefined; // undefined = não alterar
+		if (isYtChannel && ytType === "short") {
+			try {
+				const rebuilt = await buildYoutubeOptionsForPost({
+					prisma: prismaClient as PrismaLike,
+					planner: { user_id: planner.user_id },
+					config: newConfig,
+					selectedContent,
+					channelName,
+					now,
+					caption: newCaption,
+					platform: channelPlatform,
+				});
+				// F7/QA: buildYoutubeOptionsForPost retorna null quando NENHUM título
+				// é resolvível (config patológico legado: youtube_title e caption
+				// vazios no post). Nesse caso NÃO apagar youtube_options existente do
+				// post pendente — regra M5/B2: editar planner nunca apaga dados de
+				// publicação (products/título antigos preservados); o post continua
+				// pendente e a falha real (se houver) será de publicação, não de
+				// propagação silenciosa.
+				if (rebuilt !== null) newYoutubeOptions = rebuilt;
+			} catch {
+				/* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */
+			}
+		} else if (isYtChannel && ytType === "community") {
+			// Comunidade não tem youtube_options (usa caption); não reescreve
+			// youtube_options — propagação só toca caption nesses posts.
+			newYoutubeOptions = undefined;
+		}
 
-    // tiktok_options: só para posts de canal TikTok com tiktok_type=video|photo.
-    // Re-deriva via buildTiktokOptionsForPost (MESMA função da criação — M5:
-    // editar planner produz o MESMO tiktok_options). Se null (sem título
-    // resolvível), preserva o existente do post pendente (regra M5/B2).
-    const tkType = post.tiktok_type ? String(post.tiktok_type).toLowerCase() : null;
-    const isTiktokChannel = channelPlatform ? channelPlatform.toLowerCase() === "tiktok" : tkType !== null;
-    let newTiktokOptions: string | null | undefined = undefined; // undefined = não alterar
-    if (isTiktokChannel && (tkType === "video" || tkType === "photo")) {
-      try {
-        const rebuilt = await buildTiktokOptionsForPost({
-          prisma: prismaClient as PrismaLike,
-          planner: { user_id: planner.user_id },
-          config: newConfig,
-          selectedContent,
-          channelName,
-          now,
-          caption: newCaption,
-          platform: channelPlatform,
-          // T3: propagação de foto/carrossel — re-deriva photo_urls/photo_cover_index
-          // a partir do que o POST já persistiu (children_urls) + entrada do content.
-          mediaType: selectedContent?.media_type || null,
-          mediaUrl: String(post.image_url || "") || null,
-          postChildrenUrls: post.children_urls ? String(post.children_urls) : null,
-        });
-        if (rebuilt !== null) newTiktokOptions = rebuilt;
-      } catch { /* SAFETY: best-effort opcional — não abortar propagação */ }
-    }
+		// tiktok_options: só para posts de canal TikTok com tiktok_type=video|photo.
+		// Re-deriva via buildTiktokOptionsForPost (MESMA função da criação — M5:
+		// editar planner produz o MESMO tiktok_options). Se null (sem título
+		// resolvível), preserva o existente do post pendente (regra M5/B2).
+		const tkType = post.tiktok_type
+			? String(post.tiktok_type).toLowerCase()
+			: null;
+		const isTiktokChannel = channelPlatform
+			? channelPlatform.toLowerCase() === "tiktok"
+			: tkType !== null;
+		let newTiktokOptions: string | null | undefined = undefined; // undefined = não alterar
+		if (isTiktokChannel && (tkType === "video" || tkType === "photo")) {
+			try {
+				const rebuilt = await buildTiktokOptionsForPost({
+					prisma: prismaClient as PrismaLike,
+					planner: { user_id: planner.user_id },
+					config: newConfig,
+					selectedContent,
+					channelName,
+					now,
+					caption: newCaption,
+					platform: channelPlatform,
+					// T3: propagação de foto/carrossel — re-deriva photo_urls/photo_cover_index
+					// a partir do que o POST já persistiu (children_urls) + entrada do content.
+					mediaType: selectedContent?.media_type || null,
+					mediaUrl: String(post.image_url || "") || null,
+					postChildrenUrls: post.children_urls ? String(post.children_urls) : null,
+				});
+				if (rebuilt !== null) newTiktokOptions = rebuilt;
+			} catch {
+				/* SAFETY: best-effort opcional — não abortar propagação */
+			}
+		}
 
-    // Monta payload de update: sempre atualiza caption; youtube_options só se Short
-    const data: Record<string, unknown> = { caption: newCaption };
-    if (newYoutubeOptions !== undefined) data.youtube_options = newYoutubeOptions;
-    if (newTiktokOptions !== undefined) data.tiktok_options = newTiktokOptions;
-    if (newFirstComment !== undefined) data.first_comment = newFirstComment;
+		// Monta payload de update: sempre atualiza caption; youtube_options só se Short
+		const data: Record<string, unknown> = { caption: newCaption };
+		if (newYoutubeOptions !== undefined) data.youtube_options = newYoutubeOptions;
+		if (newTiktokOptions !== undefined) data.tiktok_options = newTiktokOptions;
+		if (newFirstComment !== undefined) data.first_comment = newFirstComment;
 
-    // M14: re-checa o status DENTRO do where — o publisher pode ter claimado
-    // (pending→processing) ou o usuário cancelado este post no instante da
-    // propagação; um update incondicional por id reescreveria um post que
-    // saiu do conjunto pending/scheduled/queued (race propagação×publisher).
-    // Quando o status mudou, o post é pulado (SKIP) com log — nunca sobrescrito.
-    try {
-      const res = (await prismaClient.post.updateMany({
-        where: { id: postId, status: { in: pendingStatuses } },
-        data,
-      } as unknown)) as { count: number } | undefined;
-      if (res?.count && res.count > 0) {
-        updated++;
-      } else {
-        console.warn(
-          `[propagate] post ${postId}: status mudou durante a propagação (cancelado/claimado/published) — update ignorado; estado terminal preservado`,
-        );
-      }
-    } catch (e) {
-      console.warn("[propagate] update failed for post", postId, e);
-    }
+		// M14: re-checa o status DENTRO do where — o publisher pode ter claimado
+		// (pending→processing) ou o usuário cancelado este post no instante da
+		// propagação; um update incondicional por id reescreveria um post que
+		// saiu do conjunto pending/scheduled/queued (race propagação×publisher).
+		// Quando o status mudou, o post é pulado (SKIP) com log — nunca sobrescrito.
+		try {
+			const res = (await prismaClient.post.updateMany({
+				where: { id: postId, status: { in: pendingStatuses } },
+				data,
+			} as unknown)) as { count: number } | undefined;
+			if (res?.count && res.count > 0) {
+				updated++;
+			} else {
+				console.warn(
+					`[propagate] post ${postId}: status mudou durante a propagação (cancelado/claimado/published) — update ignorado; estado terminal preservado`,
+				);
+			}
+		} catch (e) {
+			console.warn("[propagate] update failed for post", postId, e);
+		}
 
-    // Batch yield (evita bloqueio longo em SQLite com muitos posts)
-    if ((i + 1) % BATCH === 0) {
-      await new Promise((r) => setTimeout(r, 0));
-    }
-  }
+		// Batch yield (evita bloqueio longo em SQLite com muitos posts)
+		if ((i + 1) % BATCH === 0) {
+			await new Promise((r) => setTimeout(r, 0));
+		}
+	}
 
-  // Log em PlannerLog (best-effort, não falha a propagação)
-  if (updated > 0 && prismaClient.plannerLog?.create) {
-    try {
-      await prismaClient.plannerLog.create({
-        data: {
-          planner_id: planner.id,
-          level: "info",
-          message: `Planner editado: ${updated}/${posts.length} post(s) pendente(s) atualizado(s) com nova descrição/título`,
-          details: JSON.stringify({ updated, total: posts.length, now: now.toISOString() }),
-        },
-      } as unknown);
-    } catch { /* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */ }
-  }
+	// Log em PlannerLog (best-effort, não falha a propagação)
+	if (updated > 0 && prismaClient.plannerLog?.create) {
+		try {
+			await prismaClient.plannerLog.create({
+				data: {
+					planner_id: planner.id,
+					level: "info",
+					message: `Planner editado: ${updated}/${posts.length} post(s) pendente(s) atualizado(s) com nova descrição/título`,
+					details: JSON.stringify({
+						updated,
+						total: posts.length,
+						now: now.toISOString(),
+					}),
+				},
+			} as unknown);
+		} catch {
+			/* SAFETY: best-effort opcional — campo ausente/malformado não deve abortar o fluxo */
+		}
+	}
 
-  return { updated, total: posts.length };
+	return { updated, total: posts.length };
 }
 
 export async function resolvePlannerRuntime(
@@ -1597,7 +1746,8 @@ export async function resolvePlannerRuntime(
 	const locationId = selectedContent.location_id || null;
 	// BK-23 FIX: share_to_feed deveria ser null (herdar) nao false quando nao explicitado
 	const rawShareToFeed = selectedContent.share_to_feed;
-	const shareToFeed: boolean | null = typeof rawShareToFeed === "boolean" ? rawShareToFeed : null;
+	const shareToFeed: boolean | null =
+		typeof rawShareToFeed === "boolean" ? rawShareToFeed : null;
 	let thumbnailUrl = selectedContent.thumbnail_url || null;
 	let children: { url: string; type: string; thumbnail_url?: string | null }[] =
 		selectedContent.children_urls || selectedContent.carousel_items || [];
@@ -1694,7 +1844,9 @@ export async function resolvePlannerRuntime(
 		mediaType === "STORIES"
 	) {
 		mediaType = "REELS";
-		warnings.push("STORIES convertido para REELS — o YouTube não suporta Stories");
+		warnings.push(
+			"STORIES convertido para REELS — o YouTube não suporta Stories",
+		);
 	}
 	const channelName =
 		firstChannel && typeof firstChannel.name === "string"
@@ -1853,7 +2005,11 @@ export async function runPlannerOnce(
 	{
 		const platforms = new Set(
 			channels
-				.map((c) => String((c as { platform?: string | null }).platform || "").toLowerCase().trim())
+				.map((c) =>
+					String((c as { platform?: string | null }).platform || "")
+						.toLowerCase()
+						.trim(),
+				)
 				.filter(Boolean),
 		);
 		if (platforms.size > 1) {
@@ -1994,8 +2150,8 @@ export async function runPlannerOnce(
 	const expectedLastRun = now;
 	ops.push(
 		// SAFETY: PrismaPromise exigido pelo $transaction; PrismaLike tipa o
-	// prisma como interface mínima — o cast mantém o contrato de transação.
-	prisma.planner.updateMany({
+		// prisma como interface mínima — o cast mantém o contrato de transação.
+		prisma.planner.updateMany({
 			where: { id: planner.id, last_run: expectedLastRun },
 			data: { state: JSON.stringify(nextState) },
 		}) as unknown as Prisma.PrismaPromise<unknown>,
@@ -2005,7 +2161,9 @@ export async function runPlannerOnce(
 		// BK-06: sempre transacionado; fallback tambem usa transaction
 		// SAFETY: os ops são arrays de PrismaPromise já tipados; o $transaction do
 		// PrismaLike é exposto via cast porque a interface mínima não o declara.
-		await (prisma as unknown as { $transaction: (ops: unknown[]) => Promise<unknown[]> }).$transaction(ops.filter(Boolean) as never);
+		await (
+			prisma as unknown as { $transaction: (ops: unknown[]) => Promise<unknown[]> }
+		).$transaction(ops.filter(Boolean) as never);
 	} catch (err: unknown) {
 		// A criação falhou depois do claim: reverta o claim (condicional) para não "comer" o
 		// próximo tick e não perder o due (posts parciais não são criados via rollback).
