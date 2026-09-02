@@ -10,7 +10,6 @@ import {
 	Check,
 	Youtube,
 	Music,
-	Video,
 	Info,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
@@ -38,6 +37,42 @@ interface YoutubeProductSearchResult {
 	price?: string;
 	commission_pct?: number;
 	[key: string]: unknown;
+}
+
+// Tags de template YT resolvidas no runtime (lib/planner-runtime.ts
+// resolveCaptionTemplateVars + buildYoutubeOptionsForPost). Inseridas no
+// cursor do campo via chips; {post_products} = ITEM > FIXO, nomes CSV.
+const YOUTUBE_TEMPLATE_TAGS = [
+	"{post_title}",
+	"{post_caption}",
+	"{post_products}",
+	"{date}",
+	"{channel_name}",
+	"{hashtags}",
+] as const;
+
+// Insere a tag no cursor do campo controlado e restaura o foco/posição.
+function insertYoutubeTemplateTag(
+	el: HTMLInputElement | HTMLTextAreaElement | null,
+	current: string,
+	setter: (v: string) => void,
+	tag: string,
+	max: number,
+) {
+	const start = el?.selectionStart ?? current.length;
+	const end = el?.selectionEnd ?? current.length;
+	const next = (current.slice(0, start) + tag + current.slice(end)).slice(0, max);
+	setter(next);
+	requestAnimationFrame(() => {
+		if (!el) return;
+		el.focus();
+		const pos = Math.min(start + tag.length, next.length);
+		try {
+			el.setSelectionRange(pos, pos);
+		} catch {
+			/* campos sem suporte a selection — ignora */
+		}
+	});
 }
 
 // Entrada da lista dinâmica: digita nome (status name/searching) OU fixa um
@@ -208,6 +243,8 @@ export default function PlannerWizard({
 	// YouTube planner fields (só quando onlyYoutubeSelected)
 	const [youtubeTitle, setYoutubeTitle] = useState("");
 	const [youtubeDescription, setYoutubeDescription] = useState("");
+	const youtubeTitleRef = useRef<HTMLInputElement>(null);
+	const youtubeDescRef = useRef<HTMLTextAreaElement>(null);
 	// F5 — IA via OpenRouter: estado do botão "Gerar título + produtos pela descrição"
 	const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
 	const [aiSuggestError, setAiSuggestError] = useState("");
@@ -238,7 +275,9 @@ export default function PlannerWizard({
 	// nomes dos itens selecionados. Quando um item tem produtos, eles vencem o
 	// youtube_products fixo do planner na publicação — informado na UI.
 	const [selectedItemProducts, setSelectedItemProducts] = useState<Record<string, string>>({});
-	const [selectedItemProductsLoaded, setSelectedItemProductsLoaded] = useState(false);
+	// Flags de carregamento: setters usados para preservar sequência; o valor não
+	// é lido em lugar nenhum (estado de sincronização apenas).
+	const [, setSelectedItemProductsLoaded] = useState(false);
 	// REGRA ITEM > FIXO: produtos NÃO-duplicados de TODOS os itens selecionados
 	// (usado no aviso da UI). O runtime mesmo resolve por item na publicação.
 	const finalSelectedItemProducts = useMemo(() => {
@@ -311,20 +350,6 @@ export default function PlannerWizard({
 		);
 	}, [tiktokSelected, channels, selectedChannels]);
 
-	const onlyInstagramSelected = useMemo(() => {
-		return (
-			selectedChannels.length > 0 &&
-			!youtubeSelected &&
-			!tiktokSelected &&
-			selectedChannels.every(
-				(id) => {
-					const plat = (channels.find((c) => c.id === id)?.platform || "").toLowerCase();
-					return plat === "instagram" || plat === "";
-				},
-			)
-		);
-	}, [selectedChannels, youtubeSelected, tiktokSelected, channels]);
-
 	// Planners com canal YouTube não têm "Story": em planners mistos IG+YT o
 	// post do canal YT seria classificado como Short sem vídeo (falha permanente
 	// no publisher, ciclo após ciclo). Corrige automaticamente para Short.
@@ -358,7 +383,9 @@ export default function PlannerWizard({
 						setTiktokPrivacyLevel(String(opts[0]));
 					}
 				}
-			} catch {}
+			} catch {
+				/* opções de privacidade inválidas — mantém a atual */
+			}
 		})();
 		return () => { cancelled = true; };
 	}, [onlyTiktokSelected, selectedChannels]);
@@ -2442,10 +2469,23 @@ export default function PlannerWizard({
 													<label className="text-xs font-medium text-ios-text block">Título <span className="text-ios-red">*</span></label>
 													<span className="text-[11px] text-gray-400">{youtubeTitle.length}/100</span>
 												</div>
+												<div className="flex flex-wrap gap-1 mb-1.5">
+													{YOUTUBE_TEMPLATE_TAGS.map((tag) => (
+														<button
+															key={tag}
+															type="button"
+															onClick={() => insertYoutubeTemplateTag(youtubeTitleRef.current, youtubeTitle, setYoutubeTitle, tag, 100)}
+															className="px-1.5 py-0.5 rounded bg-ios-blue/10 text-ios-blue text-[10px] font-mono hover:bg-ios-blue/20 transition-colors"
+														>
+															{tag}
+														</button>
+													))}
+												</div>
 												<input
+													ref={youtubeTitleRef}
 													value={youtubeTitle}
 													onChange={(e) => setYoutubeTitle(e.target.value.slice(0,100))}
-													className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none"
+													className="w-full bg-white dark:bg-ios-card text-ios-text placeholder:text-gray-400 border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none"
 													placeholder="Título do Short (máx 100 caracteres)"
 													maxLength={100}
 												/>
@@ -2455,10 +2495,23 @@ export default function PlannerWizard({
 													<label className="text-xs font-medium text-ios-text block">Descrição</label>
 													<span className="text-[11px] text-gray-400">{youtubeDescription.length}/5000</span>
 												</div>
+												<div className="flex flex-wrap gap-1 mb-1.5">
+													{YOUTUBE_TEMPLATE_TAGS.map((tag) => (
+														<button
+															key={tag}
+															type="button"
+															onClick={() => insertYoutubeTemplateTag(youtubeDescRef.current, youtubeDescription, setYoutubeDescription, tag, 5000)}
+															className="px-1.5 py-0.5 rounded bg-ios-blue/10 text-ios-blue text-[10px] font-mono hover:bg-ios-blue/20 transition-colors"
+														>
+															{tag}
+														</button>
+													))}
+												</div>
 												<textarea
+													ref={youtubeDescRef}
 													value={youtubeDescription}
 													onChange={(e) => setYoutubeDescription(e.target.value.slice(0,5000))}
-													className="w-full bg-white dark:bg-ios-card border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none"
+													className="w-full bg-white dark:bg-ios-card text-ios-text placeholder:text-gray-400 border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none"
 													placeholder="Descrição do vídeo (máx 5000 caracteres). Suporta templates {post_title}, {post_caption}..."
 													maxLength={5000}
 												/>

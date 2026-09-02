@@ -103,7 +103,13 @@ type PrismaLike = {
 function cloneState(
 	state: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
-	return state ? JSON.parse(JSON.stringify(state)) : {};
+	if (!state) return {};
+	try {
+		return JSON.parse(JSON.stringify(state)) as Record<string, unknown>;
+	} catch {
+		// clone defensivo: estado inválido nunca derruba o caller
+		return {};
+	}
 }
 
 /**
@@ -313,10 +319,14 @@ export function getChannelHealth(channel: ChannelLike, now = new Date()) {
 	if (isTiktok) {
 		try {
 			const s = channel.settings ? JSON.parse(String(channel.settings)) : null;
+			// hasTiktokId é diagnóstico opcional (descomentado quando quiser validar)
+			// eslint-disable-next-line @typescript-eslint/no-unused-vars -- mantém documentado o campo de validação TikTok
 			const hasTiktokId = s && (s.tiktok_open_id || s.tiktok_user_id || s.open_id);
 			// Não bloqueia se settings ausente — deixa publisher validar (evita falso bloqueio em testes)
 			// Mas se quiser validar, descomente: if (!hasTiktokId) issues.push("missing_tiktok_session");
-		} catch {}
+		} catch {
+			// settings JSON inválido/ausente: validação best-effort, publisher decide
+		}
 	}
 
 	if (!isYoutube && !isTiktok && channel.token_source !== "redis" && channel.token_expires_at) {
@@ -424,6 +434,7 @@ export async function resolveCaptionTemplateVars(
 ): Promise<Record<string, string>> {
 	let title = "";
 	let itemCaption = "";
+	let itemProducts = "";
 	let libTags: string | null | undefined = (
 		selectedContent as { tags?: string | null } | null
 	)?.tags;
@@ -431,7 +442,7 @@ export async function resolveCaptionTemplateVars(
 	if (libId) {
 		const libItem = await prisma.contentItem.findFirst({
 			where: { id: libId, user_id: planner.user_id },
-			select: { title: true, caption: true, caption_youtube: true, caption_instagram: true, caption_tiktok: true, tags: true },
+			select: { title: true, caption: true, caption_youtube: true, caption_instagram: true, caption_tiktok: true, tags: true, youtube_products: true },
 		});
 		if (libItem) {
 			title = libItem.title || "";
@@ -443,6 +454,11 @@ export async function resolveCaptionTemplateVars(
 				libItem as FinalCaptionSource,
 			);
 			libTags = libItem.tags;
+			// {post_products}: ITEM > FIXO — produtos do vídeo na library vencem
+			// os do planner (mesma regra da publicação).
+			if (typeof libItem.youtube_products === "string" && libItem.youtube_products.trim()) {
+				itemProducts = libItem.youtube_products.trim();
+			}
 		}
 	}
 	// Fallbacks explícitos por último. `selectedContent.caption` fica
@@ -450,6 +466,12 @@ export async function resolveCaptionTemplateVars(
 	title =
 		title || selectedContent?.title_fallback || selectedContent?.title || "";
 	itemCaption = itemCaption || selectedContent?.caption_fallback || "";
+	// {post_products}: fixo do planner quando o item não tem produtos.
+	let products = itemProducts;
+	if (!products) {
+		const fixed = config["youtube_products"];
+		if (typeof fixed === "string" && fixed.trim()) products = fixed.trim();
+	}
 	const tz = getPlannerTimezone(config);
 	const dateStr = new Intl.DateTimeFormat("pt-BR", {
 		timeZone: tz,
@@ -478,9 +500,37 @@ export async function resolveCaptionTemplateVars(
 			.filter((t) => t.length > 1)
 			.join(" ");
 	}
+	// {post_products} fixo do planner pode estar em formato verbatim
+	// [{item:{...}}] (busca live do wizard) — para template em caption, reduzir
+	// a nomes legíveis: item title > query; JSON inválido vira CSV cru.
+	let productsText = "";
+	if (products) {
+		try {
+			const parsed = JSON.parse(products) as unknown;
+			if (Array.isArray(parsed)) {
+				const names = parsed
+					.map((p) => {
+						const it = (p as { item?: { title?: string } } | null)?.item;
+						const q = (p as { query?: string } | null)?.query;
+						return (it?.title || q || "").trim();
+					})
+					.filter(Boolean);
+				if (names.length) {
+					productsText = names.join(", ");
+				} else {
+					productsText = products;
+				}
+			} else {
+				productsText = products;
+			}
+		} catch {
+			productsText = products;
+		}
+	}
 	return {
 		"{post_title}": title || "",
 		"{post_caption}": itemCaption || "",
+		"{post_products}": productsText || "",
 		"{date}": dateStr,
 		"{channel_name}": channelName || "",
 		"{hashtags}": hashtags,
@@ -1170,6 +1220,10 @@ export async function buildPostData(opts: {
 		first_comment: firstComment,
 		scheduled_at: opts.now,
 		planner_id: opts.planner.id,
+	// SAFETY: o objeto montado acima já é o shape completo de PostUncheckedCreateInput
+	// (campos verificados um a um contra o schema); o cast `as unknown as` existe
+	// só para o Prisma aceitar literais sem campos opcionais — o TypeScript não
+	// infere findFirst dinâmico com selects parciais.
 	} as unknown as Prisma.PostUncheckedCreateInput;
 }
 

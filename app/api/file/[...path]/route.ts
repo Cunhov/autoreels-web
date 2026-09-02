@@ -31,24 +31,25 @@ function fileStream(path: string, range?: { start: number; end: number }) {
 // Nunca `*` com credenciais; reflete a origem apenas quand o host está na
 // whitelist (a TikTok/IG/YT leem mídia cross-origin a partir do app).
 const CORS_ALLOWED_ORIGINS = new Set([
-  "https://autoreels.cunhov.site",
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-  "http://localhost:52899",
-  "http://127.0.0.1:52899",
+    "https://autoreels.cunhov.site",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:52899",
+    "http://127.0.0.1:52899",
 ]);
 
 function corsHeaders(req: Request): Record<string, string> {
-  const origin = req.headers.get("origin") ?? "";
-  const isLocalhost =
-    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-  const allow = CORS_ALLOWED_ORIGINS.has(origin)
-    ? origin
-    : isLocalhost
-      ? origin
-      : "https://autoreels.cunhov.site";
-  if (!allow) return {};
-  return { "Access-Control-Allow-Origin": allow };
+    const origin = req.headers.get("origin") ?? "";
+    const isLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(
+        origin,
+    );
+    const allow = CORS_ALLOWED_ORIGINS.has(origin)
+        ? origin
+        : isLocalhost
+          ? origin
+          : "https://autoreels.cunhov.site";
+    if (!allow) return {};
+    return { "Access-Control-Allow-Origin": allow };
 }
 
 // Serve uploaded files stored in /app/data/uploads (Docker volume)
@@ -66,14 +67,14 @@ export async function OPTIONS(req: Request) {
 
 export async function HEAD(
     req: Request,
-    { params }: { params: Promise<{ path: string[] }> }
+    { params }: { params: Promise<{ path: string[] }> },
 ) {
     return handleFileRequest(req, params, true);
 }
 
 export async function GET(
     req: Request,
-    { params }: { params: Promise<{ path: string[] }> }
+    { params }: { params: Promise<{ path: string[] }> },
 ) {
     return handleFileRequest(req, params, false);
 }
@@ -81,15 +82,20 @@ export async function GET(
 async function handleFileRequest(
     req: Request,
     paramsPromise: Promise<{ path: string[] }>,
-    isHead: boolean
+    isHead: boolean,
 ) {
     const { path } = await paramsPromise;
     const filePath = path.join("/");
 
-    if (!filePath || filePath.includes("..") || filePath.startsWith("/") || filePath.includes("\\")) {
+    if (
+        !filePath ||
+        filePath.includes("..") ||
+        filePath.startsWith("/") ||
+        filePath.includes("\\")
+    ) {
         return new Response(JSON.stringify({ error: "Forbidden" }), {
             status: 403,
-            headers: { 'Content-Type': 'application/json' }
+            headers: { "Content-Type": "application/json" },
         });
     }
 
@@ -99,7 +105,8 @@ async function handleFileRequest(
     // BEFORE the uploads lookup, so the fetch from TikTok lands here and not in
     // public/ (which only mounts at the site root, not under /api/).
     if (filePath === "tiktokAGCJzVSd2DVJQz0POuClATtKTFkaq7pW.txt") {
-        const body = "tiktok-developers-site-verification=AGCJzVSd2DVJQz0POuClATtKTFkaq7pW";
+        const body =
+            "tiktok-developers-site-verification=AGCJzVSd2DVJQz0POuClATtKTFkaq7pW";
         return new Response(body, {
             status: 200,
             headers: {
@@ -113,21 +120,24 @@ async function handleFileRequest(
     // Also try collapsing duplicate leading path segment for old records
     // e.g. "admin/admin/file.mp4" → also try "admin/file.mp4"
     const parts = filePath.split("/");
-    const dedupedPath = parts.length >= 2 && parts[0] === parts[1]
-        ? parts.slice(1).join("/")
-        : null;
+    const dedupedPath =
+        parts.length >= 2 && parts[0] === parts[1]
+            ? parts.slice(1).join("/")
+            : null;
 
     const roots = [
         resolve(process.cwd(), "data", "uploads"),
         resolve(process.cwd(), "public", "uploads"),
     ];
     const relativePaths = [filePath, ...(dedupedPath ? [dedupedPath] : [])];
-    const candidatePaths = roots.flatMap(root =>
-        relativePaths.map(relativePath => {
-            const candidate = resolve(root, relativePath);
-            return candidate.startsWith(root + sep) ? candidate : null;
-        })
-    ).filter((candidate): candidate is string => Boolean(candidate));
+    const candidatePaths = roots
+        .flatMap((root) =>
+            relativePaths.map((relativePath) => {
+                const candidate = resolve(root, relativePath);
+                return candidate.startsWith(root + sep) ? candidate : null;
+            }),
+        )
+        .filter((candidate): candidate is string => Boolean(candidate));
 
     for (const candidate of candidatePaths) {
         try {
@@ -147,7 +157,7 @@ async function handleFileRequest(
                 ...corsHeaders(req),
                 "Accept-Ranges": "bytes",
                 "X-Content-Type-Options": "nosniff",
-                "ETag": etag,
+                ETag: etag,
                 "Last-Modified": lastModified,
             };
 
@@ -156,7 +166,7 @@ async function handleFileRequest(
                 return new Response(null, {
                     status: 304,
                     headers: {
-                        "ETag": etag,
+                        ETag: etag,
                         "Cache-Control": "public, max-age=604800, immutable",
                         ...corsHeaders(req),
                     },
@@ -166,7 +176,10 @@ async function handleFileRequest(
             if (range) {
                 const match = range.match(/^bytes=(\d*)-(\d*)$/);
                 if (!match) {
-                    return new Response(null, { status: 416, headers: baseHeaders });
+                    return new Response(null, {
+                        status: 416,
+                        headers: baseHeaders,
+                    });
                 }
 
                 const size = fileStat.size;
@@ -181,17 +194,28 @@ async function handleFileRequest(
                     if (!Number.isInteger(suffix) || suffix <= 0) {
                         return new Response(null, {
                             status: 416,
-                            headers: { ...baseHeaders, "Content-Range": `bytes */${size}` },
+                            headers: {
+                                ...baseHeaders,
+                                "Content-Range": `bytes */${size}`,
+                            },
                         });
                     }
                     start = Math.max(size - suffix, 0);
                     end = size - 1;
                 } else {
                     start = hasStart ? Number(match[1]) : 0;
-                    end = hasEnd ? Math.min(Number(match[2]), size - 1) : size - 1;
+                    end = hasEnd
+                        ? Math.min(Number(match[2]), size - 1)
+                        : size - 1;
                 }
 
-                if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || start >= size) {
+                if (
+                    !Number.isFinite(start) ||
+                    !Number.isFinite(end) ||
+                    start < 0 ||
+                    end < start ||
+                    start >= size
+                ) {
                     return new Response(null, {
                         status: 416,
                         headers: {
@@ -201,14 +225,17 @@ async function handleFileRequest(
                     });
                 }
 
-                return new Response(isHead ? null : fileStream(candidate, { start, end }), {
-                    status: 206,
-                    headers: {
-                        ...baseHeaders,
-                        "Content-Length": String(end - start + 1),
-                        "Content-Range": `bytes ${start}-${end}/${size}`,
+                return new Response(
+                    isHead ? null : fileStream(candidate, { start, end }),
+                    {
+                        status: 206,
+                        headers: {
+                            ...baseHeaders,
+                            "Content-Length": String(end - start + 1),
+                            "Content-Range": `bytes ${start}-${end}/${size}`,
+                        },
                     },
-                });
+                );
             }
 
             return new Response(isHead ? null : fileStream(candidate), {
@@ -224,6 +251,6 @@ async function handleFileRequest(
 
     return new Response(JSON.stringify({ error: "File not found" }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { "Content-Type": "application/json" },
     });
 }
