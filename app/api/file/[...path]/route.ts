@@ -27,13 +27,37 @@ function fileStream(path: string, range?: { start: number; end: number }) {
     return Readable.toWeb(stream) as ReadableStream;
 }
 
+// ─── CORS: whitelist de origens conhecidas (produção + localhost dev) ─────
+// Nunca `*` com credenciais; reflete a origem apenas quand o host está na
+// whitelist (a TikTok/IG/YT leem mídia cross-origin a partir do app).
+const CORS_ALLOWED_ORIGINS = new Set([
+  "https://autoreels.cunhov.site",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:52899",
+  "http://127.0.0.1:52899",
+]);
+
+function corsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("origin") ?? "";
+  const isLocalhost =
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  const allow = CORS_ALLOWED_ORIGINS.has(origin)
+    ? origin
+    : isLocalhost
+      ? origin
+      : "https://autoreels.cunhov.site";
+  if (!allow) return {};
+  return { "Access-Control-Allow-Origin": allow };
+}
+
 // Serve uploaded files stored in /app/data/uploads (Docker volume)
 // Also checks /public/uploads for backwards compatibility
-export async function OPTIONS() {
+export async function OPTIONS(req: Request) {
     return new Response(null, {
         status: 204,
         headers: {
-            "Access-Control-Allow-Origin": "*",
+            ...corsHeaders(req),
             "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type, Authorization",
         },
@@ -66,6 +90,22 @@ async function handleFileRequest(
         return new Response(JSON.stringify({ error: "Forbidden" }), {
             status: 403,
             headers: { 'Content-Type': 'application/json' }
+        });
+    }
+
+    // ─── TikTok URL-property verification (sandbox/production) ─────────────
+    // The console asks for ownership proof under https://host/api/file/<signature>.
+    // Serve an exact-name whitelist (never arbitrary public/ files) as text/plain
+    // BEFORE the uploads lookup, so the fetch from TikTok lands here and not in
+    // public/ (which only mounts at the site root, not under /api/).
+    if (filePath === "tiktokAGCJzVSd2DVJQz0POuClATtKTFkaq7pW.txt") {
+        const body = "tiktok-developers-site-verification=AGCJzVSd2DVJQz0POuClATtKTFkaq7pW";
+        return new Response(body, {
+            status: 200,
+            headers: {
+                "Content-Type": "text/plain; charset=utf-8",
+                "Cache-Control": "public, max-age=300",
+            },
         });
     }
 
@@ -104,7 +144,7 @@ async function handleFileRequest(
             const baseHeaders = {
                 "Content-Type": mimeType,
                 "Cache-Control": "public, max-age=604800, immutable",
-                "Access-Control-Allow-Origin": "*",
+                ...corsHeaders(req),
                 "Accept-Ranges": "bytes",
                 "X-Content-Type-Options": "nosniff",
                 "ETag": etag,
@@ -118,7 +158,7 @@ async function handleFileRequest(
                     headers: {
                         "ETag": etag,
                         "Cache-Control": "public, max-age=604800, immutable",
-                        "Access-Control-Allow-Origin": "*",
+                        ...corsHeaders(req),
                     },
                 });
             }
