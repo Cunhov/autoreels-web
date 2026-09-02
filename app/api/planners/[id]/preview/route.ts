@@ -4,7 +4,9 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getSessionUserId } from "@/lib/api";
 import {
+    buildTiktokOptionsForPost,
     describeChannelHealth,
+    mapTiktokMediaType,
     resolveCaptionTemplateVars,
     resolvePlannerRuntime,
     substituteCaptionTemplate,
@@ -259,30 +261,80 @@ export async function GET(
         })(),
     };
 
-    // TikTok fields — preview para wizard/runtime (A4)
+    // TikTok fields — preview espelha EXATAMENTE o que o post vai enviar: o
+    // payload vem do MESMO buildTiktokOptionsForPost usado na criação
+    // (buildPostData) e na propagação M5 — nunca um parser separado que possa
+    // divergir do que será gravado em Post.tiktok_options. Complementa com
+    // media_type (derivado do runtime, como buildPostData grava em
+    // Post.media_type) e caption_tiktok (caption final resolvida do runtime).
+    const firstChannel = (planner.channels || [])[0] as
+        | { name?: string | null; platform?: string | null }
+        | undefined;
+    const tiktokOptionsRaw = await buildTiktokOptionsForPost({
+        prisma,
+        planner: { user_id: userId },
+        config: plannerConfig,
+        selectedContent:
+            runtime.selectedContent as Parameters<
+                typeof buildTiktokOptionsForPost
+            >[0]["selectedContent"],
+        channelName: firstChannel?.name || "",
+        now,
+        caption: finalCaption || "",
+        platform: firstChannel?.platform ?? null,
+    });
+    let parsedTiktokOptions: Record<string, unknown> = {};
+    if (tiktokOptionsRaw) {
+        try {
+            parsedTiktokOptions = JSON.parse(
+                tiktokOptionsRaw,
+            ) as Record<string, unknown>;
+        } catch {
+            /* SAFETY: malformado — preview cai nos defaults abaixo */
+        }
+    }
     const tiktokFields = {
-        caption_tiktok: await (async () => {
-            const sel = runtime.selectedContent as { id?: string; folder_id?: string; caption_tiktok?: string | null } | null | undefined;
-            if (sel && typeof (sel as Record<string, unknown>).caption_tiktok === "string") {
-                return String((sel as Record<string, unknown>).caption_tiktok);
-            }
-            const libId = sel?.id || sel?.folder_id;
-            if (!libId) {
-                const cfgCap = (plannerConfig as Record<string, unknown>).tiktok_caption ?? (plannerConfig as Record<string, unknown>).tiktok_title;
-                return typeof cfgCap === "string" ? String(cfgCap) : null;
-            }
-            try {
-                const it = await prisma.contentItem.findFirst({
-                    where: { id: libId, user_id: userId },
-                    select: { caption_tiktok: true, caption: true },
-                });
-                if (!it) return null;
-                return (it as { caption_tiktok?: string | null; caption?: string | null }).caption_tiktok ?? (it as { caption?: string | null }).caption ?? null;
-            } catch { return null; }
-        })(),
-        tiktok_caption: typeof (plannerConfig as Record<string, unknown>).tiktok_caption === "string" ? String((plannerConfig as Record<string, unknown>).tiktok_caption) : null,
-        tiktok_title: typeof (plannerConfig as Record<string, unknown>).tiktok_title === "string" ? String((plannerConfig as Record<string, unknown>).tiktok_title) : null,
-        tiktok_privacy_level: typeof (plannerConfig as Record<string, unknown>).tiktok_privacy_level === "string" ? String((plannerConfig as Record<string, unknown>).tiktok_privacy_level) : null,
+        // available=false quando o planner não é TikTok (buildTiktokOptionsForPost
+        // retorna null fora da plataforma). O card no UI decide pela plataforma
+        // dos channels; o flag documenta o contrato para consumidores futuros.
+        available: tiktokOptionsRaw !== null,
+        title:
+            typeof parsedTiktokOptions.title === "string"
+                ? parsedTiktokOptions.title
+                : null,
+        privacy_level:
+            typeof parsedTiktokOptions.privacy_level === "string"
+                ? parsedTiktokOptions.privacy_level
+                : null,
+        disable_duet: parsedTiktokOptions.disable_duet === true,
+        disable_stitch: parsedTiktokOptions.disable_stitch === true,
+        disable_comment: parsedTiktokOptions.disable_comment === true,
+        video_cover_timestamp_ms:
+            typeof parsedTiktokOptions.video_cover_timestamp_ms === "number"
+                ? parsedTiktokOptions.video_cover_timestamp_ms
+                : null,
+        brand_content_toggle:
+            parsedTiktokOptions.brand_content_toggle === true,
+        brand_organic_toggle:
+            parsedTiktokOptions.brand_organic_toggle === true,
+        media_type: mapTiktokMediaType(runtime.mediaType),
+        // TikTok v1: apenas vídeo — índice de capa de foto (photo posts) fica
+        // null até a fase 2 habilitar imagem/carrossel.
+        photo_cover_index: null,
+        caption_tiktok: finalCaption || "",
+        // Raw mirrors do config — compat com consumidores antigos do campo.
+        tiktok_caption:
+            typeof plannerConfig.tiktok_caption === "string"
+                ? String(plannerConfig.tiktok_caption)
+                : null,
+        tiktok_title:
+            typeof plannerConfig.tiktok_title === "string"
+                ? String(plannerConfig.tiktok_title)
+                : null,
+        tiktok_privacy_level:
+            typeof plannerConfig.tiktok_privacy_level === "string"
+                ? String(plannerConfig.tiktok_privacy_level)
+                : null,
     };
 
     // Isolation: detectar planners mistos (grandfathered) — não bloqueia preview, mas expõe warning (TikTok tem mensagem dedicada)

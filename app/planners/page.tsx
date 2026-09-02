@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import {
 	Sliders,
 	Plus,
@@ -18,6 +18,7 @@ import {
 	Instagram,
 	Copy,
 	Layers,
+	Music,
 	Youtube,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
@@ -71,6 +72,195 @@ interface PlannerPreviewData {
 		caption?: string | null;
 	};
 	gating?: { gated?: string | null; next_run_at?: string | null };
+	// T2: preview do que o post vai enviar — espelha youtube_fields/tiktok_fields
+	// expostos pela rota (mesmos campos que buildYoutubeOptionsForPost /
+	// buildTiktokOptionsForPost gravam em youtube_options/tiktok_options).
+	youtube_fields?: {
+		youtube_title?: string | null;
+		youtube_description?: string | null;
+		youtube_privacy?: string | null;
+		youtube_made_for_kids?: boolean | null;
+		youtube_monetize_with_ads?: boolean | null;
+		youtube_category_id?: string | number | null;
+		youtube_pinned_comment?: string | null;
+		youtube_products?: Array<{
+			query?: string;
+			title?: string;
+			item?: unknown;
+		}> | null;
+	};
+	tiktok_fields?: {
+		available?: boolean;
+		title?: string | null;
+		privacy_level?: string | null;
+		disable_duet?: boolean;
+		disable_stitch?: boolean;
+		disable_comment?: boolean;
+		video_cover_timestamp_ms?: number | null;
+		brand_content_toggle?: boolean;
+		brand_organic_toggle?: boolean;
+		media_type?: "video" | "photo" | "carousel";
+		photo_cover_index?: number | null;
+		caption_tiktok?: string | null;
+	};
+}
+
+/** Rótulo PT-BR do código cru de privacy do TikTok (API exige o código cru). */
+const TIKTOK_PRIVACY_LABELS: Record<string, string> = {
+	PUBLIC_TO_EVERYONE: "Público",
+	MUTUAL_FOLLOW_FRIENDS: "Amigos mútuos",
+	FOLLOWER_OF_CREATOR: "Seguidores do criador",
+	SELF_ONLY: "Somente eu",
+};
+
+const YOUTUBE_PRIVACY_LABELS: Record<string, string> = {
+	PUBLIC: "Público",
+	PRIVATE: "Privado",
+	UNLISTED: "Não listado",
+};
+
+interface PreviewFieldRow {
+	label: string;
+	value: string;
+}
+
+/** Linhas do card de preview do TikTok (rótulos PT-BR, ordem do payload). */
+function tiktokPreviewRows(
+	f: NonNullable<PlannerPreviewData["tiktok_fields"]>,
+): PreviewFieldRow[] {
+	const rows: PreviewFieldRow[] = [];
+	if (f.title) rows.push({ label: "Título", value: f.title });
+	if (f.privacy_level)
+		rows.push({
+			label: "Privacidade",
+			value: TIKTOK_PRIVACY_LABELS[f.privacy_level] ?? f.privacy_level,
+		});
+	rows.push({
+		label: "Duet",
+		value: f.disable_duet ? "desabilitado" : "habilitado",
+	});
+	rows.push({
+		label: "Stitch",
+		value: f.disable_stitch ? "desabilitado" : "habilitado",
+	});
+	rows.push({
+		label: "Comentários",
+		value: f.disable_comment ? "desabilitados" : "habilitados",
+	});
+	rows.push({
+		label: "Capa (vídeo)",
+		value:
+			f.video_cover_timestamp_ms != null && f.video_cover_timestamp_ms > 0
+				? `${(f.video_cover_timestamp_ms / 1000)
+						.toFixed(1)
+						.replace(".", ",")} s`
+				: "Automática",
+	});
+	rows.push({
+		label: "Marca (content)",
+		value: f.brand_content_toggle ? "Sim" : "Não",
+	});
+	rows.push({
+		label: "Marca (orgânico)",
+		value: f.brand_organic_toggle ? "Sim" : "Não",
+	});
+	rows.push({
+		label: "Mídia",
+		value:
+			f.media_type === "photo"
+				? "Foto"
+				: f.media_type === "carousel"
+					? "Carrossel"
+					: "Vídeo",
+	});
+	if (f.photo_cover_index != null)
+		rows.push({ label: "Capa da foto", value: String(f.photo_cover_index) });
+	if (f.caption_tiktok) rows.push({ label: "Legenda", value: f.caption_tiktok });
+	return rows;
+}
+
+/** Linhas do card de preview do YouTube (espelha o padrão usado no TikTok). */
+function youtubePreviewRows(
+	f: NonNullable<PlannerPreviewData["youtube_fields"]>,
+): PreviewFieldRow[] {
+	const rows: PreviewFieldRow[] = [];
+	if (f.youtube_title) rows.push({ label: "Título", value: f.youtube_title });
+	if (f.youtube_description)
+		rows.push({ label: "Descrição", value: f.youtube_description });
+	if (f.youtube_privacy)
+		rows.push({
+			label: "Privacidade",
+			value:
+				YOUTUBE_PRIVACY_LABELS[f.youtube_privacy] ?? f.youtube_privacy,
+		});
+	if (f.youtube_made_for_kids != null)
+		rows.push({
+			label: "Feito para crianças",
+			value: f.youtube_made_for_kids ? "Sim" : "Não",
+		});
+	if (f.youtube_monetize_with_ads != null)
+		rows.push({
+			label: "Monetizar com anúncios",
+			value: f.youtube_monetize_with_ads ? "Sim" : "Não",
+		});
+	if (f.youtube_category_id != null && f.youtube_category_id !== "")
+		rows.push({
+			label: "Categoria",
+			value: String(f.youtube_category_id),
+		});
+	if (f.youtube_pinned_comment)
+		rows.push({
+			label: "Comentário fixado",
+			value: f.youtube_pinned_comment,
+		});
+	const products = Array.isArray(f.youtube_products)
+		? f.youtube_products
+		: [];
+	if (products.length > 0)
+		rows.push({
+			label: "Produtos",
+			value: `${products.length} produto(s) — ${products
+				.map((p) => p.title || p.query || "")
+				.filter(Boolean)
+				.join(", ")}`,
+		});
+	return rows;
+}
+
+/** Card do preview em grid label/valor (mesmo visual do card de Canais). */
+function PreviewFieldsCard({
+	title,
+	icon,
+	rows,
+}: {
+	title: string;
+	icon: ReactNode;
+	rows: PreviewFieldRow[];
+}) {
+	if (rows.length === 0) return null;
+	return (
+		<div className="bg-ios-card border border-ios-separator rounded-xl p-4">
+			<div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-ios-text-secondary mb-2">
+				{icon}
+				{title}
+			</div>
+			<div className="space-y-1.5">
+				{rows.map((row) => (
+					<div
+						key={row.label}
+						className="flex items-start justify-between gap-4 text-sm"
+					>
+						<span className="text-ios-secondary shrink-0">
+							{row.label}
+						</span>
+						<span className="font-medium text-right text-ios-text break-words min-w-0">
+							{row.value}
+						</span>
+					</div>
+				))}
+			</div>
+		</div>
+	);
 }
 
 function frequencyText(config: unknown): string {
@@ -991,6 +1181,36 @@ export default function PlannersPage() {
 												{previewData?.runtime?.caption || "Sem legenda"}
 											</p>
 										</div>
+										{(() => {
+											// T2: cards do que o post vai enviar — espelham os campos
+											// expostos pela rota de preview. Só aparecem quando a
+											// plataforma correspondente está no planner (badge).
+											const chans = previewData?.channels || [];
+											const hasTiktok = chans.some(
+												(c) => (c.platform || "").toLowerCase() === "tiktok",
+											);
+											const hasYt = chans.some(
+												(c) => (c.platform || "").toLowerCase() === "youtube",
+											);
+											return (
+												<>
+													{hasTiktok && previewData?.tiktok_fields ? (
+														<PreviewFieldsCard
+															title="TikTok · O que será enviado"
+															icon={<Music size={12} />}
+															rows={tiktokPreviewRows(previewData.tiktok_fields)}
+														/>
+													) : null}
+													{hasYt && previewData?.youtube_fields ? (
+														<PreviewFieldsCard
+															title="YouTube · Campos do Short"
+															icon={<Youtube size={12} />}
+															rows={youtubePreviewRows(previewData.youtube_fields)}
+														/>
+													) : null}
+												</>
+											);
+										})()}
 										<div className="bg-ios-card border border-ios-separator rounded-xl p-4">
 											<div className="text-xs uppercase tracking-wide text-ios-text-secondary mb-2">
 												Canais
