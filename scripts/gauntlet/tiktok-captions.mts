@@ -20,6 +20,10 @@ import {
   normalizeTiktokPrivacyLevel,
   buildTiktokOptionsForPost,
 } from "@/lib/planner-runtime";
+import {
+  TIKTOK_PRIVACY_LABELS,
+  labelTiktokPrivacy,
+} from "@/lib/planner-config";
 
 let pass = 0, fail = 0;
 function check(label: string, ok: boolean, detail = "") {
@@ -62,6 +66,16 @@ async function run() {
   check("normalize privacy inválido → null", normalizeTiktokPrivacyLevel("ROGUE") === null);
   check("normalize privacy vazio → null", normalizeTiktokPrivacyLevel("") === null);
   check("normalize privacy respeita allowed", normalizeTiktokPrivacyLevel("SELF_ONLY", ["PUBLIC_TO_EVERYONE"]) === "SELF_ONLY" /* fallback global permite mesmo não no allowed */);
+
+  // T5 — labels PT-BR de privacidade (UI-only; values crus preservados)
+  check("label PUBLIC_TO_EVERYONE → Público (todos)", labelTiktokPrivacy("PUBLIC_TO_EVERYONE") === "Público (todos)", labelTiktokPrivacy("PUBLIC_TO_EVERYONE"));
+  check("label MUTUAL_FOLLOW_FRIENDS → Amigos mútuos", labelTiktokPrivacy("MUTUAL_FOLLOW_FRIENDS") === "Amigos mútuos");
+  check("label FOLLOWER_OF_CREATOR → Seguidores do criador", labelTiktokPrivacy("FOLLOWER_OF_CREATOR") === "Seguidores do criador");
+  check("label SELF_ONLY → Só eu", labelTiktokPrivacy("SELF_ONLY") === "Só eu");
+  check("label desconhecido → raw + (personalizado)", labelTiktokPrivacy("WHATEVER_CREATOR_OPT") === "WHATEVER_CREATOR_OPT (personalizado)", labelTiktokPrivacy("WHATEVER_CREATOR_OPT"));
+  check("label case-insensitive", labelTiktokPrivacy("self_only") === "Só eu", labelTiktokPrivacy("self_only"));
+  check("label null/vazio → vazio", labelTiktokPrivacy(null) === "" && labelTiktokPrivacy("") === "");
+  check("dicionário traz as 4 opções oficiais", ["PUBLIC_TO_EVERYONE", "MUTUAL_FOLLOW_FRIENDS", "FOLLOWER_OF_CREATOR", "SELF_ONLY"].every((k) => typeof TIKTOK_PRIVACY_LABELS[k] === "string"));
 
   // buildTiktokOptionsForPost (tiktok_options JSON)
   const optionsJson = await buildTiktokOptionsForPost({

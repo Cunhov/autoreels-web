@@ -809,6 +809,10 @@ async function buildYoutubeOptionsForPost(opts: {
 /**
  * Helper de TikTok: normaliza privacy_level com fallback do creator_info.
  * Exportado para A4 implementar buildTiktokOptionsForPost completo.
+ *
+ * IMPORTANTE (T5): esta função deve SEMPRE retornar o VALUE cru
+ * (PUBLIC_TO_EVERYONE, SELF_ONLY, ...) — a API TikTok exige o código cru.
+ * Rótulos PT-BR são exclusivos de UI via labelTiktokPrivacy (planner-config).
  */
 export function getTiktokPrivacyOptions(fallback?: string[]): string[] {
 	if (fallback && Array.isArray(fallback) && fallback.length > 0) return fallback;
@@ -827,10 +831,11 @@ export function normalizeTiktokPrivacyLevel(
 }
 
 /**
- * A3 stub: monta tiktok_options JSON para o Post.
- * A4 completará com validação via creator_info, brand eligibility, etc.
- * Retorna JSON string ou null se não for canal TikTok.
- * NÃO lança — retorna null quando não há dados.
+ * Monta tiktok_options JSON para o Post (vídeo, foto única T1 e carrossel de
+ * fotos T3). Retorna JSON string ou null se não for canal TikTok.
+ * Lança Error PT-BR apenas para carrossel de fotos inválido — menos de 2 ou
+ * mais de 10 imagens, ou foto de capa fora do intervalo — para o post nunca
+ * chegar ao publisher nesse estado.
  */
 export async function buildTiktokOptionsForPost(opts: {
 	prisma: PrismaLike;
@@ -846,18 +851,26 @@ export async function buildTiktokOptionsForPost(opts: {
 	// sempre prioriza post.image_url).
 	mediaType?: string | null;
 	mediaUrl?: string | null;
+	// T3 carrossel: children RESOLVIDOS pelo runtime (pastas da library →
+	// sub-items) — buildPostData passa runtime.children; a propagação deixa
+	// undefined e usa os fallbacks de selectedContent.children_urls e
+	// postChildrenUrls.
+	children?: { url: string; type: string; thumbnail_url?: string | null }[];
+	// T3: Post.children_urls (JSON) — fallback da propagação p/ carrossel.
+	postChildrenUrls?: string | null;
 }): Promise<string | null> {
 	const { config, caption } = opts;
 	const cfg = config as Record<string, unknown>;
 	const isTiktok = String(opts.platform || "").toLowerCase() === "tiktok";
 	if (!isTiktok) return null;
-	// T1: foto = media_type IMAGE (config do item selecionado; buildPostData passa
-	// o runtime resolvido — propagação usa selectedContent.media_type).
+	// Foto TikTok = IMAGE (foto única, T1) ou CAROUSEL (2..10 imagens, T3).
+	// buildPostData passa o runtime resolvido; propagação usa selectedContent.media_type.
 	const selectedMediaType = (
 		(opts.mediaType || "") ||
 		String((opts.selectedContent as PlannerContentItem | null | undefined)?.media_type || "")
 	).toUpperCase();
-	const isPhoto = selectedMediaType === "IMAGE";
+	const isPhoto = selectedMediaType === "IMAGE" || selectedMediaType === "CAROUSEL";
+	const isCarouselPhoto = selectedMediaType === "CAROUSEL";
 	// Resolve privacy com fallback
 	const rawPrivacy =
 		(typeof cfg["tiktok_privacy_level"] === "string" ? String(cfg["tiktok_privacy_level"]) : null) ??
@@ -914,26 +927,70 @@ export async function buildTiktokOptionsForPost(opts: {
 		...(brand_content_toggle ? { brand_content_toggle: true } : {}),
 		...(brand_organic_toggle ? { brand_organic_toggle: true } : {}),
 	};
-	// T1 foto: espelha a URL única do item (PULL_FROM_URL exige URL https — o
-	// publisher valida o https e usa post.image_url como fonte da verdade).
+	// Foto (T1 foto única / T3 carrossel): espelha as URLs das imagens no
+	// tiktok_options (PULL_FROM_URL exige URL https — o publisher valida o https
+	// após makeAbsoluteUrl e usa photo_urls como fonte da verdade).
 	if (isPhoto) {
-		const photoUrl = String(
-			(opts.mediaUrl || "") ||
-				((opts.selectedContent as PlannerContentItem | null | undefined)?.url || ""),
-		).trim();
-		payload["photo_urls"] = photoUrl ? [photoUrl] : [];
-		payload["photo_cover_index"] = 0;
+		const selectedContent = opts.selectedContent as PlannerContentItem | null | undefined;
+		let photoUrls: string[];
+		if (isCarouselPhoto) {
+			// T3 carrossel: 2..10 URLs — dos children resolvidos (runtime), das
+			// children_urls do config (propagação) e/ou do Post.children_urls (JSON).
+			const fromSelected: { url: string }[] =
+				selectedContent?.children_urls || selectedContent?.carousel_items || [];
+			const fromPostRaw = opts.postChildrenUrls;
+			let fromPost: { url?: string }[] = [];
+			if (fromPostRaw) {
+				try {
+					const parsed = JSON.parse(fromPostRaw) as unknown;
+					if (Array.isArray(parsed)) fromPost = parsed as { url?: string }[];
+				} catch {
+					/* malformado — fallback silencioso */
+				}
+			}
+			const raw: string[] = [
+				...(opts.children || []).map((c) => String(c.url || "").trim()),
+				...fromSelected.map((c) => String(c.url || "").trim()),
+				...fromPost.map((c) => String((c as { url?: string }).url || "").trim()),
+			].filter(Boolean);
+			photoUrls = [...new Set(raw)];
+			// T3: carrossel de fotos TikTok exige 2..10 imagens — erro PT-BR já na
+			// criação do post (1 imagem em modo carrossel nunca chega ao publisher).
+			if (photoUrls.length < 2 || photoUrls.length > 10) {
+				throw new Error(
+					`Carrossel de fotos TikTok exige entre 2 e 10 imagens (recebidas: ${photoUrls.length})`,
+				);
+			}
+		} else {
+			const single = String(
+				(opts.mediaUrl || "") || (selectedContent?.url || ""),
+			).trim();
+			photoUrls = single ? [single] : [];
+		}
+		// Capa: tiktok_photo_cover_index (0-based; default 0 = 1ª foto). Fora do
+		// intervalo → erro PT-BR (defesa: dropdown do wizard garante 0..9).
+		let coverIndex = 0;
+		const coverRaw = cfg["tiktok_photo_cover_index"];
+		if (coverRaw !== undefined && coverRaw !== null && coverRaw !== "") {
+			const n = Number(coverRaw);
+			if (Number.isInteger(n) && n >= 0) coverIndex = n;
+		}
+		if (photoUrls.length > 0 && (coverIndex < 0 || coverIndex >= photoUrls.length)) {
+			throw new Error(
+				`Foto de capa do carrossel TikTok inválida: índice ${coverIndex} fora de 0..${photoUrls.length - 1}`,
+			);
+		}
+		payload["photo_urls"] = photoUrls;
+		payload["photo_cover_index"] = coverIndex;
 	}
 	return JSON.stringify(payload);
 }
 
-/** Valida se o mediaType é suportado para TikTok (v2: vídeo + foto; carrossel na fase própria). */
+/** Valida se o mediaType é suportado para TikTok (v2: vídeo + foto única;
+ *  T3: carrossel de fotos 2..10 via content/init). */
 export function validateTiktokMediaType(mediaType: string | undefined | null): { ok: boolean; error?: string } {
 	const m = String(mediaType || "").toUpperCase();
-	if (m === "REELS" || m === "VIDEO" || m === "IMAGE") return { ok: true };
-	if (m === "CAROUSEL") {
-		return { ok: false, error: "TikTok: carrossel de fotos ainda não é suportado — use Vídeo TikTok ou Foto TikTok." };
-	}
+	if (m === "REELS" || m === "VIDEO" || m === "IMAGE" || m === "CAROUSEL") return { ok: true };
 	// STORIES também bloqueado para TikTok
 	if (m === "STORIES") return { ok: false, error: "TikTok: apenas vídeo ou foto é suportado. Stories não são suportados." };
 	return { ok: true };
@@ -1053,8 +1110,10 @@ export async function buildPostData(opts: {
 	let tiktokOptions: string | null = null;
 	let tiktokType: string | null = null;
 	if (isTiktokChannel) {
-		const isPhoto =
-			String(runtime.mediaType || "").toUpperCase() === "IMAGE";
+		// T3: foto TikTok = IMAGE (única) ou CAROUSEL (2..10) — ambos "photo" via
+		// content/init; vídeo continua "video" (video/init).
+		const mediaUpper = String(runtime.mediaType || "").toUpperCase();
+		const isPhoto = mediaUpper === "IMAGE" || mediaUpper === "CAROUSEL";
 		tiktokType = isPhoto ? "photo" : "video";
 		tiktokOptions = await buildTiktokOptionsForPost({
 			prisma: opts.prisma,
@@ -1066,8 +1125,9 @@ export async function buildPostData(opts: {
 			now: opts.now,
 			caption,
 			platform: opts.channel.platform,
-			mediaType: isPhoto ? "IMAGE" : "REELS",
+			mediaType: isPhoto ? (mediaUpper === "CAROUSEL" ? "CAROUSEL" : "IMAGE") : "REELS",
 			mediaUrl: runtime.mediaUrl,
+			children: isPhoto ? (runtime.children || []) : undefined,
 		});
 	}
 
@@ -1137,6 +1197,7 @@ const CAPTION_PROPAGATION_KEYS = [
   "tiktok_disable_stitch",
   "tiktok_disable_comment",
   "tiktok_video_cover_timestamp_ms",
+  "tiktok_photo_cover_index",
   "tiktok_brand_content_toggle",
   "tiktok_brand_organic_toggle",
   "collaborators",
@@ -1371,6 +1432,11 @@ export async function propagatePlannerConfigToPendingPosts(
           now,
           caption: newCaption,
           platform: channelPlatform,
+          // T3: propagação de foto/carrossel — re-deriva photo_urls/photo_cover_index
+          // a partir do que o POST já persistiu (children_urls) + entrada do content.
+          mediaType: selectedContent?.media_type || null,
+          mediaUrl: String(post.image_url || "") || null,
+          postChildrenUrls: post.children_urls ? String(post.children_urls) : null,
         });
         if (rebuilt !== null) newTiktokOptions = rebuilt;
       } catch { /* SAFETY: best-effort opcional — não abortar propagação */ }

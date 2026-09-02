@@ -449,6 +449,7 @@ export const TIKTOK_ERROR_MAP: Record<string, string> = {
   photo_not_found: "Foto não encontrada — verifique as URLs da imagem",
   photo_url_invalid: "URL da foto inválida — use uma URL https acessível",
   photo_cover_index_out_of_range: "Índice de capa da foto fora do intervalo de imagens",
+
   chunk_upload_failed: "Falha no upload do vídeo — tente novamente",
   upload_failed: "Falha no upload do vídeo — tente novamente",
   publish_failed: "Falha ao publicar no TikTok — tente novamente",
@@ -768,14 +769,22 @@ export interface CreateTiktokPhotoInitResult {
 }
 
 /**
- * Valida URLs de foto para content/init: array não-vazio de URLs https absolutas.
+ * Valida URLs de foto para content/init: 1..10 URLs https absolutas (T3:
+ * carrossel de fotos aceita de 1 a 10 imagens).
  * Retorna mensagem PT-BR ou null quando válido.
  */
+export const TIKTOK_PHOTO_MIN_IMAGES = 1;
+export const TIKTOK_PHOTO_MAX_IMAGES = 10;
 export function validateTiktokPhotoUrls(photoUrls: string[] | null | undefined): string | null {
   if (!photoUrls || photoUrls.length === 0) return "Foto do TikTok exige ao menos uma URL de imagem (PULL_FROM_URL)";
+  if (photoUrls.length < TIKTOK_PHOTO_MIN_IMAGES || photoUrls.length > TIKTOK_PHOTO_MAX_IMAGES) {
+    return `Carrossel de fotos TikTok aceita entre ${TIKTOK_PHOTO_MIN_IMAGES} e ${TIKTOK_PHOTO_MAX_IMAGES} imagens (recebidas: ${photoUrls.length})`;
+  }
   for (const raw of photoUrls) {
     const u = String(raw || "").trim();
     if (!u) return "Foto do TikTok exige URLs de imagem não vazias";
+    // HTTPS apenas (T3): a API exige domínio verificado via URL https absoluta
+    // (PULL_FROM_URL). HTTP é rejeitado antes de qualquer chamada externa.
     if (!/^https:\/\//i.test(u)) return "Foto do TikTok exige URLs https absolutas (PULL_FROM_URL)";
     if (u.length > 2048) return "URL da foto do TikTok muito longa (máx. 2048 caracteres)";
   }
@@ -789,7 +798,7 @@ export function validateTiktokPhotoCoverIndex(coverIndex: number | undefined, ph
 }
 
 /**
- * Monta o payload do content/init para FOTO:
+ * Monta o payload do content/init para FOTO (foto única ou carrossel de fotos):
  *   POST https://open.tiktokapis.com/v2/post/publish/content/init/
  *   { post_mode: "DIRECT_POST", media_type: "IMAGE",
  *     post_info: { title, privacy_level, disable_duet, disable_stitch, disable_comment, ... },

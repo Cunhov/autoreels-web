@@ -612,6 +612,7 @@ interface TiktokPublishPost {
   video_url?: string | null;
   image_url?: string | null;
   children_urls?: string | null;
+  media_type?: string | null;
   tiktok_type?: string | null;
   tiktok_options?: string | null;
   tiktok_publish_id?: string | null;
@@ -750,18 +751,40 @@ async function publishTiktokPost(opts: {
   // Resolve proxy (sempre repassado)
   const proxyUrl = getChannelProxyUrl(post.channel as unknown as { proxy_url?: string | null; settings?: string | null }) ?? null;
 
-  // Determinar mediaUrl: vídeo → post.video_url; FOTO → post.image_url
-  // (item único em /api/file/...) com fallback p/ tiktok_options.photo_urls.
+  // Determinar mediaUrl: vídeo → post.video_url; FOTO → imagem principal
+  // (post.image_url) com fallback p/ tiktok_options.photo_urls[0].
   const mediaUrl = isTiktokPhoto
     ? (post.image_url || "").trim() ||
       ((tiktokOptions.photo_urls && tiktokOptions.photo_urls.length > 0
         ? String(tiktokOptions.photo_urls[0] || "").trim()
         : ""))
     : (post.video_url || "").trim();
-  if (!mediaUrl) {
-    const msg = isTiktokPhoto
-      ? "TikTok FOTO exige imagem (image_url ausente)"
-      : "TikTok exige vídeo (video_url ausente)";
+
+  // T3: lista de URLs da FOTO — children_urls (JSON [{url,type}]) >
+  // tiktok_options.photo_urls > image_url único. O carrossel de fotos TikTok
+  // reusa children_urls (mesma estrutura do carrossel IG).
+  let photoUrls: string[] = [];
+  if (isTiktokPhoto) {
+    if (post.children_urls) {
+      try {
+        const parsed = JSON.parse(post.children_urls) as unknown;
+        if (Array.isArray(parsed)) {
+          photoUrls = parsed
+            .map((c) => String((c as { url?: string })?.url || "").trim())
+            .filter(Boolean);
+        }
+      } catch {
+        // malformado → fallbacks abaixo
+      }
+    }
+    if (photoUrls.length === 0 && tiktokOptions.photo_urls && tiktokOptions.photo_urls.length > 0) {
+      photoUrls = tiktokOptions.photo_urls.map((u) => String(u || "").trim()).filter(Boolean);
+    }
+    if (photoUrls.length === 0 && mediaUrl) photoUrls = [mediaUrl];
+  }
+
+  if (isTiktokPhoto && photoUrls.length === 0) {
+    const msg = "TikTok FOTO exige imagem(ns) (image_url/children_urls ausentes)";
     const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
       status: "failed",
       error_message: msg,
@@ -774,14 +797,35 @@ async function publishTiktokPost(opts: {
     return;
   }
 
-  // T1 foto: content/init exige PULL_FROM_URL com URL https absoluta — valida
-  // AQUI (antes de qualquer chamada externa); URL não-https é MalformedDataError
-  // PT-BR (não tenta FILE_UPLOAD de imagem — a API não aceita).
+  // T1+T3: content/init exige PULL_FROM_URL com URL https absoluta — valida
+  // AQUI (antes de qualquer chamada externa); qualquer URL não-https é
+  // MalformedDataError PT-BR (a API NÃO aceita FILE_UPLOAD de imagem).
   if (isTiktokPhoto) {
     const systemBaseUrl = resolveSystemBaseUrl();
-    const abs = makeAbsoluteUrl(systemBaseUrl, mediaUrl);
-    if (!/^https:\/\//i.test(abs)) {
-      const msg = "TikTok FOTO exige URL https absoluta da imagem (PULL_FROM_URL) — verifique o item selecionado";
+    // T3: carrossel de fotos TikTok = 2..10 imagens (erro PT-BR, mesmo critério
+    // do wizard/runtime); foto única = 1..10.
+    const mediaTypeUpper = String(post.media_type || "").toUpperCase();
+    if (photoUrls.length < 2 || photoUrls.length > 10) {
+      const msg =
+        mediaTypeUpper === "CAROUSEL"
+          ? `Carrossel de fotos TikTok exige entre 2 e 10 imagens (recebidas: ${photoUrls.length})`
+          : `Foto do TikTok aceita entre 1 e 10 imagens (recebidas: ${photoUrls.length})`;
+      const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+        status: "failed",
+        error_message: msg,
+        failed_reason: "Malformed Data",
+      });
+      if (!wrote) return;
+      results.errors++;
+      await logPlanner(plannerId, `Post ${post.id}: ${msg}`, "error");
+      await notifyPostFailed(post as RetryablePost, msg);
+      return;
+    }
+    const badUrl = photoUrls.find(
+      (u) => !/^https:\/\//i.test(makeAbsoluteUrl(systemBaseUrl, u)),
+    );
+    if (badUrl) {
+      const msg = "TikTok FOTO exige URLs https absolutas das imagens (PULL_FROM_URL) — verifique os itens selecionados";
       const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
         status: "failed",
         error_message: msg,
@@ -795,9 +839,25 @@ async function publishTiktokPost(opts: {
     }
   }
 
+
   // M13: re-checa antes do call externo
   if (!(await isPostStillInFlight(post.id))) {
     await logPlanner(plannerId, `[Tiktok] Post ${post.id} cancelado antes do init — nada foi publicado`, "warning").catch(() => {});
+    return;
+  }
+
+  // Vídeo ainda exige mediaUrl (foto validou photoUrls acima).
+  if (!isTiktokPhoto && !mediaUrl) {
+    const msg = "TikTok exige vídeo (video_url ausente)";
+    const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+      status: "failed",
+      error_message: msg,
+      failed_reason: "Malformed Data",
+    });
+    if (!wrote) return;
+    results.errors++;
+    await logPlanner(plannerId, `Post ${post.id}: ${msg}`, "error");
+    await notifyPostFailed(post as RetryablePost, msg);
     return;
   }
 
@@ -810,14 +870,17 @@ async function publishTiktokPost(opts: {
     let uploadUrl = "";
 
     if (isTiktokPhoto) {
-      // T1 foto: POST /v2/post/publish/content/init/ (media_type=IMAGE)
-      await logPlanner(plannerId, `[Tiktok] Init FOTO content/init PULL_FROM_URL ${mediaUrlAbsolute}`, "info");
-      const photoCoverIndex =
+      // T1 foto única / T3 carrossel: POST /v2/post/publish/content/init/ (media_type=IMAGE)
+      const photoUrlsAbsolute = photoUrls.map((u) => makeAbsoluteUrl(systemBaseUrl, u));
+      await logPlanner(plannerId, `[Tiktok] Init FOTO content/init PULL_FROM_URL (${photoUrlsAbsolute.length} imagem(ns)) ${photoUrlsAbsolute.join(", ")}`, "info");
+      let photoCoverIndex =
         typeof tiktokOptions.photo_cover_index === "number" &&
         Number.isInteger(tiktokOptions.photo_cover_index) &&
         tiktokOptions.photo_cover_index >= 0
           ? tiktokOptions.photo_cover_index
           : 0;
+      // Defesa: capa fora do intervalo volta para a 1ª foto (nunca estoura a API).
+      if (photoCoverIndex >= photoUrlsAbsolute.length) photoCoverIndex = 0;
       const init = await createTiktokPhotoInit(
         {
           accessToken: tokenData.accessToken,
@@ -828,7 +891,7 @@ async function publishTiktokPost(opts: {
           disableComment: tiktokOptions.disable_comment,
           brandContentToggle: tiktokOptions.brand_content_toggle,
           brandOrganicToggle: tiktokOptions.brand_organic_toggle,
-          photoUrls: [mediaUrlAbsolute],
+          photoUrls: photoUrlsAbsolute,
           coverIndex: photoCoverIndex,
         },
         proxyUrl
