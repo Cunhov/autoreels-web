@@ -419,6 +419,33 @@ export const TIKTOK_PRIVACY_FALLBACK: readonly string[] = [
 export type TiktokPrivacyLevel = typeof TIKTOK_PRIVACY_OPTIONS[number];
 
 /**
+ * Rótulos PT-BR dos valores de privacidade TikTok (T5).
+ * Fonte ÚNICA para UI — os VALUES crus (PUBLIC_TO_EVERYONE, etc.) são
+ * exigidos pela API do TikTok e nunca devem ser traduzidos no payload.
+ * Valores fora do dicionário (ex.: opções dinâmicas vindas do creator_info)
+ * são resolvidos pelo helper labelTiktokPrivacy como `<raw> (personalizado)`.
+ */
+export const TIKTOK_PRIVACY_LABELS: Record<string, string> = {
+	PUBLIC_TO_EVERYONE: "Público (todos)",
+	MUTUAL_FOLLOW_FRIENDS: "Amigos mútuos",
+	FOLLOWER_OF_CREATOR: "Seguidores do criador",
+	SELF_ONLY: "Só eu",
+};
+
+/**
+ * Retorna o rótulo PT-BR de um valor de privacidade TikTok para exibição na
+ * UI. Conhecido → label traduzido; desconhecido (creator_info dinâmico) →
+ * valor cru + " (personalizado)". Nunca altera o value guardado (cru).
+ */
+export function labelTiktokPrivacy(value: unknown): string {
+	if (value == null || value === "") return "";
+	const v = String(value).trim();
+	const known = TIKTOK_PRIVACY_LABELS[v] ?? TIKTOK_PRIVACY_LABELS[v.toUpperCase()];
+	if (known) return known;
+	return `${v} (personalizado)`;
+}
+
+/**
  * Estima o texto FINAL de uma legenda como o runtime fará (applyCaptionTemplate
  * simplificado, sem acesso ao banco): rotação ativa com templates → substitui
  * cada template; senão → substitui a caption base. Variáveis conhecidas
@@ -965,6 +992,16 @@ export function validatePlannerConfig(config: unknown): {
             );
         }
     }
+    // T3: photo_cover_index (0-based, 0..9 — carrossel de fotos TikTok com até 10 imagens)
+    const photoCoverRaw = (c as PlannerJson)["tiktok_photo_cover_index"];
+    if (photoCoverRaw !== undefined && photoCoverRaw !== null && photoCoverRaw !== "") {
+        const n = Number(photoCoverRaw);
+        if (!Number.isInteger(n) || n < 0 || n > 9) {
+            errors.push(
+                "tiktok_photo_cover_index deve ser um número inteiro entre 0 e 9 (índice 0-based da foto de capa)",
+            );
+        }
+    }
     // brand flags (boolean)
     for (const flag of [
         "tiktok_brand_content_toggle",
@@ -982,15 +1019,15 @@ export function validatePlannerConfig(config: unknown): {
             if (!okBool) errors.push(`${flag} deve ser verdadeiro ou falso`);
         }
     }
-    // tiktok_type: só "video" em v1
+    // tiktok_type: v2 aceita video | photo (foto via content/init)
     if (
         (c as PlannerJson)["tiktok_type"] !== undefined &&
         (c as PlannerJson)["tiktok_type"] !== null &&
         (c as PlannerJson)["tiktok_type"] !== ""
     ) {
         const v = String((c as PlannerJson)["tiktok_type"]).toLowerCase().trim();
-        if (v !== "video") {
-            errors.push('tiktok_type deve ser "video" (TikTok v1: apenas vídeo)');
+        if (v !== "video" && v !== "photo") {
+            errors.push('tiktok_type deve ser "video" ou "photo"');
         }
     }
     // mutual exclusivity: youtube_type vs tiktok_type

@@ -34,6 +34,7 @@ import { isHostAllowed } from "@/lib/ssrf-guard";
 import { getChannelProxyUrl } from "@/lib/proxy";
 import {
   createTiktokVideoInit,
+  createTiktokPhotoInit,
   uploadTiktokChunks,
   fetchTiktokPublishStatus,
   getValidTiktokAccessToken,
@@ -611,6 +612,7 @@ interface TiktokPublishPost {
   video_url?: string | null;
   image_url?: string | null;
   children_urls?: string | null;
+  media_type?: string | null;
   tiktok_type?: string | null;
   tiktok_options?: string | null;
   tiktok_publish_id?: string | null;
@@ -642,9 +644,11 @@ async function publishTiktokPost(opts: {
 }): Promise<void> {
   const { post, plannerId, now, results, startTime, maxExecMs } = opts;
 
-  // Guard tiktok_type: só video em v1; photo -> MalformedDataError
-  if (post.tiktok_type && post.tiktok_type !== "video") {
-    const msg = `TikTok v1: apenas vídeo suportado (recebido: ${post.tiktok_type})`;
+  // Guard tiktok_type: v2 aceita video | photo (photo = content/init IMAGE);
+  // qualquer outro valor -> MalformedDataError PT-BR
+  const tkType = post.tiktok_type ? String(post.tiktok_type).toLowerCase() : null;
+  if (tkType && tkType !== "video" && tkType !== "photo") {
+    const msg = `TikTok: tiktok_type inválido (recebido: ${tkType}); use "video" ou "photo"`;
     const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
       status: "failed",
       error_message: msg,
@@ -656,6 +660,7 @@ async function publishTiktokPost(opts: {
     await notifyPostFailed(post as RetryablePost, msg);
     return;
   }
+  const isTiktokPhoto = tkType === "photo";
 
   // Parse tiktok_options JSON
   let tiktokOptions: {
@@ -667,6 +672,9 @@ async function publishTiktokPost(opts: {
     video_cover_timestamp_ms?: number;
     brand_content_toggle?: boolean;
     brand_organic_toggle?: boolean;
+    // T1 foto: espelho das URLs únicas (fonte da verdade = post.image_url).
+    photo_urls?: string[];
+    photo_cover_index?: number;
   } = {};
   if (post.tiktok_options) {
     try {
@@ -743,9 +751,103 @@ async function publishTiktokPost(opts: {
   // Resolve proxy (sempre repassado)
   const proxyUrl = getChannelProxyUrl(post.channel as unknown as { proxy_url?: string | null; settings?: string | null }) ?? null;
 
-  // Determinar mediaUrl (TikTok v1 só vídeo)
-  const mediaUrl = (post.video_url || "").trim();
-  if (!mediaUrl) {
+  // Determinar mediaUrl: vídeo → post.video_url; FOTO → imagem principal
+  // (post.image_url) com fallback p/ tiktok_options.photo_urls[0].
+  const mediaUrl = isTiktokPhoto
+    ? (post.image_url || "").trim() ||
+      ((tiktokOptions.photo_urls && tiktokOptions.photo_urls.length > 0
+        ? String(tiktokOptions.photo_urls[0] || "").trim()
+        : ""))
+    : (post.video_url || "").trim();
+
+  // T3: lista de URLs da FOTO — children_urls (JSON [{url,type}]) >
+  // tiktok_options.photo_urls > image_url único. O carrossel de fotos TikTok
+  // reusa children_urls (mesma estrutura do carrossel IG).
+  let photoUrls: string[] = [];
+  if (isTiktokPhoto) {
+    if (post.children_urls) {
+      try {
+        const parsed = JSON.parse(post.children_urls) as unknown;
+        if (Array.isArray(parsed)) {
+          photoUrls = parsed
+            .map((c) => String((c as { url?: string })?.url || "").trim())
+            .filter(Boolean);
+        }
+      } catch {
+        // malformado → fallbacks abaixo
+      }
+    }
+    if (photoUrls.length === 0 && tiktokOptions.photo_urls && tiktokOptions.photo_urls.length > 0) {
+      photoUrls = tiktokOptions.photo_urls.map((u) => String(u || "").trim()).filter(Boolean);
+    }
+    if (photoUrls.length === 0 && mediaUrl) photoUrls = [mediaUrl];
+  }
+
+  if (isTiktokPhoto && photoUrls.length === 0) {
+    const msg = "TikTok FOTO exige imagem(ns) (image_url/children_urls ausentes)";
+    const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+      status: "failed",
+      error_message: msg,
+      failed_reason: "Malformed Data",
+    });
+    if (!wrote) return;
+    results.errors++;
+    await logPlanner(plannerId, `Post ${post.id}: ${msg}`, "error");
+    await notifyPostFailed(post as RetryablePost, msg);
+    return;
+  }
+
+  // T1+T3: content/init exige PULL_FROM_URL com URL https absoluta — valida
+  // AQUI (antes de qualquer chamada externa); qualquer URL não-https é
+  // MalformedDataError PT-BR (a API NÃO aceita FILE_UPLOAD de imagem).
+  if (isTiktokPhoto) {
+    const systemBaseUrl = resolveSystemBaseUrl();
+    // T3: carrossel de fotos TikTok = 2..10 imagens (erro PT-BR, mesmo critério
+    // do wizard/runtime); foto única = 1..10.
+    const mediaTypeUpper = String(post.media_type || "").toUpperCase();
+    if (photoUrls.length < 2 || photoUrls.length > 10) {
+      const msg =
+        mediaTypeUpper === "CAROUSEL"
+          ? `Carrossel de fotos TikTok exige entre 2 e 10 imagens (recebidas: ${photoUrls.length})`
+          : `Foto do TikTok aceita entre 1 e 10 imagens (recebidas: ${photoUrls.length})`;
+      const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+        status: "failed",
+        error_message: msg,
+        failed_reason: "Malformed Data",
+      });
+      if (!wrote) return;
+      results.errors++;
+      await logPlanner(plannerId, `Post ${post.id}: ${msg}`, "error");
+      await notifyPostFailed(post as RetryablePost, msg);
+      return;
+    }
+    const badUrl = photoUrls.find(
+      (u) => !/^https:\/\//i.test(makeAbsoluteUrl(systemBaseUrl, u)),
+    );
+    if (badUrl) {
+      const msg = "TikTok FOTO exige URLs https absolutas das imagens (PULL_FROM_URL) — verifique os itens selecionados";
+      const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
+        status: "failed",
+        error_message: msg,
+        failed_reason: "Malformed Data",
+      });
+      if (!wrote) return;
+      results.errors++;
+      await logPlanner(plannerId, `Post ${post.id}: ${msg}`, "error");
+      await notifyPostFailed(post as RetryablePost, msg);
+      return;
+    }
+  }
+
+
+  // M13: re-checa antes do call externo
+  if (!(await isPostStillInFlight(post.id))) {
+    await logPlanner(plannerId, `[Tiktok] Post ${post.id} cancelado antes do init — nada foi publicado`, "warning").catch(() => {});
+    return;
+  }
+
+  // Vídeo ainda exige mediaUrl (foto validou photoUrls acima).
+  if (!isTiktokPhoto && !mediaUrl) {
     const msg = "TikTok exige vídeo (video_url ausente)";
     const wrote = await finalizePostWrite(post.id, plannerId, "Tiktok", {
       status: "failed",
@@ -759,24 +861,27 @@ async function publishTiktokPost(opts: {
     return;
   }
 
-  // M13: re-checa antes do call externo
-  if (!(await isPostStillInFlight(post.id))) {
-    await logPlanner(plannerId, `[Tiktok] Post ${post.id} cancelado antes do init — nada foi publicado`, "warning").catch(() => {});
-    return;
-  }
-
   try {
-    // Determinar source_info: PULL_FROM_URL quando mediaUrl já é https://autoreels.cunhov.site/api/file/... (evita reupload); default FILE_UPLOAD
+    // Determinar source_info: PULL_FROM_URL quando mediaUrl já é https://autoreels.cunhov.site/api/file/... (evita reupload); default FILE_UPLOAD. FOTO (T1) é SEMPRE PULL_FROM_URL via content/init — a API NÃO aceita FILE_UPLOAD de imagem.
     const systemBaseUrl = resolveSystemBaseUrl();
     const mediaUrlAbsolute = makeAbsoluteUrl(systemBaseUrl, mediaUrl);
-    const usePull = isTiktokPULLFromUrl(mediaUrlAbsolute);
 
     let publishId = "";
     let uploadUrl = "";
 
-    if (usePull) {
-      await logPlanner(plannerId, `[Tiktok] Init PULL_FROM_URL para ${mediaUrlAbsolute}`, "info");
-      const init = await createTiktokVideoInit(
+    if (isTiktokPhoto) {
+      // T1 foto única / T3 carrossel: POST /v2/post/publish/content/init/ (media_type=IMAGE)
+      const photoUrlsAbsolute = photoUrls.map((u) => makeAbsoluteUrl(systemBaseUrl, u));
+      await logPlanner(plannerId, `[Tiktok] Init FOTO content/init PULL_FROM_URL (${photoUrlsAbsolute.length} imagem(ns)) ${photoUrlsAbsolute.join(", ")}`, "info");
+      let photoCoverIndex =
+        typeof tiktokOptions.photo_cover_index === "number" &&
+        Number.isInteger(tiktokOptions.photo_cover_index) &&
+        tiktokOptions.photo_cover_index >= 0
+          ? tiktokOptions.photo_cover_index
+          : 0;
+      // Defesa: capa fora do intervalo volta para a 1ª foto (nunca estoura a API).
+      if (photoCoverIndex >= photoUrlsAbsolute.length) photoCoverIndex = 0;
+      const init = await createTiktokPhotoInit(
         {
           accessToken: tokenData.accessToken,
           title,
@@ -784,47 +889,70 @@ async function publishTiktokPost(opts: {
           disableDuet: tiktokOptions.disable_duet,
           disableStitch: tiktokOptions.disable_stitch,
           disableComment: tiktokOptions.disable_comment,
-          videoCoverTimestampMs: tiktokOptions.video_cover_timestamp_ms,
           brandContentToggle: tiktokOptions.brand_content_toggle,
           brandOrganicToggle: tiktokOptions.brand_organic_toggle,
-          source: { source: "PULL_FROM_URL", video_url: mediaUrlAbsolute },
+          photoUrls: photoUrlsAbsolute,
+          coverIndex: photoCoverIndex,
         },
         proxyUrl
       );
       publishId = init.publishId;
-      uploadUrl = init.uploadUrl; // pode ser vazio em PULL
+      uploadUrl = ""; // PULL_FROM_URL não retorna upload_url
     } else {
-      // FILE_UPLOAD: ler arquivo local, calcular chunks
-      const file = await readLocalUploadFile(mediaUrl, TIKTOK_MAX_FILE_BYTES);
-      const videoSize = file.buffer.length;
-      const chunkSize = TIKTOK_CHUNK_SIZE;
-      const totalChunkCount = Math.ceil(videoSize / chunkSize);
-      await logPlanner(plannerId, `[Tiktok] Init FILE_UPLOAD size=${videoSize} chunk=${chunkSize} chunks=${totalChunkCount}`, "info");
-      const init = await createTiktokVideoInit(
-        {
-          accessToken: tokenData.accessToken,
-          title,
-          privacyLevel: tiktokOptions.privacy_level,
-          disableDuet: tiktokOptions.disable_duet,
-          disableStitch: tiktokOptions.disable_stitch,
-          disableComment: tiktokOptions.disable_comment,
-          videoCoverTimestampMs: tiktokOptions.video_cover_timestamp_ms,
-          brandContentToggle: tiktokOptions.brand_content_toggle,
-          brandOrganicToggle: tiktokOptions.brand_organic_toggle,
-          source: { source: "FILE_UPLOAD", video_size: videoSize, chunk_size: chunkSize, total_chunk_count: totalChunkCount },
-        },
-        proxyUrl
-      );
-      publishId = init.publishId;
-      uploadUrl = init.uploadUrl;
-      if (!publishId || !uploadUrl) throw new Error("TikTok não retornou publish_id/upload_url para FILE_UPLOAD");
-      // M13: re-checa antes do upload chunked
-      if (!(await isPostStillInFlight(post.id))) {
-        await logPlanner(plannerId, `[Tiktok] Post ${post.id} cancelado antes do upload — nada foi enviado`, "warning").catch(() => {});
-        return;
+      const usePull = isTiktokPULLFromUrl(mediaUrlAbsolute);
+
+      if (usePull) {
+        await logPlanner(plannerId, `[Tiktok] Init PULL_FROM_URL para ${mediaUrlAbsolute}`, "info");
+        const init = await createTiktokVideoInit(
+          {
+            accessToken: tokenData.accessToken,
+            title,
+            privacyLevel: tiktokOptions.privacy_level,
+            disableDuet: tiktokOptions.disable_duet,
+            disableStitch: tiktokOptions.disable_stitch,
+            disableComment: tiktokOptions.disable_comment,
+            videoCoverTimestampMs: tiktokOptions.video_cover_timestamp_ms,
+            brandContentToggle: tiktokOptions.brand_content_toggle,
+            brandOrganicToggle: tiktokOptions.brand_organic_toggle,
+            source: { source: "PULL_FROM_URL", video_url: mediaUrlAbsolute },
+          },
+          proxyUrl
+        );
+        publishId = init.publishId;
+        uploadUrl = init.uploadUrl; // pode ser vazio em PULL
+      } else {
+        // FILE_UPLOAD: ler arquivo local, calcular chunks
+        const file = await readLocalUploadFile(mediaUrl, TIKTOK_MAX_FILE_BYTES);
+        const videoSize = file.buffer.length;
+        const chunkSize = TIKTOK_CHUNK_SIZE;
+        const totalChunkCount = Math.ceil(videoSize / chunkSize);
+        await logPlanner(plannerId, `[Tiktok] Init FILE_UPLOAD size=${videoSize} chunk=${chunkSize} chunks=${totalChunkCount}`, "info");
+        const init = await createTiktokVideoInit(
+          {
+            accessToken: tokenData.accessToken,
+            title,
+            privacyLevel: tiktokOptions.privacy_level,
+            disableDuet: tiktokOptions.disable_duet,
+            disableStitch: tiktokOptions.disable_stitch,
+            disableComment: tiktokOptions.disable_comment,
+            videoCoverTimestampMs: tiktokOptions.video_cover_timestamp_ms,
+            brandContentToggle: tiktokOptions.brand_content_toggle,
+            brandOrganicToggle: tiktokOptions.brand_organic_toggle,
+            source: { source: "FILE_UPLOAD", video_size: videoSize, chunk_size: chunkSize, total_chunk_count: totalChunkCount },
+          },
+          proxyUrl
+        );
+        publishId = init.publishId;
+        uploadUrl = init.uploadUrl;
+        if (!publishId || !uploadUrl) throw new Error("TikTok não retornou publish_id/upload_url para FILE_UPLOAD");
+        // M13: re-checa antes do upload chunked
+        if (!(await isPostStillInFlight(post.id))) {
+          await logPlanner(plannerId, `[Tiktok] Post ${post.id} cancelado antes do upload — nada foi enviado`, "warning").catch(() => {});
+          return;
+        }
+        await logPlanner(plannerId, `[Tiktok] Upload chunks para ${publishId} (${totalChunkCount} chunks)`, "info");
+        await uploadTiktokChunks(uploadUrl, file.buffer, chunkSize, proxyUrl);
       }
-      await logPlanner(plannerId, `[Tiktok] Upload chunks para ${publishId} (${totalChunkCount} chunks)`, "info");
-      await uploadTiktokChunks(uploadUrl, file.buffer, chunkSize, proxyUrl);
     }
 
     // Poll status 3x backoff 2s

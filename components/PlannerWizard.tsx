@@ -11,6 +11,7 @@ import {
 	Youtube,
 	Music,
 	Video,
+	Info,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
 import MediaUploader from "./MediaUploader";
@@ -20,22 +21,13 @@ import {
 	normalizeYoutubeProductsList,
 	resolveCaptionTextForWizard,
 	serializeYoutubeProducts,
+	TIKTOK_PRIVACY_FALLBACK,
+	labelTiktokPrivacy,
 	type YoutubeProductEntry,
 } from "@/lib/planner-config";
 
 const PLANNER_MIX_ERROR = "Planners não podem misturar canais de YouTube e Instagram. Crie planners separados.";
 const PLANNER_TIKTOK_MIX_ERROR = "Planners TikTok não podem misturar canais de outras plataformas.";
-const TIKTOK_PRIVACY_FALLBACK: readonly string[] = [
-	"PUBLIC_TO_EVERYONE",
-	"MUTUAL_FOLLOW_FRIENDS",
-	"SELF_ONLY",
-] as const;
-const TIKTOK_PRIVACY_LABELS: Record<string, string> = {
-	PUBLIC_TO_EVERYONE: "Público para todos",
-	MUTUAL_FOLLOW_FRIENDS: "Amigos mútuos",
-	FOLLOWER_OF_CREATOR: "Seguidores do criador",
-	SELF_ONLY: "Somente eu",
-};
 
 // B1 — produtos afiliados: resultado da busca live (mesmo shape do payload
 // GET /api/youtube/products: { item, title, vendor, price, commission_pct }).
@@ -91,7 +83,13 @@ function plannerMediaLabel(
 	youtubeMode: "only" | "mixed" | "none",
 	tiktokMode = false,
 ): string {
-	if (tiktokMode) return "Vídeo TikTok";
+	if (tiktokMode) {
+		// T3: carrossel de fotos TikTok (2..10) — rótulo próprio; foto única
+		// IMAGE = "Foto TikTok" (T1); REELS/VIDEO = "Vídeo TikTok".
+		if (isCarousel) return "Carrossel de fotos TikTok";
+		if (mediaType === "IMAGE") return "Foto TikTok";
+		return "Vídeo TikTok";
+	}
 	const igLabel = isCarousel
 		? "Carrossel"
 		: mediaType === "REELS"
@@ -232,6 +230,8 @@ export default function PlannerWizard({
 	const [tiktokDisableStitch, setTiktokDisableStitch] = useState(false);
 	const [tiktokDisableComment, setTiktokDisableComment] = useState(false);
 	const [tiktokCoverTimestampMs, setTiktokCoverTimestampMs] = useState("");
+	// T3: foto de capa do carrossel de fotos TikTok (índice 0-based; default 0 = 1ª foto)
+	const [tiktokPhotoCoverIndex, setTiktokPhotoCoverIndex] = useState("0");
 	const [tiktokBrandContentToggle, setTiktokBrandContentToggle] = useState(false);
 	const [tiktokBrandOrganicToggle, setTiktokBrandOrganicToggle] = useState(false);
 	// REGRA ITEM > FIXO (produtos por vídeo na library): mapa itemId → CSV de
@@ -337,14 +337,8 @@ export default function PlannerWizard({
 		}
 	}, [youtubeSelected, tiktokSelected, mediaType]);
 
-	// TikTok v1: apenas vídeo — força REELS quando só TikTok (IMAGE/CAROUSEL
-	// são bloqueados no submit; aqui a UI já esconde as opções inválidas).
-	useEffect(() => {
-		if (onlyTiktokSelected && (isCarousel || mediaType === "IMAGE" || mediaType === "CAROUSEL")) {
-			setMediaType("REELS");
-			setIsCarousel(false);
-		}
-	}, [onlyTiktokSelected, mediaType, isCarousel]);
+	// TikTok v2/v3 (T1+T3): foto única (IMAGE) e carrossel de fotos (CAROUSEL,
+	// 2..10 imagens via content/init) são suportados — nenhum auto-fix força REELS.
 
 	// TikTok: tenta carregar creator_info para popular privacy options
 	useEffect(() => {
@@ -639,6 +633,9 @@ export default function PlannerWizard({
 					setTiktokDisableComment(Boolean((config as Record<string, unknown>).tiktok_disable_comment === true || String((config as Record<string, unknown>).tiktok_disable_comment).toLowerCase() === "true" || (config as Record<string, unknown>).disable_comment === true));
 					const coverRaw2 = (config as Record<string, unknown>).tiktok_video_cover_timestamp_ms ?? (config as Record<string, unknown>).video_cover_timestamp_ms;
 					setTiktokCoverTimestampMs(coverRaw2 !== undefined && coverRaw2 !== null && coverRaw2 !== "" ? String(coverRaw2) : "");
+					// T3: foto de capa do carrossel de fotos TikTok
+					const photoCoverRaw = (config as Record<string, unknown>).tiktok_photo_cover_index;
+					setTiktokPhotoCoverIndex(photoCoverRaw !== undefined && photoCoverRaw !== null && photoCoverRaw !== "" ? String(photoCoverRaw) : "0");
 					setTiktokBrandContentToggle(Boolean((config as Record<string, unknown>).tiktok_brand_content_toggle === true || String((config as Record<string, unknown>).tiktok_brand_content_toggle).toLowerCase() === "true" || (config as Record<string, unknown>).brand_content_toggle === true));
 					setTiktokBrandOrganicToggle(Boolean((config as Record<string, unknown>).tiktok_brand_organic_toggle === true || String((config as Record<string, unknown>).tiktok_brand_organic_toggle).toLowerCase() === "true" || (config as Record<string, unknown>).brand_organic_toggle === true));
 				} else {
@@ -694,6 +691,7 @@ export default function PlannerWizard({
 				setTiktokDisableStitch(false);
 				setTiktokDisableComment(false);
 				setTiktokCoverTimestampMs("");
+				setTiktokPhotoCoverIndex("0");
 				setTiktokBrandContentToggle(false);
 				setTiktokBrandOrganicToggle(false);
 				setFrequencyValue(1);
@@ -1256,11 +1254,22 @@ export default function PlannerWizard({
 			return;
 		}
 
-		// TikTok v1: apenas vídeo — bloqueia IMAGE/CAROUSEL quando só TikTok
+		// TikTok T1 foto: bloqueia apenas CAROUSEL (ainda não habilitado). IMAGE é
+		// válido — o publisher publica via content/init com PULL_FROM_URL da URL do
+		// item (/api/file/...) e valida https lá (MalformedDataError PT-BR).
 		if (onlyTiktokSelected) {
-			if (isCarousel || mediaType === "IMAGE") {
-				setFormError("TikTok v1: apenas vídeo é suportado. Imagens e carrosséis serão habilitados na fase 2.");
+			if (mediaType === "IMAGE" && files.length === 0 && selectedContentIds.length === 0) {
+				setFormError("TikTok FOTO exige uma imagem — envie um arquivo ou selecione um item da biblioteca (a publicação usa a URL do item).");
 				return;
+			}
+			// T3: carrossel de fotos TikTok — foto de capa deve ser índice 0..9; a
+			// contagem 2..10 por post é validada na seção de carrosséis abaixo.
+			if (isCarousel) {
+				const ci = Number(tiktokPhotoCoverIndex);
+				if (!Number.isInteger(ci) || ci < 0 || ci > 9) {
+					setFormError("Foto de capa do carrossel TikTok deve ser um índice inteiro entre 1 e 10.");
+					return;
+			}
 			}
 			if (!tiktokCaption.trim()) {
 				setFormError("Legenda do TikTok é obrigatória (1..2200 caracteres).");
@@ -1270,7 +1279,7 @@ export default function PlannerWizard({
 				setFormError("Legenda do TikTok deve ter no máximo 2200 caracteres.");
 				return;
 			}
-			if (tiktokCoverTimestampMs.trim() && (!Number.isInteger(Number(tiktokCoverTimestampMs)) || Number(tiktokCoverTimestampMs) < 0)) {
+			if (!isCarousel && tiktokCoverTimestampMs.trim() && (!Number.isInteger(Number(tiktokCoverTimestampMs)) || Number(tiktokCoverTimestampMs) < 0)) {
 				setFormError("Cover Timestamp deve ser um número inteiro >= 0 (ms).");
 				return;
 			}
@@ -1569,6 +1578,11 @@ export default function PlannerWizard({
 				if (tiktokCoverTimestampMs.trim()) {
 					const n = Number(tiktokCoverTimestampMs.trim());
 					if (Number.isInteger(n) && n >= 0) tiktokFields.tiktok_video_cover_timestamp_ms = n;
+				}
+				// T3: foto de capa do carrossel de fotos TikTok (0-based; default 0 = 1ª foto)
+				if (isCarousel && tiktokPhotoCoverIndex.trim()) {
+					const ci = Number(tiktokPhotoCoverIndex.trim());
+					if (Number.isInteger(ci) && ci >= 0 && ci <= 9) tiktokFields.tiktok_photo_cover_index = ci;
 				}
 				if (tiktokBrandContentToggle) tiktokFields.tiktok_brand_content_toggle = true;
 				if (tiktokBrandOrganicToggle) tiktokFields.tiktok_brand_organic_toggle = true;
@@ -1972,7 +1986,11 @@ export default function PlannerWizard({
 											className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
 										>
 											{onlyTiktokSelected ? (
+												<>
 												<option value="REELS">Vídeo TikTok</option>
+												<option value="IMAGE">Foto TikTok</option>
+												<option value="CAROUSEL">Carrossel de fotos TikTok</option>
+												</>
 											) : (
 												<>
 												<option value="REELS">
@@ -2020,6 +2038,16 @@ export default function PlannerWizard({
 											<Music size={14} className="text-black dark:text-white" />
 											Configurações TikTok
 										</h4>
+										{mediaType === "IMAGE" && (
+											<div className="rounded-lg bg-ios-blue/10 border border-ios-blue/20 px-3 py-2 text-[11px] text-ios-blue flex gap-2 items-start">
+												<Info size={13} className="shrink-0 mt-0.5" />
+												<span>
+													<strong>Foto:</strong> usa a URL do item (PULL_FROM_URL) —
+													envie uma imagem ou selecione um item da biblioteca; a
+													publicação exige URL https em domínio verificado no app TikTok.
+												</span>
+											</div>
+										)}
 										<div>
 											<div className="flex justify-between items-center mb-1.5">
 												<label className="text-xs font-medium text-ios-text block">
@@ -2056,7 +2084,7 @@ export default function PlannerWizard({
 										</div>
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
-												Privacy Level
+												Nível de privacidade
 											</label>
 											<select
 												value={tiktokPrivacyLevel}
@@ -2068,13 +2096,13 @@ export default function PlannerWizard({
 											>
 												{tiktokPrivacyOptions.map((opt) => (
 													<option key={opt} value={opt}>
-														{TIKTOK_PRIVACY_LABELS[opt] ?? opt}
+														{labelTiktokPrivacy(opt)}
 													</option>
 												))}
 											</select>
 											<p className="text-[10px] text-gray-400 mt-1">
-												Opções vindas do creator_info do canal (fallback: Público, Amigos
-												mútuos, Somente eu).
+												Opções vindas do creator_info do canal (fallback: Público (todos),
+												Amigos mútuos, Só eu). O valor salvo é o código cru exigido pela API.
 											</p>
 										</div>
 										<div className="space-y-3">
@@ -2095,6 +2123,7 @@ export default function PlannerWizard({
 												</div>
 											))}
 										</div>
+										{mediaType !== "IMAGE" && !isCarousel && (
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
 												Cover Timestamp (ms)
@@ -2114,6 +2143,31 @@ export default function PlannerWizard({
 												1000 = 1s. 0 (vazio) = capa automática do TikTok.
 											</p>
 										</div>
+										)}
+										{isCarousel && (
+										<div>
+											<label className="text-xs font-medium text-ios-text mb-1.5 block">
+												Foto de capa
+											</label>
+											<select
+												value={tiktokPhotoCoverIndex}
+												onChange={(e) => {
+													setTiktokPhotoCoverIndex(e.target.value);
+													setSettingsTouched(true);
+												}}
+												className="w-full bg-ios-background border border-ios-separator rounded-lg px-2 py-2 text-sm focus:border-ios-blue outline-none"
+											>
+												{Array.from({ length: 10 }, (_, i) => (
+													<option key={i} value={String(i)}>
+														{i + 1}ª foto
+													</option>
+												))}
+											</select>
+											<p className="text-[10px] text-gray-400 mt-1">
+												Define qual imagem aparece como capa no perfil (índice 0-based; padrão: 1ª foto). O carrossel aceita 2 a 10 imagens.
+											</p>
+										</div>
+										)}
 										<div className="space-y-2">
 											<div
 													onClick={() => { setTiktokBrandContentToggle(!tiktokBrandContentToggle); setSettingsTouched(true); }}

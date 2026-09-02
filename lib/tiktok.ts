@@ -441,6 +441,15 @@ export const TIKTOK_ERROR_MAP: Record<string, string> = {
   cover_timestamp_invalid: "Timestamp de capa inválido",
   url_not_verified: "Domínio do vídeo não verificado no app TikTok (use FILE_UPLOAD)",
   domain_not_verified: "Domínio do vídeo não verificado no app TikTok (use FILE_UPLOAD)",
+  // Foto (content/init com PULL_FROM_URL — a API exige domínio verificado; não há FILE_UPLOAD de imagem)
+  photo_url_not_verified: "Domínio da foto não verificado no app TikTok — adicione o domínio em Configurações do TikTok",
+  photo_domain_not_verified: "Domínio da foto não verificado no app TikTok — adicione o domínio em Configurações do TikTok",
+  photo_cover_index_invalid: "Índice de capa da foto inválido (photo_cover_index)",
+  invalid_photo: "Foto inválida — verifique as URLs da imagem",
+  photo_not_found: "Foto não encontrada — verifique as URLs da imagem",
+  photo_url_invalid: "URL da foto inválida — use uma URL https acessível",
+  photo_cover_index_out_of_range: "Índice de capa da foto fora do intervalo de imagens",
+
   chunk_upload_failed: "Falha no upload do vídeo — tente novamente",
   upload_failed: "Falha no upload do vídeo — tente novamente",
   publish_failed: "Falha ao publicar no TikTok — tente novamente",
@@ -736,6 +745,172 @@ export async function createTiktokVideoInit(
   // PULL_FROM_URL não retorna upload_url — isso é esperado
   if (params.source.source === "FILE_UPLOAD" && !uploadUrl) throw withTiktokStatus("TikTok não retornou upload_url para FILE_UPLOAD", res.status);
   return { publishId, uploadUrl };
+}
+
+// ─── Foto (content/init — IMAGE via PULL_FROM_URL) ────────────────────────
+export const TIKTOK_CONTENT_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/content/init/";
+
+export interface CreateTiktokPhotoInitParams {
+  accessToken: string;
+  title: string;
+  privacyLevel?: string;
+  disableDuet?: boolean;
+  disableStitch?: boolean;
+  disableComment?: boolean;
+  brandContentToggle?: boolean;
+  brandOrganicToggle?: boolean;
+  /** URLs absolutas https das fotos (foto única = 1 item). */
+  photoUrls: string[];
+  /** Índice 0-based da capa dentro de photoUrls. */
+  coverIndex?: number;
+}
+export interface CreateTiktokPhotoInitResult {
+  publishId: string;
+}
+
+/**
+ * Valida URLs de foto para content/init: 1..10 URLs https absolutas (T3:
+ * carrossel de fotos aceita de 1 a 10 imagens).
+ * Retorna mensagem PT-BR ou null quando válido.
+ */
+export const TIKTOK_PHOTO_MIN_IMAGES = 1;
+export const TIKTOK_PHOTO_MAX_IMAGES = 10;
+export function validateTiktokPhotoUrls(photoUrls: string[] | null | undefined): string | null {
+  if (!photoUrls || photoUrls.length === 0) return "Foto do TikTok exige ao menos uma URL de imagem (PULL_FROM_URL)";
+  if (photoUrls.length < TIKTOK_PHOTO_MIN_IMAGES || photoUrls.length > TIKTOK_PHOTO_MAX_IMAGES) {
+    return `Carrossel de fotos TikTok aceita entre ${TIKTOK_PHOTO_MIN_IMAGES} e ${TIKTOK_PHOTO_MAX_IMAGES} imagens (recebidas: ${photoUrls.length})`;
+  }
+  for (const raw of photoUrls) {
+    const u = String(raw || "").trim();
+    if (!u) return "Foto do TikTok exige URLs de imagem não vazias";
+    // HTTPS apenas (T3): a API exige domínio verificado via URL https absoluta
+    // (PULL_FROM_URL). HTTP é rejeitado antes de qualquer chamada externa.
+    if (!/^https:\/\//i.test(u)) return "Foto do TikTok exige URLs https absolutas (PULL_FROM_URL)";
+    if (u.length > 2048) return "URL da foto do TikTok muito longa (máx. 2048 caracteres)";
+  }
+  return null;
+}
+
+export function validateTiktokPhotoCoverIndex(coverIndex: number | undefined, photoCount: number): string | null {
+  if (coverIndex === undefined) return null;
+  if (!Number.isInteger(coverIndex) || coverIndex < 0 || coverIndex >= photoCount) return "Índice de capa da foto inválido (deve ser >= 0 e menor que o número de fotos)";
+  return null;
+}
+
+/**
+ * Monta o payload do content/init para FOTO (foto única ou carrossel de fotos):
+ *   POST https://open.tiktokapis.com/v2/post/publish/content/init/
+ *   { post_mode: "DIRECT_POST", media_type: "IMAGE",
+ *     post_info: { title, privacy_level, disable_duet, disable_stitch, disable_comment, ... },
+ *     source_info: { source: "PULL_FROM_URL", photo_cover_index, photo_images: [...] } }
+ * Foto NÃO aceita FILE_UPLOAD — a API exige PULL_FROM_URL com domínio verificado.
+ */
+export function buildTiktokPhotoInitPayload(input: {
+  options: {
+    title: string;
+    privacy_level?: string;
+    disable_duet?: boolean;
+    disable_stitch?: boolean;
+    disable_comment?: boolean;
+    brand_content_toggle?: boolean;
+    brand_organic_toggle?: boolean;
+  };
+  photoUrls: string[];
+  coverIndex?: number;
+}): Record<string, unknown> {
+  const urlErr = validateTiktokPhotoUrls(input.photoUrls);
+  if (urlErr) throw withTiktokStatus(urlErr, 400);
+  const coverIndex = input.coverIndex ?? 0;
+  const coverErr = validateTiktokPhotoCoverIndex(coverIndex, input.photoUrls.length);
+  if (coverErr) throw withTiktokStatus(coverErr, 400);
+  const privacy_level = input.options.privacy_level || "PUBLIC_TO_EVERYONE";
+  const post_info: Record<string, unknown> = {
+    title: input.options.title,
+    privacy_level,
+    disable_duet: Boolean(input.options.disable_duet),
+    disable_stitch: Boolean(input.options.disable_stitch),
+    disable_comment: Boolean(input.options.disable_comment),
+  };
+  if (typeof input.options.brand_content_toggle === "boolean") post_info.brand_content_toggle = input.options.brand_content_toggle;
+  if (typeof input.options.brand_organic_toggle === "boolean") post_info.brand_organic_toggle = input.options.brand_organic_toggle;
+  return {
+    post_mode: "DIRECT_POST",
+    media_type: "IMAGE",
+    post_info,
+    source_info: {
+      source: "PULL_FROM_URL",
+      photo_cover_index: coverIndex,
+      photo_images: input.photoUrls.map((u) => String(u).trim()),
+    },
+  };
+}
+
+/**
+ * POST https://open.tiktokapis.com/v2/post/publish/content/init/ — FOTO (media_type=IMAGE).
+ * Sempre PULL_FROM_URL: a API NÃO aceita FILE_UPLOAD de imagem; as URLs precisam
+ * estar em um domínio verificado no app TikTok. Polling reaproveita
+ * fetchTiktokPublishStatus (mesmo publish_id).
+ */
+export async function createTiktokPhotoInit(
+  params: CreateTiktokPhotoInitParams,
+  proxyUrl?: string | null
+): Promise<CreateTiktokPhotoInitResult> {
+  const token = (params.accessToken || "").trim();
+  if (!token) throw withTiktokStatus("Token do TikTok ausente — reconecte o canal", 401);
+  const title = (params.title || "").trim();
+  if (!title) throw withTiktokStatus("Título do TikTok é obrigatório", 400);
+  if (title.length > TIKTOK_TITLE_MAX_LENGTH) throw withTiktokStatus(`Título excede ${TIKTOK_TITLE_MAX_LENGTH} caracteres`, 400);
+  const privacy_level = (params.privacyLevel || "PUBLIC_TO_EVERYONE").trim() || "PUBLIC_TO_EVERYONE";
+  if (privacy_level && !(TIKTOK_PRIVACY_LEVELS as readonly string[]).includes(privacy_level as typeof TIKTOK_PRIVACY_LEVELS[number])) {
+    throw withTiktokStatus(`Privacidade inválida: ${privacy_level}`, 400);
+  }
+  const photoUrls = (params.photoUrls || []).map((u) => String(u || "").trim()).filter(Boolean);
+  const urlErr = validateTiktokPhotoUrls(photoUrls);
+  if (urlErr) throw withTiktokStatus(urlErr, 400);
+  const coverIndex = params.coverIndex ?? 0;
+  const coverErr = validateTiktokPhotoCoverIndex(coverIndex, photoUrls.length);
+  if (coverErr) throw withTiktokStatus(coverErr, 400);
+
+  const body = JSON.stringify(
+    buildTiktokPhotoInitPayload({
+      options: {
+        title,
+        privacy_level,
+        disable_duet: params.disableDuet,
+        disable_stitch: params.disableStitch,
+        disable_comment: params.disableComment,
+        brand_content_toggle: params.brandContentToggle,
+        brand_organic_toggle: params.brandOrganicToggle,
+      },
+      photoUrls,
+      coverIndex,
+    })
+  );
+  const res = await fetchWithTimeout(
+    TIKTOK_CONTENT_INIT_URL,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body,
+    },
+    30_000,
+    proxyUrl ?? null
+  );
+  const retryAfterMs = getTiktokRetryAfterMs(res.headers as unknown as Headers);
+  let data: unknown;
+  try { data = await res.json(); } catch { throw withTiktokStatus(`Resposta inválida do TikTok (HTTP ${res.status})`, res.status); }
+  const json = data as Record<string, unknown>;
+  const errorObj = json?.error as Record<string, unknown> | undefined;
+  const dataObj = json?.data as Record<string, unknown> | undefined;
+  const errorCode = (errorObj?.code as string | undefined) || (dataObj?.error_code as string | undefined);
+  if (!res.ok || errorObj || errorCode) {
+    const rawMsg = (errorObj?.message as string | undefined) || (dataObj?.description as string | undefined) || (json?.message as string | undefined) || `Falha ao iniciar publicação de foto no TikTok (HTTP ${res.status})`;
+    const mapped = mapTiktokErrorToPortuguese(errorCode || rawMsg);
+    throw new TiktokApiError(mapped, res.status, errorCode, retryAfterMs);
+  }
+  const publishId = String((dataObj?.publish_id as string | undefined) || (json?.publish_id as string | undefined) || (json?.data as Record<string, unknown> | undefined)?.publish_id || "");
+  if (!publishId) throw withTiktokStatus("TikTok não retornou publish_id", res.status);
+  return { publishId };
 }
 
 /**
