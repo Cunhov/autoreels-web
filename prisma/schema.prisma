@@ -23,6 +23,15 @@ model User {
   planners      Planner[]
   posts         Post[]
   contentItems  ContentItem[]
+
+  // Instagram Automation (módulo Automações)
+  igAutomations      IgAutomation[]
+  igContacts         IgContact[]
+  igEvents           IgEvent[]
+  igActionLogs       IgActionLog[]
+  igSequences        IgSequence[]
+  igClicks           IgClick[]
+  igOutboundWebhooks IgOutboundWebhook[]
 }
 
 model Account {
@@ -89,6 +98,16 @@ model Channel {
   user     User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
   posts    Post[]
   planners Planner[] @relation("ChannelToPlanner")
+
+  // Instagram Automation (módulo Automações)
+  igAutomations         IgAutomation[]
+  igContacts            IgContact[]
+  igEvents              IgEvent[]
+  igActionLogs          IgActionLog[]
+  igSequences           IgSequence[]
+  igSequenceEnrollments IgSequenceEnrollment[]
+  igClicks              IgClick[]
+  igChannelState        IgChannelState?
 
   @@map("channels")
   @@index([user_id, status])
@@ -263,4 +282,284 @@ model PostMetric {
 
   @@map("post_metrics")
   @@index([channel_id, fetched_at])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Instagram Automation — módulo "Automações" (comments + DMs + sequências)
+// ═══════════════════════════════════════════════════════════════════════════
+
+model IgAutomation {
+  id                    String   @id @default(uuid())
+  user_id               String
+  channel_id            String
+  name                  String
+  enabled               Boolean  @default(true)
+  priority              Int      @default(0)
+  trigger               String   @default("comment") // comment | dm | story_reply | story_mention | postback
+  keywords              String   // JSON string[]
+  match_mode            String   @default("any") // any | all
+  match_type            String   @default("contains") // contains | exact | starts_with | regex
+  negative_keywords     String?  // JSON string[]
+  media_ids             String?  // JSON string[] — vazio/null = qualquer post
+  first_interaction_only Boolean @default(false)
+  cooldown_hours        Int?
+  daily_limit           Int?
+  quiet_hours           String?  // JSON {start:"23:00",end:"07:00",tz:"America/Bahia"}
+  settings              String?  // JSON livre (ex.: fallback IA)
+  stats_sent            Int      @default(0)
+  stats_matched         Int      @default(0)
+  stats_failed          Int      @default(0)
+  stats_clicks          Int      @default(0)
+  last_run_at           DateTime?
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  user      User                @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  channel   Channel             @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  actions   IgAutomationAction[]
+  events    IgEvent[]
+  logs      IgActionLog[]
+  clicks    IgClick[]
+
+  @@map("ig_automations")
+  @@index([user_id, channel_id])
+  @@index([channel_id, enabled, priority])
+}
+
+model IgAutomationAction {
+  id            String   @id @default(uuid())
+  automation_id String
+  position      Int      @default(0)
+  type          String   // public_comment_reply | private_reply | dm_text | dm_buttons | dm_quick_replies | dm_media | ai_reply | assign_tag | start_sequence | outbound_webhook
+  delay_seconds Int      @default(0)
+  text_variants String?  // JSON string[] (rotação)
+  buttons       String?  // JSON [{type:"web_url"|"postback", title, url?, payload?}]
+  quick_replies String?  // JSON [{title,payload}]
+  media_url     String?
+  tag           String?
+  sequence_id   String?
+  webhook_id    String?
+  ai_prompt     String?
+  config        String?  // JSON extra (ex.: {"trackClicks":true})
+  created_at    DateTime @default(now())
+
+  automation IgAutomation @relation(fields: [automation_id], references: [id], onDelete: Cascade)
+
+  @@map("ig_automation_actions")
+  @@index([automation_id, position])
+}
+
+model IgSubstance {
+  id          String   @id @default(uuid())
+  user_id     String?
+  keyword     String   @unique
+  name        String
+  keywords    String   // JSON string[] sinônimos
+  description String
+  action      String
+  dosage      String
+  duration    String
+  url         String?
+  enabled     Boolean  @default(true)
+  created_at  DateTime @default(now())
+
+  @@map("ig_substances")
+}
+
+model IgContact {
+  id                 String    @id @default(uuid())
+  user_id            String
+  channel_id         String
+  ig_user_id         String
+  username           String?
+  name               String?
+  profile_picture    String?
+  tags               String?   // JSON string[]
+  notes              String?
+  custom_fields      String?   // JSON object
+  bot_paused_until   DateTime?
+  last_message_at    DateTime?
+  last_comment_at    DateTime?
+  interactions_count Int       @default(0)
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  user        User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  channel     Channel     @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  events      IgEvent[]
+  logs        IgActionLog[]
+  enrollments IgSequenceEnrollment[]
+
+  @@map("ig_contacts")
+  @@unique([channel_id, ig_user_id])
+  @@index([user_id, channel_id])
+  @@index([username])
+}
+
+model IgEvent {
+  id            String   @id @default(uuid())
+  user_id       String
+  channel_id    String
+  automation_id String?
+  contact_id    String?
+  direction     String   @default("in") // in | out
+  kind          String   // comment | dm | story_reply | story_mention | postback | reaction | echo | system
+  dedupe_key    String   @unique // comment:<id> | message:<mid> | postback:<mid> | reaction:<mid> | action:<uuid>
+  ig_event_id   String?
+  media_id      String?
+  text          String?
+  username      String?
+  from_ig_id    String?
+  payload       String?  // JSON cru
+  status        String   @default("received") // received | matched | sent | failed | skipped | paused | duplicate
+  error         String?
+  created_at    DateTime @default(now())
+
+  user       User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  channel    Channel       @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  automation IgAutomation? @relation(fields: [automation_id], references: [id], onDelete: SetNull)
+  contact    IgContact?    @relation(fields: [contact_id], references: [id], onDelete: SetNull)
+
+  @@map("ig_events")
+  @@index([channel_id, created_at])
+  @@index([automation_id, created_at])
+  @@index([contact_id, created_at])
+  @@index([user_id, direction, created_at])
+}
+
+model IgActionLog {
+  id            String   @id @default(uuid())
+  user_id       String
+  channel_id    String
+  automation_id String?
+  contact_id    String?
+  event_id      String?
+  action_type   String
+  status        String   // pending | sent | failed | skipped
+  request       String?  // JSON
+  response      String?  // JSON resumido
+  error         String?
+  created_at    DateTime @default(now())
+
+  user       User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  channel    Channel       @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  automation IgAutomation? @relation(fields: [automation_id], references: [id], onDelete: SetNull)
+  contact    IgContact?    @relation(fields: [contact_id], references: [id], onDelete: SetNull)
+
+  @@map("ig_action_logs")
+  @@index([channel_id, created_at])
+  @@index([automation_id, created_at])
+}
+
+model IgJob {
+  id           String    @id @default(uuid())
+  user_id      String
+  channel_id   String?
+  type         String // action | sequence_step | ai_reply | outbound_webhook
+  run_at       DateTime
+  payload      String    // JSON
+  status       String    @default("pending") // pending | running | done | failed | cancelled
+  attempts     Int       @default(0)
+  max_attempts Int       @default(3)
+  locked_at    DateTime?
+  last_error   String?
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  @@map("ig_jobs")
+  @@index([status, run_at])
+  @@index([channel_id])
+}
+
+model IgSequence {
+  id         String   @id @default(uuid())
+  user_id    String
+  channel_id String
+  name       String
+  enabled    Boolean  @default(true)
+  steps      String   // JSON [{delay_seconds,type,text_variants,buttons,quick_replies,media_url,ai_prompt,config}]
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  user        User                   @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  channel     Channel                @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+  enrollments IgSequenceEnrollment[]
+
+  @@map("ig_sequences")
+  @@index([user_id, channel_id])
+}
+
+model IgSequenceEnrollment {
+  id           String    @id @default(uuid())
+  sequence_id  String
+  contact_id   String
+  channel_id   String
+  current_step Int       @default(0)
+  status       String    @default("active") // active | done | cancelled
+  next_run_at  DateTime?
+  started_at   DateTime  @default(now())
+  updated_at   DateTime  @updatedAt
+
+  sequence IgSequence @relation(fields: [sequence_id], references: [id], onDelete: Cascade)
+  contact  IgContact  @relation(fields: [contact_id], references: [id], onDelete: Cascade)
+  channel  Channel    @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+
+  @@map("ig_sequence_enrollments")
+  @@unique([sequence_id, contact_id])
+  @@index([status, next_run_at])
+}
+
+model IgChannelState {
+  channel_id        String    @id
+  subscribed_fields String?   // JSON string[]
+  last_checked_at   DateTime?
+  last_event_at     DateTime?
+  status            String    @default("unknown") // ok | missing | partial | token_invalid | error | unknown
+  last_error        String?
+  updated_at        DateTime  @updatedAt
+
+  channel Channel @relation(fields: [channel_id], references: [id], onDelete: Cascade)
+
+  @@map("ig_channel_state")
+}
+
+model IgClick {
+  id            String    @id @default(uuid())
+  user_id       String
+  channel_id    String?
+  automation_id String?
+  contact_id    String?
+  slug          String    @unique
+  target_url    String
+  utm_source    String?
+  utm_medium    String?
+  utm_campaign  String?
+  clicks        Int       @default(0)
+  created_at    DateTime  @default(now())
+  last_click_at DateTime?
+
+  user       User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  channel    Channel?      @relation(fields: [channel_id], references: [id], onDelete: SetNull)
+  automation IgAutomation? @relation(fields: [automation_id], references: [id], onDelete: SetNull)
+
+  @@map("ig_clicks")
+  @@index([automation_id, created_at])
+}
+
+model IgOutboundWebhook {
+  id         String   @id @default(uuid())
+  user_id    String
+  channel_id String?
+  name       String
+  url        String
+  secret     String?
+  events     String   // JSON string[]: comment.matched | dm.matched | action.sent | action.failed | click | sequence.step
+  enabled    Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("ig_outbound_webhooks")
+  @@index([user_id])
 }
