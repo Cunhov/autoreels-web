@@ -1,6 +1,6 @@
 'use client';
 import Link from 'next/link';
-import { Calendar, BarChart2, Radio, Sliders, PlusSquare, Folder, LogOut, Search, CloudUpload, Settings, Youtube } from 'lucide-react';
+import { Calendar, BarChart2, Radio, Sliders, PlusSquare, Folder, LogOut, Search, CloudUpload, Settings, Youtube, Bot } from 'lucide-react';
 import { usePathname } from 'next/navigation';
 import { signOut, useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
@@ -44,6 +44,7 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
         { name: 'Analytics', path: '/analytics', icon: BarChart2, badge: 0, badgeColor: '' },
         { name: 'Canais', path: '/channels', icon: Radio, badge: 0, badgeColor: '' },
         { name: 'Comentários', path: '/youtube/comments', icon: Youtube, badge: 0, badgeColor: '' },
+        { name: 'Automações', path: '/automations', icon: Bot, badge: 0, badgeColor: '' },
         { name: 'Planners', path: '/planners', icon: Sliders, badge: badges.activePlanners > 0 ? badges.activePlanners : 0, badgeColor: 'bg-ios-green' },
         { name: 'Biblioteca', path: '/content', icon: Folder, badge: 0, badgeColor: '' },
         { name: 'Uploads', path: '/upload', icon: CloudUpload, badge: activeUploads, badgeColor: 'bg-ios-blue' },
