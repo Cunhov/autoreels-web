@@ -53,6 +53,39 @@ const YOUTUBE_TEMPLATE_TAGS = [
 	"{hashtags}",
 ] as const;
 
+/** Item de biblioteca no shape mínimo usado pelos checks do wizard. */
+interface LibraryItemBasic {
+	id?: string;
+	name?: string | null;
+	title?: string | null;
+	youtube_products?: string | null;
+}
+
+/**
+ * Busca TODOS os itens de biblioteca do usuário, paginando (a API limita a
+ * 500 por página). Os checks que cobrem a seleção inteira (avisos de produtos
+ * ITEM > FIXO e títulos do Short) usavam um único fetch de 500 — com planner
+ * de mais de 500 itens, parte da seleção ficava fora do mapa e o check de
+ * título bloqueava o save indevidamente.
+ */
+async function fetchAllLibraryItemsBasic(): Promise<LibraryItemBasic[]> {
+	const out: LibraryItemBasic[] = [];
+	const limit = 500;
+	for (let offset = 0; offset < 50000; offset += limit) {
+		const res = await fetch(
+			`/api/content-items?limit=${limit}&offset=${offset}`,
+		);
+		if (!res.ok) break;
+		const payload = await res.json();
+		const items: LibraryItemBasic[] = Array.isArray(payload)
+			? payload
+			: payload.items || [];
+		out.push(...items);
+		if (!payload?.hasMore || items.length === 0) break;
+	}
+	return out;
+}
+
 // Insere a tag no cursor do campo controlado e restaura o foco/posição.
 function insertYoutubeTemplateTag(
 	el: HTMLInputElement | HTMLTextAreaElement | null,
@@ -1304,12 +1337,7 @@ export default function PlannerWizard({
 		setSelectedItemProductsLoaded(false);
 		(async () => {
 			try {
-				const params = new URLSearchParams({ limit: "500" });
-				const res = await fetch(`/api/content-items?${params.toString()}`);
-				if (!res.ok) return;
-				const payload = await res.json();
-				const items: { id?: string; youtube_products?: string | null }[] =
-					Array.isArray(payload) ? payload : payload.items || [];
+				const items = await fetchAllLibraryItemsBasic();
 				const map: Record<string, string> = {};
 				for (const it of items) {
 					const id = String(it.id || "");
@@ -1344,12 +1372,7 @@ export default function PlannerWizard({
 	const selectedLibraryItemsHaveTitles = async (): Promise<boolean> => {
 		if (selectedContentIds.length === 0) return false;
 		try {
-			const params = new URLSearchParams({ limit: "500" });
-			const res = await fetch(`/api/content-items?${params.toString()}`);
-			if (!res.ok) return false;
-			const payload = await res.json();
-			const items: { id?: string; name?: string | null; title?: string | null }[] =
-				Array.isArray(payload) ? payload : payload.items || [];
+			const items = await fetchAllLibraryItemsBasic();
 			const hasTitle = new Map<string, boolean>();
 			for (const it of items) {
 				hasTitle.set(

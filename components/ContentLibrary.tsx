@@ -668,6 +668,7 @@ export default function ContentLibrary({
 	const [currentOffset, setCurrentOffset] = useState(0);
 	const [loadingMore, setLoadingMore] = useState(false);
 	const [selectAllServer, setSelectAllServer] = useState(false);
+	const [selectAllLoading, setSelectAllLoading] = useState(false);
 	const [bulkLoading, setBulkLoading] = useState(false);
 	const [fetchError, setFetchError] = useState<string | null>(null);
 	const PAGE_SIZE = 100;
@@ -1065,6 +1066,10 @@ export default function ContentLibrary({
 	const toggleSelection = useCallback(
 		(id: string) => {
 			selectionTouchedRef.current = true;
+			// Toggle manual quebra o "selecionar tudo": a partir daqui a seleção
+			// é EXPLÍCITA (ids carregados no estado) — sem isso, ações em massa
+			// continuariam tratando o filtro inteiro como selecionado.
+			setSelectAllServer(false);
 			if (selectedIds.includes(id)) {
 				setSelectedIds(selectedIds.filter((sid) => sid !== id));
 				setSelectionOrder(selectionOrder.filter((sid) => sid !== id));
@@ -1431,19 +1436,42 @@ export default function ContentLibrary({
 		}
 	}, [sortedItems, selectedIds, selectionOrder, selectAllServer]);
 
-	const handleSelectAllServer = useCallback(() => {
+	/**
+	 * "Select All {total}" — busca TODOS os ids que casam com os filtros no
+	 * servidor (ids_only=1, sem paginação) e seleciona de fato a lista inteira.
+	 * Antes esta ação apenas ligava um flag usado pelas ações em massa: em
+	 * seleção (wizard do planner) o pai recebia só a página carregada
+	 * (PAGE_SIZE=100), então um planner "com todos os reels" saía com 100.
+	 */
+	const handleSelectAllServer = useCallback(async () => {
 		if (selectAllServer) {
 			setSelectAllServer(false);
 			setSelectedIds([]);
 			setSelectionOrder([]);
-		} else {
-			// Select all loaded items and set server flag
-			const allFilteredIds = sortedItems.map((i) => i.id);
-			setSelectedIds(allFilteredIds);
-			setSelectionOrder(allFilteredIds);
-			setSelectAllServer(true);
+			return;
 		}
-	}, [selectAllServer, sortedItems]);
+		setSelectAllLoading(true);
+		try {
+			const params = new URLSearchParams(buildFilterParams());
+			params.set("ids_only", "1");
+			const res = await fetch(`/api/content-items?${params.toString()}`);
+			if (!res.ok) throw new Error("Select all failed");
+			const payload = await res.json();
+			const ids: string[] = Array.isArray(payload?.ids) ? payload.ids : [];
+			selectionTouchedRef.current = true;
+			setSelectedIds(ids);
+			setSelectionOrder(ids);
+			setSelectAllServer(true);
+		} catch {
+			setToast({
+				msg: "Failed to select all items",
+				type: "error",
+				show: true,
+			});
+		} finally {
+			setSelectAllLoading(false);
+		}
+	}, [selectAllServer, buildFilterParams]);
 
 	// Bulk delete handler — uses server-side bulk endpoint
 	const handleBulkDelete = useCallback(async () => {
@@ -1742,16 +1770,18 @@ export default function ContentLibrary({
 											? "Deselect All"
 											: `Select All`}
 								</button>
-								{totalCount > items.length &&
-									selectedIds.length > 0 &&
-									!selectAllServer && (
-										<button
-											onClick={handleSelectAllServer}
-											className="text-xs font-semibold px-3 py-1.5 rounded-lg border bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100 transition-all"
-										>
-											Select All {totalCount}
-										</button>
-									)}
+								{totalCount > items.length && !selectAllServer && (
+									<button
+										onClick={handleSelectAllServer}
+										disabled={selectAllLoading}
+										title="Select every item matching the current filters (including items not loaded yet)"
+										className="text-xs font-semibold px-3 py-1.5 rounded-lg border bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100 transition-all disabled:opacity-60"
+									>
+										{selectAllLoading
+											? "Selecting…"
+											: `Select All ${totalCount}`}
+									</button>
+								)}
 							</div>
 						)}
 

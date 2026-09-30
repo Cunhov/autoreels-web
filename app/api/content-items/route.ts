@@ -115,19 +115,32 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
 
-    // Validate limit/offset (NaN would propagate as take:NaN → 500)
-    const rawLimit = parseInt(searchParams.get('limit') || '100', 10);
-    const rawOffset = parseInt(searchParams.get('offset') || '0', 10);
-    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 100;
-    const offset = Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0;
     const sortBy = searchParams.get('sort_by') || 'name-asc';
-
     const where = buildContentWhere(userId, searchParams);
     const orderBy =
         sortBy === 'created-desc' ? { created_at: 'desc' as const } :
         sortBy === 'created-asc' ? { created_at: 'asc' as const } :
         sortBy === 'name-desc' ? { name: 'desc' as const } :
         { name: 'asc' as const };
+
+    // ids_only=1 → devolve TODOS os ids que casam com os filtros, sem paginação.
+    // Usado pelo "Select All {total}" da Library: o wizard do planner precisa da
+    // seleção COMPLETA (não só a página carregada — PAGE_SIZE=100) para salvar
+    // todos os itens, cobrindo bibliotecas com centenas/milhares de mídias.
+    if (searchParams.get('ids_only') === '1') {
+        const all = await prisma.contentItem.findMany({
+            where,
+            orderBy,
+            select: { id: true },
+        });
+        return NextResponse.json({ ids: all.map((i) => i.id), totalCount: all.length });
+    }
+
+    // Validate limit/offset (NaN would propagate as take:NaN → 500)
+    const rawLimit = parseInt(searchParams.get('limit') || '100', 10);
+    const rawOffset = parseInt(searchParams.get('offset') || '0', 10);
+    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 100;
+    const offset = Number.isFinite(rawOffset) ? Math.max(rawOffset, 0) : 0;
 
     // Run count + query in parallel for efficiency
     const [totalCount, contentItems] = await Promise.all([
