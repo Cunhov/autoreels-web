@@ -276,6 +276,8 @@ async function runActionJob(payload: Record<string, unknown>): Promise<void> {
 		},
 		vars,
 		limits,
+		// FIX-M4: propaga o id da row `IgEvent` para o dedupe de private_reply.
+		eventId: eventRow.id,
 	});
 	if (!result.ok) {
 		throw new Error(

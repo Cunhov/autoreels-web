@@ -201,7 +201,7 @@ export default function AutomationEditor({
         };
     }, []);
 
-    // Sequências e webhooks de saída (best-effort: podem não existir na onda 1).
+    // Sequências e webhooks de saída (best-effort: falha não bloqueia o editor).
     useEffect(() => {
         let cancelled = false;
         (async () => {
@@ -368,15 +368,9 @@ export default function AutomationEditor({
         return errs;
     }
 
-    async function save() {
-        const errs = validate();
-        setFormErrors(errs);
-        if (errs.length > 0) {
-            showToast(errs[0], "error");
-            return;
-        }
-        setSaving(true);
-        const payload: AutomationPayload = {
+    /** Payload canônico do formulário: usado ao salvar e como rascunho do simulador. */
+    function buildPayload(): AutomationPayload {
+        return {
             channelId,
             name: name.trim(),
             enabled,
@@ -408,6 +402,17 @@ export default function AutomationEditor({
                 serializeActionPayload(a, i, "camel"),
             ),
         };
+    }
+
+    async function save() {
+        const errs = validate();
+        setFormErrors(errs);
+        if (errs.length > 0) {
+            showToast(errs[0], "error");
+            return;
+        }
+        setSaving(true);
+        const payload = buildPayload();
         try {
             if (editing && automationId) {
                 await apiFetch<unknown>(`/api/automations/${automationId}`, {
@@ -466,8 +471,7 @@ export default function AutomationEditor({
                         {loadError}
                     </p>
                     <p className="text-[13px] text-ios-text-secondary mb-4">
-                        Verifique se a API de automações já foi publicada
-                        (onda 1) e tente novamente.
+                        Verifique sua conexão e tente novamente.
                     </p>
                     <IOSButton
                         variant="secondary"
@@ -858,6 +862,7 @@ export default function AutomationEditor({
                         defaultOpen={initialSimulatorOpen}
                         defaultKind={trigger}
                         onToast={showToast}
+                        draft={buildPayload()}
                     />
                 </div>
             </div>

@@ -6,8 +6,10 @@
  * - `parseWebhookPayload`: 100% defensivo (entries malformadas não lançam),
  *   ignora `read`/`delivery`/`reaction` de messaging e reações sem `mid`.
  * - `persistInboundEvents`: grava `IgEvent` com dedupe por `dedupe_key`
- *   (P2002 = replay), status `received`; echo vira `kind="echo"` e
- *   `status="paused"` + pausa do contato. Payload cru serializado sem token.
+ *   (P2002 = replay), status `received`; echo humano vira `kind="echo"` e
+ *   `status="paused"` + pausa do contato; echo do PRÓPRIO bot vira
+ *   `status="skipped"`/`error="echo_do_bot"` e NÃO pausa. Payload cru
+ *   serializado sem token.
  */
 import { createHmac, timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
@@ -29,8 +31,17 @@ export interface PersistInboundResult {
 	/** Falhas reais de persistência (DB) — a rota responde 500 p/ retry da Meta. */
 	errors: number;
 	/**
+	 * Echo enviado pelo PRÓPRIO bot (app_id === INSTAGRAM_CLIENT_ID ou mid
+	 * correlacionado a um IgActionLog `sent` nas últimas 24h): gravado como
+	 * `kind="echo"`/`status="skipped"`/`error="echo_do_bot"`, sem pausar o
+	 * contato. Contador ADITIVO (não altera `duplicates`/`unknown`); a rota do
+	 * webhook pode expô-lo depois sem quebrar o contrato.
+	 */
+	echoIgnored: number;
+	/**
 	 * Eventos efetivamente gravados (não duplicados/desconhecidos) — extensão
 	 * operacional para a rota processar o engine sem reprocessar replays.
+	 * Echo do bot NÃO entra aqui (é ignorado, não passa pelo engine).
 	 */
 	storedEvents: IgInboundEvent[];
 }
@@ -221,6 +232,7 @@ export function parseWebhookPayload(body: unknown): IgInboundEvent[] {
 					fromUsername: echoFromUsername,
 					text: asString(message.text),
 					isEcho: true,
+					appId: asString(message.app_id),
 					raw: itemRaw,
 				});
 				continue;
@@ -291,6 +303,59 @@ function safePayload(value: unknown): string | undefined {
 	}
 }
 
+/** Tipos de ação que enviam mensagem via Graph (candidatos a eco do bot). */
+const ECHO_SEND_ACTION_TYPES = [
+	"dm_text",
+	"dm_buttons",
+	"dm_quick_replies",
+	"dm_media",
+	"private_reply",
+	"public_comment_reply",
+] as const;
+
+/** Janela de correlação do echo com o log de envio. */
+const ECHO_LOG_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * O echo foi enviado pelo PRÓPRIO bot (e não por um humano)? Dois sinais:
+ * (i) `message.app_id` presente e igual a `INSTAGRAM_CLIENT_ID` (nosso app);
+ * (ii) existe `IgActionLog` `sent` de envio Graph do canal cujo `response`
+ *      contém o mid do echo — o log de sucesso persiste `{"message_id":"..."}`
+ *      — criado nas últimas 24h.
+ * Em dúvida/erro de consulta é conservador: trata como echo humano (pausa),
+ * preservando o human takeover.
+ */
+async function isOwnBotEcho(
+	event: IgInboundEvent,
+	channelId: string,
+): Promise<boolean> {
+	const appId = asString(event.appId);
+	const ownAppId = (process.env.INSTAGRAM_CLIENT_ID || "").trim();
+	if (appId && ownAppId && appId === ownAppId) return true;
+
+	const mid = asString(event.igEventId);
+	if (!mid) return false;
+	try {
+		const hit = await prisma.igActionLog.findFirst({
+			where: {
+				channel_id: channelId,
+				status: "sent",
+				action_type: { in: [...ECHO_SEND_ACTION_TYPES] },
+				response: { contains: mid },
+				created_at: { gte: new Date(Date.now() - ECHO_LOG_LOOKBACK_MS) },
+			},
+			select: { id: true },
+		});
+		return hit !== null;
+	} catch (error) {
+		console.error(
+			"[ig-webhook] checagem de echo do bot falhou:",
+			shortError(error),
+		);
+		return false;
+	}
+}
+
 /** Echo: pausa o contato (human takeover) e liga o contato ao evento. */
 async function pauseForEcho(
 	eventRowId: string,
@@ -322,7 +387,8 @@ async function pauseForEcho(
 /**
  * Persiste cada evento cujo canal é conhecido. Dedupe pelo `dedupe_key`
  * (P2002 é replay → `duplicates`); canal fora do mapa → `unknown`.
- * Echo gera evento `paused` e pausa o contato (não passa pelo engine).
+ * Echo do próprio bot («isOwnBotEcho») é ignorado (`skipped`, sem pausa);
+ * echo humano gera evento `paused` e pausa o contato (não passa pelo engine).
  */
 export async function persistInboundEvents(
 	events: IgInboundEvent[],
@@ -333,6 +399,7 @@ export async function persistInboundEvents(
 		duplicates: 0,
 		unknown: 0,
 		errors: 0,
+		echoIgnored: 0,
 		storedEvents: [],
 	};
 	if (!Array.isArray(events) || events.length === 0) return result;
@@ -360,6 +427,8 @@ export async function persistInboundEvents(
 
 		const isEcho = event.isEcho === true;
 		try {
+			// Echo do próprio bot não é takeover humano: não pausa o contato.
+			const botEcho = isEcho ? await isOwnBotEcho(event, channel.id) : false;
 			const created = await prisma.igEvent.create({
 				data: {
 					user_id: channel.user_id,
@@ -372,15 +441,20 @@ export async function persistInboundEvents(
 					username: asString(event.fromUsername),
 					from_ig_id: asString(event.fromIgId),
 					payload: safePayload(event.raw),
-					status: isEcho ? "paused" : "received",
+					status: isEcho ? (botEcho ? "skipped" : "paused") : "received",
+					error: botEcho ? "echo_do_bot" : undefined,
 					direction: "in",
 				},
 				select: { id: true },
 			});
 			result.stored += 1;
-			result.storedEvents.push(event);
+			if (botEcho) {
+				result.echoIgnored += 1;
+			} else {
+				result.storedEvents.push(event);
+			}
 			touchedChannelIds.add(channel.id);
-			if (isEcho) {
+			if (isEcho && !botEcho) {
 				if (limits === null) limits = await getLimits();
 				await pauseForEcho(created.id, event, channel, limits);
 			}

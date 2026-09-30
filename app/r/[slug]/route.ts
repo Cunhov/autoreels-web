@@ -1,5 +1,7 @@
+import { after } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { appendUtm, isHttpUrl } from "@/lib/ig-automation/clicks";
+import { dispatchOutbound } from "@/lib/ig-automation/outbound";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +52,28 @@ export async function GET(
 		}
 	} catch {
 		/* contagem não pode impedir o redirecionamento */
+	}
+
+	// Evento `click` p/ webhooks de saída — fire-and-forget, nunca bloqueia o
+	// redirect; qualquer erro é ignorado.
+	const dispatchClick = async (): Promise<void> => {
+		try {
+			await dispatchOutbound({
+				userId: click.user_id,
+				channelId: click.channel_id ?? "",
+				event: "click",
+				automationId: click.automation_id,
+				contact: null,
+				text: target,
+			});
+		} catch {
+			/* erro ignorado — nunca bloqueia o redirect */
+		}
+	};
+	try {
+		after(dispatchClick);
+	} catch {
+		void dispatchClick();
 	}
 
 	return new Response(null, { status: 302, headers: { Location: target } });

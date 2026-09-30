@@ -169,15 +169,41 @@ export async function executeAction(
 		actionType: actionType || "unknown",
 	};
 
+	// FIX-A2: eventos de webhook de saída para envios reais à Graph.
+	// Fire-and-forget: nunca bloqueia nem derruba o fluxo da ação.
+	const fireOutboundEvent = (
+		event: "action.sent" | "action.failed",
+		text: string | null,
+	): void => {
+		if (!SEND_ACTIONS.has(actionType)) return;
+		try {
+			void dispatchOutbound({
+				userId: channel.user_id,
+				channelId: channel.id,
+				event,
+				automationId,
+				contact: {
+					igUserId: contact.ig_user_id,
+					username: contact.username,
+				},
+				text,
+			}).catch(() => {});
+		} catch {
+			/* webhooks de saída são best-effort */
+		}
+	};
+
 	const finishFailure = (error: string): ExecuteActionResult => {
 		fireLog({ ...baseLog, status: "failed", error: error.slice(0, 500) });
 		if (automationId) fireBump(automationId, { failed: 1 });
+		fireOutboundEvent("action.failed", error);
 		return { ok: false, error };
 	};
 
 	const finishSuccess = (
 		request?: unknown,
 		response?: unknown,
+		outboundText?: string | null,
 	): ExecuteActionResult => {
 		fireLog({
 			...baseLog,
@@ -190,6 +216,7 @@ export async function executeAction(
 		if (automationId && SEND_ACTIONS.has(actionType)) {
 			fireBump(automationId, { sent: 1 });
 		}
+		fireOutboundEvent("action.sent", outboundText ?? null);
 		return { ok: true };
 	};
 
@@ -198,6 +225,7 @@ export async function executeAction(
 	const finishSuccessPersisted = async (
 		request?: unknown,
 		response?: unknown,
+		outboundText?: string | null,
 	): Promise<ExecuteActionResult> => {
 		try {
 			await logAction({
@@ -212,6 +240,7 @@ export async function executeAction(
 		if (automationId && SEND_ACTIONS.has(actionType)) {
 			fireBump(automationId, { sent: 1 });
 		}
+		fireOutboundEvent("action.sent", outboundText ?? null);
 		return { ok: true };
 	};
 
@@ -254,6 +283,7 @@ export async function executeAction(
 				return finishSuccess(
 					{ endpoint: "replies", commentId: event.igEventId },
 					{ status: result.status },
+					text,
 				);
 			}
 
@@ -305,6 +335,7 @@ export async function executeAction(
 						buttons: rendered.buttons?.length ?? 0,
 					},
 					{ status: result.status },
+					rendered.text ?? null,
 				);
 			}
 
@@ -321,6 +352,7 @@ export async function executeAction(
 				return finishSuccess(
 					{ endpoint: "messages", igUserId: contact.ig_user_id, text: rendered.text },
 					{ status: result.status },
+					rendered.text ?? null,
 				);
 			}
 
@@ -346,6 +378,7 @@ export async function executeAction(
 						buttons: rendered.buttons?.length ?? 0,
 					},
 					{ status: result.status },
+					rendered.text ?? null,
 				);
 			}
 
@@ -373,6 +406,7 @@ export async function executeAction(
 						quickReplies: rendered.quickReplies?.length ?? 0,
 					},
 					{ status: result.status },
+					rendered.text ?? null,
 				);
 			}
 
@@ -394,6 +428,7 @@ export async function executeAction(
 				return finishSuccess(
 					{ endpoint: "messages", igUserId: contact.ig_user_id, mediaUrl },
 					{ status: result.status },
+					rendered.text ?? null,
 				);
 			}
 
@@ -423,6 +458,7 @@ export async function executeAction(
 				return finishSuccess(
 					{ endpoint: event.kind === "comment" ? "private_reply" : "dm", ai: true },
 					{ status: result.status },
+					text,
 				);
 			}
 

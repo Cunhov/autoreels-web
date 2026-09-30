@@ -64,6 +64,7 @@ export interface IgInboundEvent {
 	mediaId?: string;
 	postbackPayload?: string;
 	isEcho?: boolean; // message.is_echo
+	appId?: string; // message.app_id (echo enviado por um app)
 	raw: unknown; // payload cru do evento
 }
 

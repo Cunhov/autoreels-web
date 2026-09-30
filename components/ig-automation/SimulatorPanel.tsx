@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
 import IOSCard from "@/components/IOSComponents";
-import type { IgSimulationResult, IgTrigger } from "./types";
+import type { AutomationPayload, IgSimulationResult, IgTrigger } from "./types";
 import {
     ACTION_TYPE_LABELS,
     ApiError,
@@ -32,6 +32,11 @@ interface SimulatorPanelProps {
     defaultOpen?: boolean;
     defaultKind?: IgTrigger;
     onToast?: (msg: string, type: "success" | "error") => void;
+    /**
+     * FIX-A7: rascunho da automação em edição (formato do POST /api/automations).
+     * Avaliado com prioridade máxima pelo simulador, mesmo sem salvar.
+     */
+    draft?: AutomationPayload | null;
 }
 
 /**
@@ -43,6 +48,7 @@ export default function SimulatorPanel({
     defaultOpen = false,
     defaultKind = "comment",
     onToast,
+    draft = null,
 }: SimulatorPanelProps) {
     const [open, setOpen] = useState(defaultOpen);
     const [kind, setKind] = useState<IgTrigger>(defaultKind);
@@ -54,6 +60,22 @@ export default function SimulatorPanel({
     const [error, setError] = useState("");
     const [result, setResult] = useState<IgSimulationResult | null>(null);
 
+    async function requestSimulation(includeDraft: boolean) {
+        const raw = await apiFetch<unknown>("/api/automations/simulate", {
+            method: "POST",
+            body: JSON.stringify({
+                channelId,
+                kind,
+                text,
+                mediaId: mediaId.trim() || undefined,
+                username: username.trim() || undefined,
+                igUserId: igUserId.trim() || undefined,
+                ...(includeDraft && draft ? { draft } : {}),
+            }),
+        });
+        return normalizeSimulation(raw);
+    }
+
     async function run() {
         setError("");
         setResult(null);
@@ -63,31 +85,26 @@ export default function SimulatorPanel({
         }
         setLoading(true);
         try {
-            const raw = await apiFetch<unknown>("/api/automations/simulate", {
-                method: "POST",
-                body: JSON.stringify({
-                    channelId,
-                    kind,
-                    text,
-                    mediaId: mediaId.trim() || undefined,
-                    username: username.trim() || undefined,
-                    igUserId: igUserId.trim() || undefined,
-                }),
-            });
-            setResult(normalizeSimulation(raw));
-        } catch (e: unknown) {
-            if (e instanceof ApiError && e.status === 404) {
-                setError(
-                    "Simulador disponível após o deploy da onda 2. A rota /api/automations/simulate ainda não está publicada.",
-                );
-            } else {
-                const msg =
-                    e instanceof Error
-                        ? e.message
-                        : "Falha ao simular o evento.";
-                setError(msg);
-                onToast?.(msg, "error");
+            try {
+                setResult(await requestSimulation(true));
+            } catch (e: unknown) {
+                // FIX-A7: rascunho inválido não quebra o fluxo antigo — refaz
+                // a simulação apenas com as automações salvas.
+                if (draft && e instanceof ApiError && e.status === 400) {
+                    setResult(await requestSimulation(false));
+                    onToast?.(
+                        "Rascunho com dados inválidos — simulei apenas as automações salvas.",
+                        "error",
+                    );
+                } else {
+                    throw e;
+                }
             }
+        } catch (e: unknown) {
+            const msg =
+                e instanceof Error ? e.message : "Falha ao simular o evento.";
+            setError(msg);
+            onToast?.(msg, "error");
         } finally {
             setLoading(false);
         }
@@ -223,9 +240,15 @@ export default function SimulatorPanel({
                             {/* Automação que casou */}
                             {result.matched ? (
                                 <div className="p-3 rounded-xl bg-ios-green/10 border border-ios-green/30">
-                                    <p className="text-[12px] font-semibold text-ios-green flex items-center gap-1.5">
+                                    <p className="text-[12px] font-semibold text-ios-green flex items-center gap-1.5 flex-wrap">
                                         <Bot size={14} />{" "}
                                         {result.matched.name}
+                                        {result.matched.automationId ===
+                                            "draft" && (
+                                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-ios-blue/10 text-ios-blue font-semibold">
+                                                Rascunho
+                                            </span>
+                                        )}
                                     </p>
                                     <p className="text-[10px] text-ios-text-secondary font-mono truncate">
                                         {result.matched.automationId}

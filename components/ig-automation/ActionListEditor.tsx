@@ -104,6 +104,9 @@ export default function ActionListEditor({
 
             {actions.map((action, index) => {
                 const isText = TEXT_ACTION_TYPES.includes(action.type);
+                // FIX-B4-UI: private_reply só aceita botões web_url (mesma regra
+                // da validação/Graph no backend).
+                const privateReply = action.type === "private_reply";
                 const showButtons =
                     BUTTON_ACTION_TYPES.includes(action.type) ||
                     action.buttons.length > 0;
@@ -160,12 +163,27 @@ export default function ActionListEditor({
                                 <select
                                     value={action.type}
                                     disabled={disabled}
-                                    onChange={(e) =>
-                                        update(index, {
-                                            type: e.target
-                                                .value as IgActionType,
-                                        })
-                                    }
+                                    onChange={(e) => {
+                                        const nextType = e.target
+                                            .value as IgActionType;
+                                        const patch: Partial<IgActionDraft> = {
+                                            type: nextType,
+                                        };
+                                        if (nextType === "private_reply") {
+                                            // Converte postbacks existentes p/ web_url.
+                                            patch.buttons = action.buttons.map(
+                                                (b) =>
+                                                    b.type === "postback"
+                                                        ? {
+                                                              ...b,
+                                                              type: "web_url" as const,
+                                                              payload: undefined,
+                                                          }
+                                                        : b,
+                                            );
+                                        }
+                                        update(index, patch);
+                                    }}
                                     className={inputCls}
                                 >
                                     {ACTION_TYPES.filter((t) =>
@@ -279,17 +297,26 @@ export default function ActionListEditor({
                         {/* Botões */}
                         {showButtons && (
                             <div className="space-y-2">
-                                <FieldLabel hint="Até 3 botões. Links com rastreio passam pelo redirecionador /r/…">
+                                <FieldLabel
+                                    hint={
+                                        privateReply
+                                            ? "Até 3 botões de link (web_url) — private reply não aceita postback."
+                                            : "Até 3 botões. Links com rastreio passam pelo redirecionador /r/…"
+                                    }
+                                >
                                     Botões
                                 </FieldLabel>
-                                {action.buttons.map((button, bi) => (
+                                {action.buttons.map((button, bi) => {
+                                    const buttonType: IgButton["type"] =
+                                        privateReply ? "web_url" : button.type;
+                                    return (
                                     <div
                                         key={bi}
                                         className="rounded-lg border border-ios-separator p-2 space-y-2 bg-ios-card"
                                     >
                                         <div className="flex items-center gap-2">
                                             <select
-                                                value={button.type}
+                                                value={buttonType}
                                                 disabled={disabled}
                                                 aria-label={`Tipo do botão ${bi + 1}`}
                                                 onChange={(e) =>
@@ -313,9 +340,11 @@ export default function ActionListEditor({
                                                 <option value="web_url">
                                                     Link (web_url)
                                                 </option>
-                                                <option value="postback">
-                                                    Postback
-                                                </option>
+                                                {!privateReply && (
+                                                    <option value="postback">
+                                                        Postback
+                                                    </option>
+                                                )}
                                             </select>
                                             <input
                                                 value={button.title}
@@ -358,7 +387,7 @@ export default function ActionListEditor({
                                                 <X size={14} />
                                             </button>
                                         </div>
-                                        {button.type === "web_url" ? (
+                                        {buttonType === "web_url" ? (
                                             <input
                                                 type="url"
                                                 value={button.url ?? ""}
@@ -409,7 +438,7 @@ export default function ActionListEditor({
                                                 className={`${inputCls} font-mono !text-[12px] !py-1`}
                                             />
                                         )}
-                                        {button.type === "web_url" && (
+                                        {buttonType === "web_url" && (
                                             <label className="flex items-center justify-between gap-2 text-[12px] text-ios-text-secondary">
                                                 <span>
                                                     Rastrear cliques (UTM)
@@ -438,7 +467,8 @@ export default function ActionListEditor({
                                             </label>
                                         )}
                                     </div>
-                                ))}
+                                    );
+                                })}
                                 {action.buttons.length < 3 && (
                                     <button
                                         type="button"

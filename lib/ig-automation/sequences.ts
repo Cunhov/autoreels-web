@@ -19,6 +19,7 @@ import {
 } from "@/lib/ig-automation/actions";
 import { getLimits } from "@/lib/ig-automation/limits";
 import { logAction } from "@/lib/ig-automation/log";
+import { dispatchOutbound } from "@/lib/ig-automation/outbound";
 import type {
 	IgAutomationActionRow,
 	IgAutomationRow,
@@ -44,6 +45,12 @@ export interface EnrollContactResult {
 }
 
 const RETRY_DELAY_MS = 15 * 60_000;
+/**
+ * FIX-M5: teto de tentativas por passo antes de cancelar o enrollment
+ * (evita retry infinito). Após 3 erros o enrollment vira `cancelled`
+ * com `next_run_at=null` e o motivo fica no log `sequence_step` failed.
+ */
+const MAX_ENROLLMENT_ATTEMPTS = 3;
 
 /* -------------------------------------------------------------------------- */
 /* Parsing defensivo dos passos                                                */
@@ -203,7 +210,7 @@ function firstNameOf(contact: {
 async function markEnrollmentDone(enrollmentId: string): Promise<void> {
 	await prisma.igSequenceEnrollment.updateMany({
 		where: { id: enrollmentId },
-		data: { status: "done", next_run_at: null },
+		data: { status: "done", next_run_at: null, attempts: 0 },
 	});
 }
 
@@ -317,6 +324,26 @@ export async function executeSequenceStep(
 		};
 	}
 
+	// FIX-A2: passo entregue com sucesso → webhook de saída `sequence.step`
+	// (fire-and-forget, nunca bloqueia/derruba a sequência).
+	if (result.skipped !== true) {
+		try {
+			void dispatchOutbound({
+				userId: sequence.user_id,
+				channelId: enrollment.channel_id,
+				event: "sequence.step",
+				automationId: null,
+				contact: {
+					igUserId: contact.ig_user_id,
+					username: contact.username,
+				},
+				text: null,
+			}).catch(() => {});
+		} catch {
+			/* webhooks de saída são best-effort */
+		}
+	}
+
 	const isLast = current >= steps.length - 1;
 	if (isLast) {
 		await markEnrollmentDone(enrollment.id);
@@ -326,11 +353,13 @@ export async function executeSequenceStep(
 	const nextDelay = steps[current + 1]?.delaySeconds ?? 0;
 	// Avanço condicional: só avança se o enrollment ainda está no passo
 	// executado e ativo (count 0 = cancelado/avançado por outro tick).
+	// `attempts` zera ao entregar o passo (FIX-M5).
 	await prisma.igSequenceEnrollment.updateMany({
 		where: { id: enrollment.id, status: "active", current_step: current },
 		data: {
 			current_step: current + 1,
 			next_run_at: new Date(Date.now() + nextDelay * 1000),
+			attempts: 0,
 		},
 	});
 	return { ok: true, done: false };
@@ -374,6 +403,7 @@ export async function processDueSequences(
 			channel_id: true,
 			contact_id: true,
 			current_step: true,
+			attempts: true,
 			sequence: { select: { user_id: true } },
 		},
 	});
@@ -410,10 +440,22 @@ export async function processDueSequences(
 		}
 
 		failed++;
+		// FIX-M5: incrementa `attempts` a cada erro; após
+		// MAX_ENROLLMENT_ATTEMPTS o enrollment é cancelado (sem retry infinito).
+		const attempts = (enrollment.attempts ?? 0) + 1;
+		const exhausted = attempts >= MAX_ENROLLMENT_ATTEMPTS;
+		const finalError = exhausted
+			? `${error} (${MAX_ENROLLMENT_ATTEMPTS} tentativas — inscrição cancelada)`
+			: error;
 		try {
 			await prisma.igSequenceEnrollment.updateMany({
 				where: { id: enrollment.id, status: "active" },
-				data: { next_run_at: new Date(Date.now() + RETRY_DELAY_MS) },
+				data: exhausted
+					? { status: "cancelled", next_run_at: null, attempts }
+					: {
+							next_run_at: new Date(Date.now() + RETRY_DELAY_MS),
+							attempts,
+						},
 			});
 		} catch (updateError) {
 			console.error(
@@ -427,7 +469,7 @@ export async function processDueSequences(
 			contactId: enrollment.contact_id,
 			actionType: "sequence_step",
 			status: "failed",
-			error,
+			error: finalError,
 		});
 	}
 
@@ -500,6 +542,7 @@ export async function enrollContact(
 				current_step: 0,
 				next_run_at: now,
 				started_at: now,
+				attempts: 0,
 			},
 			select: { id: true },
 		});

@@ -256,7 +256,7 @@ export default function SubstanceManager() {
         } catch (e: unknown) {
             if (e instanceof ApiError && e.status === 404) {
                 showToast(
-                    "Importação disponível após o deploy da onda 1.",
+                    "Não foi possível importar o catálogo. Tente novamente.",
                     "error",
                 );
             } else {

@@ -33,9 +33,11 @@ import { renderAction } from "@/lib/ig-automation/render";
 import type {
 	IgActionType,
 	IgAutomationActionRow,
+	IgButton,
 	IgGateResult,
 	IgInboundEvent,
 	IgMatchedAction,
+	IgQuickReply,
 	IgQuietHours,
 	IgRenderVars,
 	IgSimulationResult,
@@ -54,6 +56,42 @@ export interface IgSimulationInput {
 	mediaId?: string | null;
 	username?: string | null;
 	igUserId?: string | null;
+}
+
+/**
+ * FIX-A7: rascunho do editor no formato de criação de automação (camelCase
+ * validado por `validateAutomationInput`). Avaliado como candidato de MAIOR
+ * prioridade (`id` sintético `"draft"`), sem escrita no banco nem Graph.
+ */
+export interface IgSimulationDraftAction {
+	type: string;
+	delaySeconds?: number;
+	textVariants?: string[];
+	buttons?: IgButton[] | null;
+	quickReplies?: IgQuickReply[] | null;
+	mediaUrl?: string | null;
+	tag?: string | null;
+	sequenceId?: string | null;
+	webhookId?: string | null;
+	aiPrompt?: string | null;
+	config?: Record<string, unknown> | null;
+}
+
+export interface IgSimulationDraft {
+	channelId?: string;
+	name?: string;
+	trigger?: string;
+	keywords?: string[];
+	matchMode?: string;
+	matchType?: string;
+	negativeKeywords?: string[] | null;
+	mediaIds?: string[] | null;
+	firstInteractionOnly?: boolean;
+	cooldownHours?: number | null;
+	dailyLimit?: number | null;
+	quietHours?: IgQuietHours | null;
+	settings?: Record<string, unknown> | null;
+	actions?: IgSimulationDraftAction[];
 }
 
 interface EngineChannel {
@@ -107,6 +145,10 @@ const PUBLIC_REPLY_DEFAULT_MS = 15_000;
 const PUBLIC_REPLY_JITTER_MS = 10_000;
 const THROTTLE_RETRY_MS = 60_000;
 const MAX_THROTTLE_RETRIES = 3;
+/** FIX-M8: retry de falha inline transitória (1 job extra = 2 tentativas totais). */
+const INLINE_RETRY_DELAY_MS = 60_000;
+/** FIX-A7: id sintético da automação-rascunho no simulador. */
+const DRAFT_AUTOMATION_ID = "draft";
 
 const ENGINE_CHANNEL_SELECT = {
 	id: true,
@@ -173,6 +215,15 @@ function parseJsonObject(
 		/* JSON inválido = sem configuração */
 	}
 	return null;
+}
+
+function toJsonOrNull(value: unknown): string | null {
+	if (value === null || value === undefined) return null;
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return null;
+	}
 }
 
 function parseQuietHours(raw: string | null | undefined): IgQuietHours | null {
@@ -287,10 +338,17 @@ async function evaluateAutomationGates(
 		return { gates, passed: false, failedGate, vars };
 	}
 
-	// keywords
+	// keywords — FIX-M1: postback usa `postbackPayload` como texto de match
+	// (payload vazio cai no `event.text`).
+	const keywordsText =
+		event.kind === "postback" &&
+		typeof event.postbackPayload === "string" &&
+		event.postbackPayload.trim() !== ""
+			? event.postbackPayload
+			: text;
 	const keywords = parseStringList(automation.keywords);
 	const keywordsOk = matchText(
-		text,
+		keywordsText,
 		keywords,
 		automation.match_mode === "all" ? "all" : "any",
 		parseMatchType(automation.match_type),
@@ -458,6 +516,55 @@ async function renderSimulatedActions(
 	return result;
 }
 
+/**
+ * FIX-A7: converte o rascunho numa automação sintética (`id="draft"`) com o
+ * mesmo formato de `GateAutomation`/`IgAutomationActionRow`, para reaproveitar
+ * gates/matcher/render sem persistir nada.
+ */
+function buildDraftCandidate(
+	draft: IgSimulationDraft,
+	now: Date,
+): { automation: GateAutomation; actions: IgAutomationActionRow[]; name: string } {
+	const name = (draft.name ?? "").trim() || "Rascunho";
+	const automation: GateAutomation = {
+		id: DRAFT_AUTOMATION_ID,
+		trigger: draft.trigger ?? "comment",
+		keywords: JSON.stringify(draft.keywords ?? []),
+		match_mode: draft.matchMode === "all" ? "all" : "any",
+		match_type: draft.matchType ?? "contains",
+		negative_keywords: toJsonOrNull(draft.negativeKeywords),
+		media_ids: toJsonOrNull(draft.mediaIds),
+		first_interaction_only: draft.firstInteractionOnly === true,
+		cooldown_hours: draft.cooldownHours ?? null,
+		daily_limit: draft.dailyLimit ?? null,
+		quiet_hours: toJsonOrNull(draft.quietHours),
+		settings: toJsonOrNull(draft.settings),
+	};
+	const actions: IgAutomationActionRow[] = (draft.actions ?? []).map(
+		(action, index) => ({
+			id: `${DRAFT_AUTOMATION_ID}:${index}`,
+			automation_id: DRAFT_AUTOMATION_ID,
+			position: index,
+			type: action.type,
+			delay_seconds:
+				typeof action.delaySeconds === "number" && action.delaySeconds > 0
+					? action.delaySeconds
+					: 0,
+			text_variants: toJsonOrNull(action.textVariants),
+			buttons: toJsonOrNull(action.buttons),
+			quick_replies: toJsonOrNull(action.quickReplies),
+			media_url: action.mediaUrl ?? null,
+			tag: action.tag ?? null,
+			sequence_id: action.sequenceId ?? null,
+			webhook_id: action.webhookId ?? null,
+			ai_prompt: action.aiPrompt ?? null,
+			config: toJsonOrNull(action.config),
+			created_at: now,
+		}),
+	);
+	return { automation, actions, name };
+}
+
 /** Marca eventos ainda `received` (kill switch/canal) sem sobrescrever replays. */
 async function updateReceivedEvent(
 	dedupeKey: string,
@@ -613,8 +720,9 @@ async function handleEcho(
 }
 
 /**
- * Re-agenda ação throttled: `runAt=now+60s`, no máximo 3 tentativas
- * (o evento NÃO vira failed por throttle).
+ * Re-agenda ação throttled: `runAt=now+60s(+extraDelayMs)`, no máximo 3
+ * tentativas (o evento NÃO vira failed por throttle). `extraDelayMs` preserva
+ * o offset relativo da ação em relação à primeira (FIX-A6).
  */
 async function scheduleThrottleRetry(params: {
 	userId: string;
@@ -623,6 +731,7 @@ async function scheduleThrottleRetry(params: {
 	automationId: string;
 	contactId: string;
 	actionId: string;
+	extraDelayMs?: number;
 }): Promise<void> {
 	try {
 		const candidates = await prisma.igJob.findMany({
@@ -640,11 +749,15 @@ async function scheduleThrottleRetry(params: {
 		).length;
 		if (prior >= MAX_THROTTLE_RETRIES) return;
 
+		const extraDelayMs =
+			typeof params.extraDelayMs === "number" && Number.isFinite(params.extraDelayMs)
+				? Math.max(0, params.extraDelayMs)
+				: 0;
 		await enqueueJob({
 			userId: params.userId,
 			channelId: params.channelId,
 			type: "action",
-			runAt: new Date(Date.now() + THROTTLE_RETRY_MS),
+			runAt: new Date(Date.now() + THROTTLE_RETRY_MS + extraDelayMs),
 			payload: {
 				eventId: params.eventId,
 				automationId: params.automationId,
@@ -662,21 +775,92 @@ async function scheduleThrottleRetry(params: {
 	}
 }
 
+/* -------------------------------------------------------------------------- */
+/* FIX-M6: lock in-process por contato                                         */
+/* -------------------------------------------------------------------------- */
+
 /**
- * Pipeline completo do evento inbound (spec §5). Nunca lança para fora:
- * falhas internas viram `IgEvent.failed`/`skipped` e logs curtos.
+ * Cadeias de Promise por contato. Deliberadamente SINGLE-PROCESS: o worker
+ * chama o webhook via HTTP no MESMO processo Node, então o lock basta para
+ * impedir que dois eventos simultâneos do mesmo contato passem juntos pelos
+ * gates de cooldown/first_interaction/rate_limit. A entrada é removida quando
+ * a cadeia esvazia para não vazar memória.
+ */
+const contactLocks = new Map<string, Promise<void>>();
+
+function withContactLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+	const previous = contactLocks.get(key) ?? Promise.resolve();
+	const run = previous.then(() => fn());
+	const settled = run.then(
+		() => undefined,
+		() => undefined,
+	);
+	contactLocks.set(key, settled);
+	void settled.then(() => {
+		if (contactLocks.get(key) === settled) contactLocks.delete(key);
+	});
+	return run;
+}
+
+/**
+ * Entrada do pipeline do evento: serializa por `${channelIgId}:${fromIgId}`
+ * (FIX-M6) e delega ao processamento. Sem `fromIgId` (sem contato) não há
+ * gates por contato para serializar.
  */
 export async function handleInboundEvent(
 	event: IgInboundEvent,
 	opts: HandleInboundOptions = {},
 ): Promise<void> {
-	const source = opts.source === "recovery" ? "recovery" : "webhook";
 	if (!event || typeof event !== "object") return;
 	const dedupeKey =
 		typeof event.dedupeKey === "string" ? event.dedupeKey.trim() : "";
 	const channelIgId =
 		typeof event.channelIgId === "string" ? event.channelIgId.trim() : "";
 	if (!dedupeKey || !channelIgId) return;
+
+	const fromIgId =
+		typeof event.fromIgId === "string" ? event.fromIgId.trim() : "";
+	if (fromIgId === "") {
+		await processInboundEvent(event, opts, dedupeKey, channelIgId);
+		return;
+	}
+	await withContactLock(`${channelIgId}:${fromIgId}`, () =>
+		processInboundEvent(event, opts, dedupeKey, channelIgId),
+	);
+}
+
+/**
+ * FIX-M8: heurística de erro PERMANENTE (não vale retry): token/OAuth,
+ * permissão e parâmetros inválidos. Qualquer outra falha (rede, timeout,
+ * 5xx transitório) é retentável uma vez.
+ */
+function isPermanentActionError(error: string | undefined): boolean {
+	if (!error) return false;
+	const normalized = error.toLowerCase();
+	return [
+		"token",
+		"oauth",
+		"permission",
+		"does not have permission",
+		"invalid",
+		// Configuração ausente (ex.: OPENROUTER_API_KEY não configurada) nunca
+		// melhora com retry — falha direto com motivo claro no IgActionLog.
+		"não configurad",
+		"nao configurad",
+	].some((fragment) => normalized.includes(fragment));
+}
+
+/**
+ * Pipeline completo do evento inbound (spec §5). Nunca lança para fora:
+ * falhas internas viram `IgEvent.failed`/`skipped` e logs curtos.
+ */
+async function processInboundEvent(
+	event: IgInboundEvent,
+	opts: HandleInboundOptions,
+	dedupeKey: string,
+	channelIgId: string,
+): Promise<void> {
+	const source = opts.source === "recovery" ? "recovery" : "webhook";
 
 	// Rastreio pós-claim (F-08): em erro, reverte p/ `received` ou mantém
 	// `matched` quando ações já foram executadas (não duplica envios).
@@ -839,8 +1023,10 @@ export async function handleInboundEvent(
 		}
 
 		// Rate limit (spec §5.8): NÃO vira skipped — marca o evento `matched`
-		// com error `throttled` e re-agenda a PRIMEIRA ação em +60s (o executor
-		// revalida e reagenda; máx 3 tentativas). interaction_count incrementa 1x.
+		// com error `throttled` e re-agenda as ações em +60s (FIX-A6). A primeira
+		// vai em now+60s; as demais preservam o offset relativo à primeira
+		// (now+60s + (offset_i - offset_0)), com o mesmo limite de tentativas.
+		// interaction_count incrementa 1x.
 		if (!matched && throttledMatch && !pausedBlocked) {
 			const throttledAutomation = throttledMatch.automation;
 			matchedAutomationId = throttledAutomation.id;
@@ -856,26 +1042,31 @@ export async function handleInboundEvent(
 
 			const throttleActions = throttledAutomation.actions;
 			if (contact && throttleActions.length > 0) {
-				const firstAction = throttleActions[0];
 				actionsExecuted = true;
-				void logAction({
-					userId: channel.user_id,
-					channelId: channel.id,
-					automationId: throttledAutomation.id,
-					contactId: contact.id,
-					eventId: eventRowId,
-					actionType: firstAction.type,
-					status: "skipped",
-					error: "throttled",
-				});
-				await scheduleThrottleRetry({
-					userId: channel.user_id,
-					channelId: channel.id,
-					eventId: eventRowId,
-					automationId: throttledAutomation.id,
-					contactId: contact.id,
-					actionId: firstAction.id,
-				});
+				const throttleOffsets = computeActionOffsets(throttleActions);
+				for (let index = 0; index < throttleActions.length; index++) {
+					const action = throttleActions[index];
+					void logAction({
+						userId: channel.user_id,
+						channelId: channel.id,
+						automationId: throttledAutomation.id,
+						contactId: contact.id,
+						eventId: eventRowId,
+						actionType: action.type,
+						status: "skipped",
+						error: "throttled",
+					});
+					await scheduleThrottleRetry({
+						userId: channel.user_id,
+						channelId: channel.id,
+						eventId: eventRowId,
+						automationId: throttledAutomation.id,
+						contactId: contact.id,
+						actionId: action.id,
+						extraDelayMs:
+							throttleOffsets[index] - throttleOffsets[0],
+					});
+				}
 				await incrementInteractions(contact.id);
 			}
 
@@ -963,7 +1154,38 @@ export async function handleInboundEvent(
 							actionId: action.id,
 						});
 					} else if (!result.ok) {
-						failure = failure ?? (result.error || "Falha ao executar ação.");
+						const message = result.error || "Falha ao executar ação.";
+						if (result.skipped || isPermanentActionError(result.error)) {
+							// Skip não-throttle ou erro permanente: failed direto.
+							failure = failure ?? message;
+						} else {
+							// FIX-M8: falha transitória → 1 retry em +60s
+							// (1 inline + 1 do job = 2 tentativas totais).
+							try {
+								await enqueueJob({
+									userId: channel.user_id,
+									channelId: channel.id,
+									type: "action",
+									runAt: new Date(
+										now.getTime() + INLINE_RETRY_DELAY_MS,
+									),
+									payload: {
+										eventId: eventRowId,
+										automationId: matched.id,
+										contactId: contact.id,
+										actionId: action.id,
+										retryAttempt: 1,
+									},
+									maxAttempts: 1,
+								});
+							} catch (retryError) {
+								failure = failure ?? message;
+								console.error(
+									`[ig-engine] retry inline falhou (${source}):`,
+									shortError(retryError),
+								);
+							}
+						}
 					}
 				} else {
 					try {
@@ -1040,10 +1262,14 @@ export async function handleInboundEvent(
  * Simulador (spec §11 / rota POST /api/automations/simulate): mesmos gates,
  * matcher e render do engine, com ZERO escrita no banco e ZERO chamadas Graph
  * (links de clique não são criados; URLs originais permanecem).
+ *
+ * `draft` (FIX-A7): automação em edição avaliada como candidata de MAIOR
+ * prioridade; se não casar, as automações persistidas continuam sendo testadas.
  */
 export async function simulate(
 	input: IgSimulationInput,
 	userId: string,
+	draft?: IgSimulationDraft | null,
 ): Promise<IgSimulationResult> {
 	const now = new Date();
 	const limits = await getLimits();
@@ -1125,6 +1351,36 @@ export async function simulate(
 	};
 
 	const gates: IgGateResult[] = [...globalGates];
+
+	// FIX-A7: o rascunho do editor tem prioridade máxima; se não casar, seguimos
+	// avaliando as automações persistidas (o usuário vê o que responderia).
+	if (draft) {
+		const candidate = buildDraftCandidate(draft, now);
+		const evaluation = await evaluateAutomationGates(
+			candidate.automation,
+			event,
+			contact,
+			channel,
+			limits,
+			{ full: true, now, getSubstances },
+		);
+		gates.push(...evaluation.gates);
+		if (evaluation.passed) {
+			return {
+				matched: {
+					automationId: DRAFT_AUTOMATION_ID,
+					name: candidate.name,
+				},
+				actions: await renderSimulatedActions(
+					candidate.actions,
+					evaluation.vars,
+				),
+				gates,
+				contact: contactResult,
+			};
+		}
+	}
+
 	for (const automation of automations) {
 		const evaluation = await evaluateAutomationGates(
 			automation,

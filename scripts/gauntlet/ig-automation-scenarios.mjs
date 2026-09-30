@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 /**
- * IG Automation gauntlet scenario runner — G1..G15 (spec docs/IG_AUTOMATION_SPEC.md §15).
+ * IG Automation gauntlet scenario runner — G1..G15 (spec docs/IG_AUTOMATION_SPEC.md §15)
+ * + G16..G19 (regressões dos fixes do crítico: echo do bot, SSRF outbound, simulador
+ * com draft, throttle multi-ação + outbound action.sent/sequence.step).
  *
  * Drives a RUNNING standalone app (see ig-boot.sh) whose Instagram Graph + OpenRouter
  * calls are intercepted by scripts/gauntlet/fetch-mock.mjs (preload). NO product fixes:
@@ -14,12 +16,12 @@
  * without it (second boot phase) the no-key failure path is asserted.
  *
  * Usage:
- *   node ig-automation-scenarios.mjs --base http://127.0.0.1:PORT --db <test.db>
+ *    node ig-automation-scenarios.mjs --base http://127.0.0.1:PORT --db <test.db>
  *        --secret <NEXTAUTH_SECRET> --ig-secret <INSTAGRAM_CLIENT_SECRET>
  *        --verify-token <META_WEBHOOK_VERIFY_TOKEN> --cron-secret <CRON_SECRET>
- *        --mock-state <state.json> --mock-calls <calls.jsonl>
- *        --server-log <server.log> --out <dir> [--public-base <url>]
- *        [--openrouter-key <key>] [--scenarios G1,G2,...]
+ *        --ig-client-id <INSTAGRAM_CLIENT_ID> --mock-state <state.json>
+ *        --mock-calls <calls.jsonl> --server-log <server.log> --out <dir>
+ *        [--public-base <url>] [--openrouter-key <key>] [--scenarios G1,G2,...]
  *
  * Exit code 0 only if every selected scenario passes. Any call to a mocked host that
  * does not match a rule (kind "unmatched") fails the scenario with UNMATCHED_MOCK.
@@ -57,6 +59,8 @@ const OUT_DIR = getArg("--out");
 const PUBLIC_BASE = (getArg("--public-base") || BASE || "").replace(/\/+$/, "");
 const OPENROUTER_KEY = getArg("--openrouter-key");
 const SCENARIOS_ARG = getArg("--scenarios");
+// G16(a): `message.app_id` que o produto compara com INSTAGRAM_CLIENT_ID (env do servidor).
+const IG_CLIENT_ID = getArg("--ig-client-id");
 
 for (const [name, value] of [
 	["--base", BASE],
@@ -65,6 +69,7 @@ for (const [name, value] of [
 	["--ig-secret", IG_SECRET],
 	["--verify-token", VERIFY_TOKEN],
 	["--cron-secret", CRON_SECRET],
+	["--ig-client-id", IG_CLIENT_ID],
 	["--mock-state", MOCK_STATE],
 	["--mock-calls", MOCK_CALLS],
 	["--server-log", SERVER_LOG],
@@ -318,6 +323,36 @@ function dmBody(accountId, { mid, fromId, username, text, isEcho = false }) {
 	};
 }
 
+/**
+ * Echo de mensagem: `sender` é a conta business; o contato é o `recipient`
+ * (parser atual usa o recipient quando difere do canal). `appId` replica
+ * `message.app_id` (nosso app) e `senderId` permite payloads invertidos.
+ */
+function echoBody(
+	accountId,
+	{ mid, contactId, contactUsername, appId, text, senderId },
+) {
+	const message = { mid, text, is_echo: true };
+	if (appId) message.app_id = appId;
+	return {
+		object: "instagram",
+		entry: [
+			{
+				id: accountId,
+				time: Date.now(),
+				messaging: [
+					{
+						sender: { id: senderId ?? accountId, username: "gauntlet_bot" },
+						recipient: { id: contactId, username: contactUsername },
+						timestamp: Date.now(),
+						message,
+					},
+				],
+			},
+		],
+	};
+}
+
 async function postWebhook(body, { signature } = {}) {
 	const raw = JSON.stringify(body);
 	const sig = signature === undefined ? signRaw(raw) : signature;
@@ -367,6 +402,13 @@ function rule(urlSub, responses, method = "POST", extra = {}) {
 }
 
 const okId = (id, extra = {}) => ({ status: 200, body: { id, ...extra } });
+
+/**
+ * Webhook de saída: host público com DNS válido (o guard SSRF do produto resolve
+ * DNS antes do fetch; `mock-webhook.invalid` não resolve e é bloqueado). O
+ * fetch-mock intercepta `example.org` como `kind:"notify"` (body+headers).
+ */
+const OUTBOUND_WEBHOOK_URL = "https://example.org/hook";
 
 async function seedUser(id) {
 	await prisma.user.upsert({
@@ -1534,7 +1576,7 @@ async function scenarioG11() {
 				user_id: "admin",
 				channel_id: null,
 				name: "G11 outbound",
-				url: "https://mock-webhook.invalid/hook",
+				url: OUTBOUND_WEBHOOK_URL,
 				secret: webhookSecret,
 				events: JSON.stringify(["comment.matched"]),
 				enabled: true,
@@ -1745,21 +1787,28 @@ async function scenarioG12WithoutKey() {
 				text: "aciona ia",
 			}),
 		);
-		const failed = await waitFor(
+		// Erro de configuração é PERMANENTE (`isPermanentActionError` inclui
+		// "não configurad"/"nao configurad"): o evento termina `failed` com o
+		// motivo claro e NÃO há job de retry (bar G12).
+		let failedLog = null;
+		let event = null;
+		const settled = await waitFor(
 			async () => {
-				const event = await getEvent("message:mid-g12b-1");
-				return event !== null && event.status === "failed";
+				failedLog = await prisma.igActionLog.findFirst({
+					where: {
+						channel_id: "ig-chan-g12b",
+						action_type: "ai_reply",
+						status: "failed",
+					},
+					orderBy: { created_at: "desc" },
+				});
+				event = await getEvent("message:mid-g12b-1");
+				return failedLog !== null && event?.status === "failed";
 			},
 			{ label: "evento failed sem chave" },
 		);
-		const event = await getEvent("message:mid-g12b-1");
-		const failedLog = await prisma.igActionLog.findFirst({
-			where: {
-				channel_id: "ig-chan-g12b",
-				action_type: "ai_reply",
-				status: "failed",
-			},
-			orderBy: { created_at: "desc" },
+		const retryJob = await prisma.igJob.findFirst({
+			where: { channel_id: "ig-chan-g12b", type: "action" },
 		});
 		const openrouterCalls = countCalls({
 			method: "POST",
@@ -1770,15 +1819,21 @@ async function scenarioG12WithoutKey() {
 			urlIncludes: "acct-g12b/messages",
 		});
 		const pass =
-			failed &&
+			settled &&
 			(event?.error || "").includes("OPENROUTER_API_KEY") &&
 			(failedLog?.error || "").includes("OPENROUTER_API_KEY") &&
+			retryJob === null &&
 			openrouterCalls === 0 &&
 			dmCalls === 0;
 		record(
 			"G12",
 			pass,
-			`(sem chave) evento=${event?.status} log="${failedLog?.error?.slice(0, 64)}" openrouterCalls=${openrouterCalls} dmCalls=${dmCalls}`,
+			`(sem chave) evento=${event?.status} log="${failedLog?.error?.slice(0, 64)}" retryJob=${retryJob ? "SIM" : "nao"} openrouterCalls=${openrouterCalls} dmCalls=${dmCalls}`,
+			{
+				eventStatus: event?.status,
+				eventError: event?.error?.slice(0, 120),
+				retryJob: retryJob?.payload?.slice(0, 120) ?? null,
+			},
 		);
 	} finally {
 		await cleanupChannel("ig-chan-g12b");
@@ -2117,6 +2172,643 @@ async function scenarioG15() {
 	}
 }
 
+// ── G16 — echo do próprio bot vs echo humano ────────────────────────────────
+async function scenarioG16() {
+	try {
+		await seedUser("admin");
+		await seedChannel({
+			id: "ig-chan-g16",
+			accountId: "acct-g16",
+			username: "gauntlet_g16",
+		});
+		await seedAutomation({
+			id: "auto-g16",
+			channelId: "ig-chan-g16",
+			name: "G16 dm",
+			trigger: "dm",
+			keywords: ["oi"],
+			actions: [
+				{
+					id: "act-g16-dm",
+					type: "dm_text",
+					position: 0,
+					text: ["Olá {username}!"],
+				},
+			],
+		});
+		await prisma.igContact.create({
+			data: {
+				id: "contact-g16",
+				user_id: "admin",
+				channel_id: "ig-chan-g16",
+				ig_user_id: "u-g16",
+				username: "user_g16",
+			},
+		});
+		writeState([rule("acct-g16/messages", [okId("mid-g16")], "POST")]);
+
+		// (a) echo com app_id == INSTAGRAM_CLIENT_ID (mensagem da própria API) → ignorado
+		const a = await postWebhook(
+			echoBody("acct-g16", {
+				mid: "echo-g16a-1",
+				contactId: "u-g16",
+				contactUsername: "user_g16",
+				appId: IG_CLIENT_ID,
+				text: "enviado pela API",
+			}),
+		);
+		const evA = await waitFor(
+			async () => {
+				const row = await getEvent("message:echo-g16a-1");
+				return row !== null && row.status === "skipped";
+			},
+			{ label: "echo do bot (app_id) ignorado" },
+		);
+		const eventA = await getEvent("message:echo-g16a-1");
+		const contactAfterA = await getContact("ig-chan-g16", "u-g16");
+
+		// (b) echo sem app_id, mas com mid igual a um message_id de IgActionLog sent → ignorado
+		await prisma.igActionLog.create({
+			data: {
+				user_id: "admin",
+				channel_id: "ig-chan-g16",
+				contact_id: "contact-g16",
+				action_type: "dm_text",
+				status: "sent",
+				response: JSON.stringify({ message_id: "mid-g16b-sent" }),
+			},
+		});
+		const b = await postWebhook(
+			echoBody("acct-g16", {
+				mid: "mid-g16b-sent",
+				contactId: "u-g16",
+				contactUsername: "user_g16",
+				text: "enviado pela API (via log)",
+			}),
+		);
+		const evB = await waitFor(
+			async () => {
+				const row = await getEvent("message:mid-g16b-sent");
+				return row !== null && row.status === "skipped";
+			},
+			{ label: "echo do bot (mid no log) ignorado" },
+		);
+		const eventB = await getEvent("message:mid-g16b-sent");
+		const contactAfterB = await getContact("ig-chan-g16", "u-g16");
+
+		// (c) echo humano (sem app_id, mid desconhecido, recipient = contato) → pausa 24h
+		const c = await postWebhook(
+			echoBody("acct-g16", {
+				mid: "echo-g16c-1",
+				contactId: "u-g16",
+				contactUsername: "user_g16",
+				text: "resposta humana",
+			}),
+		);
+		const evC = await waitFor(
+			async () => {
+				const row = await getEvent("message:echo-g16c-1");
+				const contact = await getContact("ig-chan-g16", "u-g16");
+				return (
+					row?.status === "paused" &&
+					contact?.bot_paused_until !== null &&
+					contact.bot_paused_until.getTime() > Date.now() + 23 * 3600_000
+				);
+			},
+			{ label: "echo humano pausa 24h" },
+		);
+		const eventC = await getEvent("message:echo-g16c-1");
+		const contactC = await getContact("ig-chan-g16", "u-g16");
+
+		// DM durante a pausa → bloqueado sem Graph
+		await postWebhook(
+			dmBody("acct-g16", {
+				mid: "mid-g16-dm",
+				fromId: "u-g16",
+				username: "user_g16",
+				text: "oi",
+			}),
+		);
+		const dmBlocked = await waitFor(
+			async () => {
+				const row = await getEvent("message:mid-g16-dm");
+				return row !== null && ["paused", "skipped"].includes(row.status);
+			},
+			{ label: "DM pós-pausa bloqueado" },
+		);
+		const dmEvent = await getEvent("message:mid-g16-dm");
+		const calls = countCalls({
+			method: "POST",
+			urlIncludes: "acct-g16/messages",
+		});
+
+		const pass =
+			a.status === 200 &&
+			evA &&
+			eventA?.kind === "echo" &&
+			eventA?.status === "skipped" &&
+			eventA?.error === "echo_do_bot" &&
+			contactAfterA?.bot_paused_until === null &&
+			b.status === 200 &&
+			evB &&
+			eventB?.kind === "echo" &&
+			eventB?.status === "skipped" &&
+			eventB?.error === "echo_do_bot" &&
+			contactAfterB?.bot_paused_until === null &&
+			c.status === 200 &&
+			evC &&
+			eventC?.status === "paused" &&
+			eventC?.contact_id === "contact-g16" &&
+			dmBlocked &&
+			(dmEvent?.error || "").includes("bot_pause") &&
+			calls === 0;
+		record(
+			"G16",
+			pass,
+			`a=${eventA?.status}/${eventA?.error} pausedA=${contactAfterA?.bot_paused_until === null ? "nao" : "SIM"} b=${eventB?.status}/${eventB?.error} pausedB=${contactAfterB?.bot_paused_until === null ? "nao" : "SIM"} c=${eventC?.status} pausedUntil=${contactC?.bot_paused_until?.toISOString()} dm=${dmEvent?.status} calls=${calls}`,
+			{ dmError: dmEvent?.error },
+		);
+	} finally {
+		await cleanupChannel("ig-chan-g16");
+	}
+}
+
+// ── G17 — SSRF no webhook de saída ──────────────────────────────────────────
+const SSRF_METADATA_URL = "http://169.254.169.254/latest/meta-data";
+
+async function scenarioG17() {
+	try {
+		await seedUser("admin");
+		await seedChannel({
+			id: "ig-chan-g17",
+			accountId: "acct-g17",
+			username: "gauntlet_g17",
+		});
+
+		// (a) API rejeita URL de metadata (validação síncrona, sem DNS)
+		const created = await req("/api/ig/outbound-webhooks", {
+			method: "POST",
+			body: JSON.stringify({
+				name: "G17 metadata",
+				url: SSRF_METADATA_URL,
+				events: ["action.sent"],
+			}),
+		});
+		const apiBlocked =
+			created.status === 400 &&
+			(created.json?.error || "").includes("URL não permitida");
+
+		// (b) bypass do API (inserção direta no DB) ainda é bloqueado no dispatch
+		await prisma.igOutboundWebhook.create({
+			data: {
+				id: "wh-g17",
+				user_id: "admin",
+				channel_id: null,
+				name: "G17 ssrf",
+				url: SSRF_METADATA_URL,
+				secret: "whsec-g17",
+				events: JSON.stringify(["comment.matched"]),
+				enabled: true,
+			},
+		});
+		await seedAutomation({
+			id: "auto-g17",
+			channelId: "ig-chan-g17",
+			name: "G17 outbound",
+			trigger: "comment",
+			keywords: ["ssrf"],
+			actions: [
+				{
+					id: "act-g17-wh",
+					type: "outbound_webhook",
+					position: 0,
+					webhookId: "wh-g17",
+					text: ["ssrf"],
+				},
+			],
+		});
+		writeState([]);
+		await postWebhook(
+			commentBody("acct-g17", {
+				commentId: "cmp-g17-1",
+				fromId: "u-g17",
+				username: "user_g17",
+				text: "dispara ssrf",
+				mediaId: "media-g17",
+			}),
+		);
+		// Dois logs failed podem existir: o do dispatch (erro SSRF) e o da ação
+		// ("Nenhum webhook de saída entregou..."), criado depois — filtra pelo erro.
+		let failedLog = null;
+		const blockedLog = await waitFor(
+			async () => {
+				failedLog = await prisma.igActionLog.findFirst({
+					where: {
+						channel_id: "ig-chan-g17",
+						action_type: "outbound_webhook",
+						status: "failed",
+						error: { contains: "URL bloqueada (SSRF)" },
+					},
+					orderBy: { created_at: "desc" },
+				});
+				return failedLog !== null;
+			},
+			{ label: "dispatch SSRF bloqueado" },
+		);
+		const calls = readCalls().length;
+		const metadataCalls = countCalls({ urlIncludes: "169.254" });
+		const pass =
+			apiBlocked && blockedLog && calls === 0 && metadataCalls === 0;
+		record(
+			"G17",
+			pass,
+			`api=${created.status}/${created.json?.error} dispatchLog="${failedLog?.error?.slice(0, 40)}" calls=${calls} metadataCalls=${metadataCalls}`,
+		);
+	} finally {
+		await prisma.igOutboundWebhook.deleteMany({ where: { id: "wh-g17" } });
+		await cleanupChannel("ig-chan-g17");
+	}
+}
+
+// ── G18 — simulador com rascunho (draft) ────────────────────────────────────
+async function scenarioG18() {
+	try {
+		await seedUser("admin");
+		await seedChannel({
+			id: "ig-chan-g18",
+			accountId: "acct-g18",
+			username: "gauntlet_g18",
+		});
+		await seedAutomation({
+			id: "auto-g18",
+			channelId: "ig-chan-g18",
+			name: "G18 persistida",
+			trigger: "dm",
+			keywords: ["oi"],
+			actions: [
+				{ id: "act-g18", type: "dm_text", position: 0, text: ["Persistida"] },
+			],
+		});
+		const eventsBefore = await prisma.igEvent.count();
+		const jobsBefore = await prisma.igJob.count();
+
+		// (a) rascunho que casa tem prioridade e id sintético "draft"
+		const withDraft = await req("/api/automations/simulate", {
+			method: "POST",
+			body: JSON.stringify({
+				channelId: "ig-chan-g18",
+				kind: "dm",
+				text: "quero teste",
+				draft: {
+					trigger: "dm",
+					keywords: ["quero"],
+					actions: [
+						{ type: "dm_text", textVariants: ["Resposta do rascunho"] },
+					],
+				},
+			}),
+		});
+		const draftMatched =
+			withDraft.status === 200 &&
+			withDraft.json?.matched?.automationId === "draft" &&
+			withDraft.json?.actions?.[0]?.renderedText === "Resposta do rascunho";
+
+		// (b) rascunho inválido → 400 (mesmo schema do CRUD)
+		const invalid = await req("/api/automations/simulate", {
+			method: "POST",
+			body: JSON.stringify({
+				channelId: "ig-chan-g18",
+				kind: "dm",
+				text: "x",
+				draft: { trigger: "nope" },
+			}),
+		});
+		const invalidRejected =
+			invalid.status === 400 &&
+			(invalid.json?.error || "").includes("Rascunho inválido");
+
+		// (c) rascunho que não casa cai na automação persistida
+		const fallback = await req("/api/automations/simulate", {
+			method: "POST",
+			body: JSON.stringify({
+				channelId: "ig-chan-g18",
+				kind: "dm",
+				text: "oi",
+				draft: {
+					trigger: "dm",
+					keywords: ["zzz"],
+					actions: [{ type: "dm_text", textVariants: ["Nunca"] }],
+				},
+			}),
+		});
+		const fallbackOk =
+			fallback.status === 200 &&
+			fallback.json?.matched?.automationId === "auto-g18";
+
+		const eventsAfter = await prisma.igEvent.count();
+		const jobsAfter = await prisma.igJob.count();
+		const pass =
+			draftMatched &&
+			invalidRejected &&
+			fallbackOk &&
+			eventsAfter === eventsBefore &&
+			jobsAfter === jobsBefore;
+		record(
+			"G18",
+			pass,
+			`draft=${withDraft.json?.matched?.automationId}/${withDraft.json?.actions?.[0]?.renderedText} invalid=${invalid.status} fallback=${fallback.json?.matched?.automationId} efeitos=${eventsAfter - eventsBefore}/${jobsAfter - jobsBefore}`,
+			{ invalidError: invalid.json?.error },
+		);
+	} finally {
+		await cleanupChannel("ig-chan-g18");
+	}
+}
+
+// ── G19 — throttle multi-ação + outbound action.sent / sequence.step ────────
+async function scenarioG19() {
+	let previousConfig = null;
+	try {
+		await seedUser("admin");
+		await seedChannel({
+			id: "ig-chan-g19",
+			accountId: "acct-g19",
+			username: "gauntlet_g19",
+		});
+		const whSecret = "whsec-g19";
+		await prisma.igOutboundWebhook.create({
+			data: {
+				id: "wh-g19",
+				user_id: "admin",
+				channel_id: null,
+				name: "G19 outbound",
+				url: OUTBOUND_WEBHOOK_URL,
+				secret: whSecret,
+				events: JSON.stringify(["action.sent", "sequence.step"]),
+				enabled: true,
+			},
+		});
+		await seedAutomation({
+			id: "auto-g19",
+			channelId: "ig-chan-g19",
+			name: "G19 throttle",
+			trigger: "comment",
+			keywords: ["rate19"],
+			actions: [
+				{
+					id: "act-g19-private",
+					type: "private_reply",
+					position: 0,
+					text: ["PR g19"],
+				},
+				{
+					id: "act-g19-public",
+					type: "public_comment_reply",
+					position: 1,
+					delaySeconds: 10,
+					text: ["PUB g19"],
+				},
+				{
+					id: "act-g19-tag",
+					type: "assign_tag",
+					position: 2,
+					delaySeconds: 5,
+					tag: "vip19",
+				},
+			],
+		});
+		previousConfig = await prisma.appConfig.findUnique({
+			where: { key: "ig_max_sends_per_minute" },
+		});
+		const put = await req("/api/ig/settings", {
+			method: "PUT",
+			body: JSON.stringify({ maxSendsPerMinute: 1 }),
+		});
+		// Envio recente no canal estoura o limite sem contar cooldown (sem automation/contact).
+		await prisma.igActionLog.create({
+			data: {
+				user_id: "admin",
+				channel_id: "ig-chan-g19",
+				action_type: "dm_text",
+				status: "sent",
+			},
+		});
+		writeState([
+			rule(
+				"acct-g19/messages",
+				[okId("mid-g19-private"), okId("mid-g19-seq")],
+				"POST",
+			),
+			rule("cmp-g19-1/replies", [okId("mid-g19-public")], "POST"),
+		]);
+
+		const t0 = Date.now();
+		await postWebhook(
+			commentBody("acct-g19", {
+				commentId: "cmp-g19-1",
+				fromId: "u-g19",
+				username: "user_g19",
+				text: "quero rate19",
+				mediaId: "media-g19",
+			}),
+		);
+		const threeJobs = await waitFor(
+			async () => {
+				const jobs = await prisma.igJob.findMany({
+					where: { channel_id: "ig-chan-g19", type: "action" },
+				});
+				return jobs.length === 3;
+			},
+			{ label: "3 jobs de throttle enfileirados" },
+		);
+		const throttledLogs = await waitFor(
+			async () =>
+				(await prisma.igActionLog.count({
+					where: {
+						channel_id: "ig-chan-g19",
+						status: "skipped",
+						error: "throttled",
+					},
+				})) >= 3,
+			{ label: "3 logs throttled" },
+		);
+		const event = await getEvent("comment:cmp-g19-1");
+		const jobs = await prisma.igJob.findMany({
+			where: { channel_id: "ig-chan-g19", type: "action" },
+			orderBy: { run_at: "asc" },
+		});
+		const actionIds = jobs.map((job) => {
+			try {
+				return JSON.parse(job.payload).actionId;
+			} catch {
+				return null;
+			}
+		});
+		const deltas = jobs.map((job) => job.run_at.getTime() - t0);
+		const increasing = deltas.every((delta, i) => i === 0 || delta > deltas[i - 1]);
+		const offsetsOk =
+			Math.abs(deltas[0] - 60_000) < 5_000 &&
+			Math.abs(deltas[1] - 70_000) < 6_000 &&
+			Math.abs(deltas[2] - 75_000) < 6_000;
+		const step1 =
+			put.status === 200 &&
+			put.json?.limits?.maxSendsPerMinute === 1 &&
+			threeJobs &&
+			throttledLogs &&
+			event?.status === "matched" &&
+			event?.error === "throttled" &&
+			actionIds.join(",") ===
+				"act-g19-private,act-g19-public,act-g19-tag" &&
+			increasing &&
+			offsetsOk;
+
+		// Drena os 3 jobs (limite normalizado) → private + public enviam; tag aplica.
+		const put2 = await req("/api/ig/settings", {
+			method: "PUT",
+			body: JSON.stringify({ maxSendsPerMinute: 30 }),
+		});
+		await prisma.igJob.updateMany({
+			where: { channel_id: "ig-chan-g19", status: "pending" },
+			data: { run_at: new Date(Date.now() - 1000) },
+		});
+		const cron = await cronTick();
+		const delivered = await waitFor(
+			async () =>
+				countCalls({ method: "POST", urlIncludes: "acct-g19/messages" }) === 1 &&
+				countCalls({ method: "POST", urlIncludes: "cmp-g19-1/replies" }) === 1,
+			{ label: "private+public entregues" },
+		);
+		const contact = await getContact("ig-chan-g19", "u-g19");
+		const tagged =
+			contact !== null &&
+			JSON.parse(contact.tags || "[]").includes("vip19");
+
+		const notifies = () =>
+			readCalls().filter((call) => call.kind === "notify");
+		const actionSent = await waitFor(
+			() =>
+				notifies().filter(
+					(call) => call.headers?.["x-autoreels-event"] === "action.sent",
+				).length >= 2,
+			{ label: "outbound action.sent (private+public)" },
+		);
+		const sentCall = notifies().find(
+			(call) => call.headers?.["x-autoreels-event"] === "action.sent",
+		);
+		const sentPayload = parseBody(sentCall);
+		const sentSigOk =
+			sentCall?.headers?.["x-autoreels-signature"] ===
+			`sha256=${hmacHex(whSecret, sentCall?.body || "")}`;
+		const sentPayloadOk =
+			sentPayload?.event === "action.sent" &&
+			sentPayload?.automationId === "auto-g19" &&
+			sentPayload?.channelId === "ig-chan-g19" &&
+			sentPayload?.contact?.igUserId === "u-g19" &&
+			typeof sentPayload?.text === "string" &&
+			sentPayload.text.trim() !== "";
+
+		// Passo de sequência → outbound sequence.step
+		await prisma.igSequence.create({
+			data: {
+				id: "seq-g19",
+				user_id: "admin",
+				channel_id: "ig-chan-g19",
+				name: "G19 sequência",
+				steps: JSON.stringify([
+					{ delay_seconds: 0, type: "dm_text", text_variants: ["Seq g19"] },
+				]),
+			},
+		});
+		const seqContact = await prisma.igContact.create({
+			data: {
+				user_id: "admin",
+				channel_id: "ig-chan-g19",
+				ig_user_id: "u-g19-seq",
+				username: "user_g19_seq",
+			},
+		});
+		await prisma.igSequenceEnrollment.create({
+			data: {
+				sequence_id: "seq-g19",
+				contact_id: seqContact.id,
+				channel_id: "ig-chan-g19",
+				status: "active",
+				current_step: 0,
+				next_run_at: new Date(Date.now() - 1000),
+			},
+		});
+		const cron2 = await cronTick();
+		const seqDelivered = await waitFor(
+			() =>
+				countCalls({ method: "POST", urlIncludes: "acct-g19/messages" }) === 2,
+			{ label: "passo da sequência entregue" },
+		);
+		const stepNotifySeen = await waitFor(
+			() =>
+				notifies().some(
+					(call) => call.headers?.["x-autoreels-event"] === "sequence.step",
+				),
+			{ label: "outbound sequence.step" },
+		);
+		const stepCall = notifies().find(
+			(call) => call.headers?.["x-autoreels-event"] === "sequence.step",
+		);
+		const stepPayload = parseBody(stepCall);
+		const stepSigOk =
+			stepCall?.headers?.["x-autoreels-signature"] ===
+			`sha256=${hmacHex(whSecret, stepCall?.body || "")}`;
+		const stepPayloadOk =
+			stepPayload?.event === "sequence.step" &&
+			stepPayload?.channelId === "ig-chan-g19" &&
+			stepPayload?.contact?.igUserId === "u-g19-seq";
+
+		const pass =
+			step1 &&
+			put2.status === 200 &&
+			cron.status === 200 &&
+			delivered &&
+			tagged &&
+			actionSent &&
+			sentSigOk &&
+			sentPayloadOk &&
+			cron2.status === 200 &&
+			seqDelivered &&
+			stepNotifySeen &&
+			stepSigOk &&
+			stepPayloadOk;
+		record(
+			"G19",
+			pass,
+			`jobs=${jobs.length} deltas=[${deltas.map((d) => Math.round(d / 1000)).join(",")}]s actions=${actionIds.join("|")} throttledLogs=${throttledLogs} entregues=${delivered} tag=${tagged} action.sent=${actionSent}/${sentSigOk} sequence.step=${stepNotifySeen}/${stepSigOk}`,
+			{
+				step1,
+				deltas,
+				actionIds,
+				eventStatus: event?.status,
+				eventError: event?.error,
+				sentPayload,
+				stepPayload,
+			},
+		);
+	} finally {
+		if (previousConfig) {
+			await prisma.appConfig.upsert({
+				where: { key: "ig_max_sends_per_minute" },
+				create: {
+					key: "ig_max_sends_per_minute",
+					value: previousConfig.value,
+				},
+				update: { value: previousConfig.value },
+			});
+		} else {
+			await prisma.appConfig.deleteMany({
+				where: { key: "ig_max_sends_per_minute" },
+			});
+		}
+		await prisma.igOutboundWebhook.deleteMany({ where: { id: "wh-g19" } });
+		await cleanupChannel("ig-chan-g19");
+	}
+}
+
 // ── Runner ──────────────────────────────────────────────────────────────────
 
 const REGISTRY = {
@@ -2135,6 +2827,10 @@ const REGISTRY = {
 	G13: scenarioG13,
 	G14: scenarioG14,
 	G15: scenarioG15,
+	G16: scenarioG16,
+	G17: scenarioG17,
+	G18: scenarioG18,
+	G19: scenarioG19,
 };
 const ALL = Object.keys(REGISTRY);
 

@@ -29,6 +29,11 @@ export interface GraphResult {
 	status: number;
 	data?: unknown;
 	error?: string;
+	/**
+	 * Sucesso PARCIAL (ex.: `dm_media` entregou a mídia mas o texto falhou):
+	 * a ação segue `ok`, mas o warning fica disponível para o caller registrar.
+	 */
+	warning?: string;
 }
 
 export async function resolveGraphContext(
@@ -47,13 +52,52 @@ export async function resolveGraphContext(
 	};
 }
 
+/**
+ * Traduz os erros mais comuns da API de Mensagens/Comentários para PT-BR
+ * (janela de 24h do Direct, private reply duplicado/expirado de 7 dias).
+ * Mantém o texto original entre parênteses para diagnóstico.
+ */
+function translateGraphError(
+	message: string,
+	code?: number,
+	subcode?: number,
+): string {
+	const raw = message.replace(/\s+/g, " ").trim();
+	const detail = raw.length > 140 ? `${raw.slice(0, 140)}…` : raw;
+	if (
+		code === 2534014 ||
+		subcode === 2534014 ||
+		/outside (of )?(the )?.*(24.?hour|window)|messaging window|allowed window/i.test(raw)
+	) {
+		return `Fora da janela de 24h do Direct — o contato precisa enviar uma nova mensagem. (Meta: ${detail})`;
+	}
+	if (
+		/private repl(y|ies)/i.test(raw) &&
+		/(already|only one|expire|7.?day|older)/i.test(raw)
+	) {
+		return `Não foi possível enviar a resposta privada — o comentário já recebeu uma resposta privada ou passou de 7 dias. (Meta: ${detail})`;
+	}
+	if (/message receiving (is )?(disabled|turned off)|does not accept messages/i.test(raw)) {
+		return `O contato não aceita mensagens do perfil no momento. (Meta: ${detail})`;
+	}
+	return message.trim();
+}
+
 function extractGraphError(data: unknown): string | undefined {
 	if (!data || typeof data !== "object") return undefined;
 	const err = (data as { error?: unknown }).error;
 	if (typeof err === "string" && err.trim()) return err.trim();
 	if (err && typeof err === "object") {
 		const message = (err as { message?: unknown }).message;
-		if (typeof message === "string" && message.trim()) return message.trim();
+		const code = (err as { code?: unknown }).code;
+		const subcode = (err as { error_subcode?: unknown }).error_subcode;
+		if (typeof message === "string" && message.trim()) {
+			return translateGraphError(
+				message,
+				typeof code === "number" ? code : undefined,
+				typeof subcode === "number" ? subcode : undefined,
+			);
+		}
 	}
 	return undefined;
 }
@@ -129,7 +173,8 @@ function buttonTemplate(
 	for (const button of buttons) {
 		if (!button || typeof button.title !== "string" || !button.title.trim())
 			continue;
-		const title = button.title.trim().slice(0, 80);
+		// Limite da Meta para título de botão (IG): 20 caracteres.
+		const title = button.title.trim().slice(0, 20);
 		if (button.type === "postback" && allowPostback) {
 			if (typeof button.payload !== "string" || !button.payload.trim()) continue;
 			mapped.push({
@@ -149,7 +194,8 @@ function buttonTemplate(
 			type: "template",
 			payload: {
 				template_type: "button",
-				text: text ?? "",
+				// Limite da Meta para o texto do template: 640 caracteres.
+				text: (text ?? "").slice(0, 640),
 				buttons: mapped.slice(0, 3),
 			},
 		},
@@ -246,11 +292,43 @@ export async function sendDM(
 			error: "Canal sem account_id configurado — reconecte a conta do Instagram.",
 		};
 	}
+	// dm_media com texto: DUAS mensagens (attachment e depois o texto) — a API
+	// do IG não aceita anexo + texto na mesma mensagem. Falha no attachment →
+	// retorna o erro (nada foi entregue). Falha só no texto, com a mídia já
+	// entregue → retorna OK + `warning`: retentar a ação duplicaria a mídia.
+	const mediaUrl = isHttpUrl(msg.mediaUrl) ? msg.mediaUrl.trim() : "";
+	const text = typeof msg.text === "string" ? msg.text : "";
+	if (mediaUrl && text.trim()) {
+		const mediaResult = await graphRequest(
+			ctx,
+			"POST",
+			`${ctx.accountId}/messages`,
+			{
+				recipient: { id: igUserId },
+				message: { attachment: { type: "image", payload: { url: mediaUrl } } },
+			},
+		);
+		if (!mediaResult.ok) return mediaResult;
+		const textResult = await graphRequest(
+			ctx,
+			"POST",
+			`${ctx.accountId}/messages`,
+			{ recipient: { id: igUserId }, message: { text } },
+		);
+		if (!textResult.ok) {
+			const warning =
+				textResult.error ||
+				"Falha ao enviar o texto após a mídia (a mídia foi entregue).";
+			console.warn("[ig-graph] dm_media: mídia entregue, texto falhou:", warning);
+			return { ...mediaResult, warning };
+		}
+		return textResult;
+	}
 	const message: Record<string, unknown> = {};
-	if (isHttpUrl(msg.mediaUrl)) {
+	if (mediaUrl) {
 		message.attachment = {
 			type: "image",
-			payload: { url: msg.mediaUrl.trim() },
+			payload: { url: mediaUrl },
 		};
 	} else if (msg.buttons?.length) {
 		const template = buttonTemplate(msg.text, msg.buttons, true);

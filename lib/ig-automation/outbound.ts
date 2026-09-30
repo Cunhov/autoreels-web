@@ -1,8 +1,13 @@
 import { createHmac } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { logAction } from "@/lib/ig-automation/log";
+import { isHostAllowed } from "@/lib/ssrf-guard";
 
 const OUTBOUND_TIMEOUT_MS = 10_000;
+/** Máximo de saltos de redirect revalidados pela guarda SSRF. */
+const OUTBOUND_MAX_REDIRECTS = 3;
+/** Erro canônico de bloqueio (registrado em `IgActionLog`). */
+const SSRF_BLOCKED_ERROR = "URL bloqueada (SSRF)";
 
 export interface IgOutboundContact {
 	igUserId?: string | null;
@@ -53,6 +58,41 @@ function fireLog(params: Parameters<typeof logAction>[0]): void {
 	}
 }
 
+type OutboundUrlCheck =
+	| { ok: true; url: URL }
+	| { ok: false; error: string };
+
+/**
+ * Esquema só http/https + host público (bloqueia loopback/privado/link-local/
+ * metadata via `isHostAllowed`). `isHostAllowed` LANÇA em pane transitória de
+ * DNS; aqui isso vira erro de entrega do webhook (o log registra failed), sem
+ * retry implícito na hora.
+ */
+async function resolveAllowedOutboundUrl(
+	rawUrl: string,
+): Promise<OutboundUrlCheck> {
+	let parsed: URL;
+	try {
+		parsed = new URL(String(rawUrl || "").trim());
+	} catch {
+		return { ok: false, error: "URL do webhook de saída inválida." };
+	}
+	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+		return { ok: false, error: SSRF_BLOCKED_ERROR };
+	}
+	try {
+		if (!(await isHostAllowed(parsed.hostname))) {
+			return { ok: false, error: SSRF_BLOCKED_ERROR };
+		}
+	} catch {
+		return {
+			ok: false,
+			error: "Não foi possível validar o host do webhook de saída (DNS).",
+		};
+	}
+	return { ok: true, url: parsed };
+}
+
 async function postWebhook(
 	url: string,
 	event: string,
@@ -74,22 +114,71 @@ async function postWebhook(
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), OUTBOUND_TIMEOUT_MS);
 	try {
-		const res = await fetch(url, {
-			method: "POST",
-			headers,
-			body,
-			signal: controller.signal,
-		});
-		const text = await res.text().catch(() => "");
-		if (!res.ok) {
-			return {
-				ok: false,
-				status: res.status,
-				body: text.slice(0, 500),
-				error: `Webhook de saída respondeu HTTP ${res.status}.`,
-			};
+		// Redirect MANUAL: a guarda SSRF é revalidada em cada salto — o host
+		// final nunca pode divergir para loopback/privado/metadata.
+		let current = url;
+		let method = "POST";
+		let currentBody: string | undefined = body;
+		for (let hop = 0; hop <= OUTBOUND_MAX_REDIRECTS; hop++) {
+			const guarded = await resolveAllowedOutboundUrl(current);
+			if (!guarded.ok) {
+				return { ok: false, status: 0, body: "", error: guarded.error };
+			}
+			const res = await fetch(guarded.url, {
+				method,
+				headers,
+				...(currentBody !== undefined ? { body: currentBody } : {}),
+				redirect: "manual",
+				signal: controller.signal,
+			});
+			if (res.status >= 300 && res.status < 400) {
+				const location = res.headers.get("location");
+				if (!location) {
+					return {
+						ok: false,
+						status: res.status,
+						body: "",
+						error: "Webhook de saída redirecionou sem destino.",
+					};
+				}
+				try {
+					current = new URL(location, guarded.url).href;
+				} catch {
+					return {
+						ok: false,
+						status: res.status,
+						body: "",
+						error: "Destino de redirecionamento inválido no webhook de saída.",
+					};
+				}
+				// Espelha o `redirect:"follow"` do fetch: 303 e POST em 301/302
+				// viram GET sem corpo.
+				if (
+					res.status === 303 ||
+					((res.status === 301 || res.status === 302) && method === "POST")
+				) {
+					method = "GET";
+					currentBody = undefined;
+				}
+				continue;
+			}
+			const text = await res.text().catch(() => "");
+			if (!res.ok) {
+				return {
+					ok: false,
+					status: res.status,
+					body: text.slice(0, 500),
+					error: `Webhook de saída respondeu HTTP ${res.status}.`,
+				};
+			}
+			return { ok: true, status: res.status, body: text.slice(0, 500) };
 		}
-		return { ok: true, status: res.status, body: text.slice(0, 500) };
+		return {
+			ok: false,
+			status: 0,
+			body: "",
+			error: `Muitos redirecionamentos no webhook de saída (máx ${OUTBOUND_MAX_REDIRECTS}).`,
+		};
 	} catch (err) {
 		if (controller.signal.aborted) {
 			return {

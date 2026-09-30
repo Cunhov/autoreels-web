@@ -388,8 +388,8 @@ export default function WebhookPanel({ compact = false }: WebhookPanelProps) {
                     </div>
                 ) : statusError ? (
                     <div className="p-3 rounded-xl bg-ios-orange/10 border border-ios-orange/30 text-[12px] text-ios-orange">
-                        {statusError} O status por canal fica disponível após o
-                        deploy da onda 2.
+                        {statusError} Não foi possível verificar o status dos
+                        canais agora.
                     </div>
                 ) : statuses.length === 0 ? (
                     <p className="py-4 text-center text-[13px] text-ios-text-secondary">
@@ -516,9 +516,8 @@ export default function WebhookPanel({ compact = false }: WebhookPanelProps) {
                         </div>
                     ) : settingsError || !settings ? (
                         <div className="mt-4 p-3 rounded-xl bg-ios-orange/10 border border-ios-orange/30 text-[12px] text-ios-orange">
-                            {settingsError ||
-                                "Configuração indisponível."}{" "}
-                            Disponível após o deploy da onda 2.
+                            {settingsError || "Configuração indisponível."}{" "}
+                            Tente novamente em instantes.
                         </div>
                     ) : (
                         <div className="mt-4 space-y-4">
@@ -828,7 +827,7 @@ export function OutboundWebhooksPanel() {
                 </div>
             ) : error ? (
                 <p className="p-3 rounded-xl bg-ios-orange/10 border border-ios-orange/30 text-[12px] text-ios-orange">
-                    {error} Disponível após o deploy da onda 1.
+                    {error} Tente novamente em instantes.
                 </p>
             ) : items.length === 0 ? (
                 <p className="py-4 text-center text-[13px] text-ios-text-secondary">

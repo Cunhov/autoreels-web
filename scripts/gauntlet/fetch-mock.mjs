@@ -52,7 +52,13 @@ const MOCK_HOSTS = new Set([
 	"api.openrouter.ai",
 	"openrouter.ai", // lib/ai.ts OPENROUTER_API_URL (openrouter.ai/api/v1/...)
 	"mock-webhook.invalid",
+	// Module-08: host PÚBLICO e DNS-resolvível para o webhook de saída — o guard
+	// SSRF do produto resolve DNS antes do fetch, e `*.invalid` nunca resolve.
+	"example.org",
 ]);
+
+/** Hosts que registram a chamada como `kind:"notify"` (body+headers+200). */
+const NOTIFY_HOSTS = new Set(["mock-webhook.invalid", "example.org"]);
 
 const originalFetch = globalThis.fetch;
 
@@ -310,7 +316,9 @@ globalThis.fetch = async function patchedFetch(input, options = {}) {
 			url = input;
 			method = (options?.method || "GET").toUpperCase();
 		} else {
-			url = input.url;
+			// Aceita Request (`.url`) e URL instance (`.href`) — o guard SSRF
+			// do module-08 passa URL objects para o fetch nativo.
+			url = input instanceof URL ? input.href : input.url;
 			method = (options?.method || input.method || "GET").toUpperCase();
 		}
 	} catch {
@@ -337,7 +345,7 @@ globalThis.fetch = async function patchedFetch(input, options = {}) {
 		return originalFetch(input, options);
 	}
 
-	if (host === "mock-webhook.invalid") {
+	if (NOTIFY_HOSTS.has(host)) {
 		let notifyBody = "";
 		if (options?.body) {
 			notifyBody =

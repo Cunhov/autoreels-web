@@ -496,6 +496,7 @@ model IgSequenceEnrollment {
   channel_id   String
   current_step Int       @default(0)
   status       String    @default("active") // active | done | cancelled
+  attempts     Int       @default(0) // erros consecutivos do passo atual (máx 3 → cancelled)
   next_run_at  DateTime?
   started_at   DateTime  @default(now())
   updated_at   DateTime  @updatedAt

@@ -29,6 +29,7 @@ DATABASE_URL="file:$TMP/test.db"
 NEXTAUTH_SECRET="gauntlet-secret-$(openssl rand -hex 8)"
 CRON_SECRET="gauntlet-cron-$(openssl rand -hex 8)"
 INSTAGRAM_CLIENT_SECRET="gauntlet-ig-secret-$(openssl rand -hex 8)"
+INSTAGRAM_CLIENT_ID="gauntlet-ig-client-$(openssl rand -hex 8)"
 META_WEBHOOK_VERIFY_TOKEN="gauntlet-verify-$(openssl rand -hex 8)"
 OPENROUTER_API_KEY="sk-or-v1-gauntlet-$(openssl rand -hex 8)"
 PORT="$(node -e 'const n=require("net");const s=n.createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')"
@@ -86,6 +87,7 @@ start_server() {
 			exec env PORT="$port" HOSTNAME=127.0.0.1 DATABASE_URL="$DATABASE_URL" \
 				NEXTAUTH_SECRET="$NEXTAUTH_SECRET" CRON_SECRET="$CRON_SECRET" \
 				INSTAGRAM_CLIENT_SECRET="$INSTAGRAM_CLIENT_SECRET" \
+				INSTAGRAM_CLIENT_ID="$INSTAGRAM_CLIENT_ID" \
 				META_WEBHOOK_VERIFY_TOKEN="$META_WEBHOOK_VERIFY_TOKEN" \
 				PUBLIC_BASE_URL="http://127.0.0.1:$port" \
 				IG_MOCK_STATE="$IG_MOCK_STATE" IG_MOCK_CALLS="$IG_MOCK_CALLS" \
@@ -98,6 +100,7 @@ start_server() {
 			exec env DATABASE_URL="$DATABASE_URL" NEXTAUTH_SECRET="$NEXTAUTH_SECRET" \
 				CRON_SECRET="$CRON_SECRET" \
 				INSTAGRAM_CLIENT_SECRET="$INSTAGRAM_CLIENT_SECRET" \
+				INSTAGRAM_CLIENT_ID="$INSTAGRAM_CLIENT_ID" \
 				META_WEBHOOK_VERIFY_TOKEN="$META_WEBHOOK_VERIFY_TOKEN" \
 				PUBLIC_BASE_URL="http://127.0.0.1:$port" \
 				IG_MOCK_STATE="$IG_MOCK_STATE" IG_MOCK_CALLS="$IG_MOCK_CALLS" \
@@ -116,6 +119,7 @@ run_scenarios() {
 	shift 3
 	node "$SCENARIOS" --base "http://127.0.0.1:$port" --db "$TMP/test.db" \
 		--secret "$NEXTAUTH_SECRET" --ig-secret "$INSTAGRAM_CLIENT_SECRET" \
+		--ig-client-id "$INSTAGRAM_CLIENT_ID" \
 		--verify-token "$META_WEBHOOK_VERIFY_TOKEN" --cron-secret "$CRON_SECRET" \
 		--mock-state "$IG_MOCK_STATE" --mock-calls "$IG_MOCK_CALLS" \
 		--server-log "$log" --out "$out" \

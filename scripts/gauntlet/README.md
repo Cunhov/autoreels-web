@@ -67,7 +67,9 @@ Exit 0 only when all scenarios pass. Evidence: `gauntlet-runs/module-01-publishe
 
 ## IG Automation harness (`ig-*`, module-08)
 
-Bar: `docs/IG_AUTOMATION_SPEC.md` §15 (G1–G15).
+Bar: `docs/IG_AUTOMATION_SPEC.md` §15 (G1–G15) + regressões G16–G19 dos fixes do
+crítico (echo do próprio bot, SSRF outbound, simulador com rascunho, throttle
+multi-ação + outbound `action.sent`/`sequence.step`).
 
 ```bash
 bash scripts/gauntlet/ig-boot.sh   # db push + build + two phases + G1-G15
@@ -79,6 +81,7 @@ bash scripts/gauntlet/ig-boot.sh   # db push + build + two phases + G1-G15
   with the server started **without** `OPENROUTER_API_KEY` (G12 asserts the
   `OPENROUTER_API_KEY não configurada` failure). Envs: `DATABASE_URL`,
   `NEXTAUTH_SECRET`, `CRON_SECRET`, `INSTAGRAM_CLIENT_SECRET`,
+  `INSTAGRAM_CLIENT_ID` (G16a compara com `message.app_id`),
   `META_WEBHOOK_VERIFY_TOKEN`, `PUBLIC_BASE_URL`, `IG_MOCK_STATE`/`IG_MOCK_CALLS`.
   Evidence: `gauntlet-runs/module-08-ig-automation/gates/round-<HHMMSS>-ig-automation.md`
   (+ `-server.log`, `-calls.jsonl`, `-out-a/`, `-out-b/`). Exit 0 only if both phases pass.
@@ -91,15 +94,30 @@ bash scripts/gauntlet/ig-boot.sh   # db push + build + two phases + G1-G15
   fails the scenario with `UNMATCHED_MOCK`.
 - `fetch-mock.mjs` (additive) — OpenRouter hosts `openrouter.ai` (current
   `OPENROUTER_API_URL` in `lib/ai.ts`) and `api.openrouter.ai` added to the mock hosts; the
-  `mock-webhook.invalid` branch now records the request `body` and lowercased
-  `headers` on `kind:"notify"` rows so G11 can verify the outbound HMAC/payload.
+  notify branch records the request `body` and lowercased `headers` on `kind:"notify"`
+  rows so G11/G19 can verify the outbound HMAC/payload. Outbound webhooks use
+  `https://example.org/hook`: the SSRF guard resolves DNS before the fetch and
+  `*.invalid`/`*.local` never pass, so the harness points at a public, resolvable
+  host that `fetch-mock` intercepts (`mock-webhook.invalid` kept for other harnesses).
 - `ig-core.mts` — unit checks (61), unchanged: `npx tsx scripts/gauntlet/ig-core.mts`.
+- G16–G19 (regressões): G16 echo com `message.app_id == INSTAGRAM_CLIENT_ID` e echo
+  correlacionado por `message_id` em `IgActionLog.response` → `skipped`/`echo_do_bot`
+  sem pausa; echo humano → pausa 24h + DM seguinte bloqueado. G17 URL de metadata
+  rejeitada na API (`400 URL não permitida`) e, se inserida direto no DB, bloqueada
+  no dispatch (`failed URL bloqueada (SSRF)`, zero fetch). G18 `POST
+  /api/automations/simulate` com `draft` (match → `matched.automationId="draft"`,
+  inválido → 400, não-match → cai na automação persistida). G19 rate limit com 3
+  ações → 3 `IgJob` de offset crescente (+60s/+70s/+75s) e, ao drenar, outbound
+  assinado `action.sent` (private+public) e `sequence.step`.
 
 Documented deviations: on `bot_pause` the engine writes `IgEvent.status="paused"`
 (not `skipped`); G4 accepts either status and asserts zero sends during the pause.
 G15 lowers `ig_max_sends_per_minute` to 2 via `PUT /api/ig/settings` (same throttle
 code path as the 30/min default, deterministic and fast) and asserts the overflow
-becomes a pending retry job at ~now+60s.
+becomes a pending retry job at ~now+60s. G12 (fase sem chave): erro de configuração
+é permanente (`isPermanentActionError` inclui "não configurad"), então o cenário
+exige `IgEvent.status="failed"` + `IgActionLog failed` com `OPENROUTER_API_KEY não
+configurada`, zero chamadas Graph/OpenRouter e **nenhum** job de retry.
 
 ## Sanity checks
 

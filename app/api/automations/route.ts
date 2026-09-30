@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage } from "@/lib/api";
 import { Prisma } from "@prisma/client";
-import { validateAutomationInput } from "@/lib/ig-automation/validate";
+import {
+    validateAutomationInput,
+    type ValidatedActionInput,
+} from "@/lib/ig-automation/validate";
 import {
     CHANNEL_SUMMARY_SELECT,
     actionToDb,
@@ -21,6 +24,71 @@ const AUTOMATION_INCLUDE = {
     actions: { orderBy: { position: "asc" as const } },
     channel: { select: CHANNEL_SUMMARY_SELECT },
 } satisfies Prisma.IgAutomationInclude;
+
+/**
+ * FIX-M9: valida ownership das referências das ações — `sequenceId` pertence ao
+ * user (e ao mesmo canal da automação) e `webhookId` pertence ao user (global
+ * ou do mesmo canal). Devolve o erro HTTP pronto ou null quando tudo ok.
+ */
+async function validateActionReferences(
+    userId: string,
+    actions: ValidatedActionInput[] | undefined,
+    channelId: string,
+): Promise<{ status: 400 | 404; error: string } | null> {
+    if (!actions || actions.length === 0) return null;
+
+    const sequenceIds = Array.from(
+        new Set(
+            actions
+                .map((action) => action.sequenceId)
+                .filter((id): id is string => typeof id === "string" && id !== "")
+        )
+    );
+    if (sequenceIds.length > 0) {
+        const sequences = await prisma.igSequence.findMany({
+            where: { id: { in: sequenceIds }, user_id: userId },
+            select: { id: true, channel_id: true },
+        });
+        const byId = new Map(sequences.map((s) => [s.id, s.channel_id]));
+        for (const id of sequenceIds) {
+            if (!byId.has(id)) {
+                return { status: 404, error: "Sequência não encontrada" };
+            }
+            if (byId.get(id) !== channelId) {
+                return { status: 400, error: "Sequência pertence a outro canal" };
+            }
+        }
+    }
+
+    const webhookIds = Array.from(
+        new Set(
+            actions
+                .map((action) => action.webhookId)
+                .filter((id): id is string => typeof id === "string" && id !== "")
+        )
+    );
+    if (webhookIds.length > 0) {
+        const webhooks = await prisma.igOutboundWebhook.findMany({
+            where: { id: { in: webhookIds }, user_id: userId },
+            select: { id: true, channel_id: true },
+        });
+        const byId = new Map(webhooks.map((w) => [w.id, w.channel_id]));
+        for (const id of webhookIds) {
+            if (!byId.has(id)) {
+                return { status: 404, error: "Webhook de saída não encontrado" };
+            }
+            const webhookChannel = byId.get(id);
+            if (webhookChannel !== null && webhookChannel !== channelId) {
+                return {
+                    status: 400,
+                    error: "Webhook de saída pertence a outro canal",
+                };
+            }
+        }
+    }
+
+    return null;
+}
 
 /**
  * GET /api/automations?channelId=
@@ -80,6 +148,18 @@ export async function POST(req: Request) {
         if (!channel) return notFound("Canal não encontrado");
         if (channel.platform !== "instagram") {
             return badRequest("Canal não é do Instagram");
+        }
+
+        // FIX-M9: sequência/webhook referenciados precisam ser do user/canal.
+        const referenceError = await validateActionReferences(
+            userId,
+            data.actions,
+            channel.id,
+        );
+        if (referenceError) {
+            return referenceError.status === 404
+                ? notFound(referenceError.error)
+                : badRequest(referenceError.error);
         }
 
         const automation = await prisma.$transaction(async (tx) => {

@@ -80,6 +80,51 @@ const DEFAULT_TZ = "America/Bahia";
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const HTTP_URL_RE = /^https?:\/\/\S+$/i;
 
+/**
+ * Bloqueio SÍNCRONO de hosts obviamente privados/loopback/link-local/metadata
+ * (sem DNS — a revalidação com resolução de DNS roda no dispatch via
+ * `lib/ssrf-guard`). Nomes internos, IP literais privados e IPv6
+ * loopback/ULA/link-local são rejeitados.
+ */
+function isBlockedOutboundHost(hostname: string): boolean {
+    const h = hostname
+        .trim()
+        .toLowerCase()
+        .replace(/^\[|\]$/g, "")
+        .replace(/\.$/, "");
+    if (!h) return true;
+    if (
+        h === "localhost" ||
+        h === "localhost.localdomain" ||
+        h.endsWith(".localhost") ||
+        h.endsWith(".local") ||
+        h.endsWith(".internal") ||
+        h.endsWith(".home.arpa")
+    ) {
+        return true;
+    }
+    const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+    if (v4) {
+        const a = Number(v4[1]);
+        const b = Number(v4[2]);
+        if (a === 10 || a === 127 || a === 0) return true; // privado/loopback/unspecified
+        if (a === 169 && b === 254) return true; // link-local + 169.254.169.254 (metadata)
+        if (a === 172 && b >= 16 && b <= 31) return true; // 172.16/12
+        if (a === 192 && b === 168) return true; // 192.168/16
+        if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT 100.64/10
+        return false;
+    }
+    if (h.includes(":")) {
+        if (h === "::" || h === "::1") return true; // unspecified/loopback
+        if (h.startsWith("::ffff:")) return true; // IPv4-mapeado (pode esconder loopback)
+        if (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) {
+            return true; // link-local / unique-local
+        }
+        return false;
+    }
+    return false;
+}
+
 // ─── Tipos de resultado ───────────────────────────────────────────────────────
 
 export type ValidationResult<T> = { ok: true; data: T } | { ok: false; error: string };
@@ -452,6 +497,14 @@ function validateActionFields(raw: unknown, context: string): ValidationResult<V
 
     const buttons = validateButtons(raw.buttons);
     if (!buttons.ok) return fail(`${context}: ${buttons.error}`);
+    // private_reply é enviado como template de botão da Meta, que não suporta
+    // postback nesse contexto (só web_url).
+    if (
+        type === "private_reply" &&
+        buttons.data?.some((button) => button.type === "postback")
+    ) {
+        return fail("Botões de resposta privada aceitam apenas tipo web_url");
+    }
 
     const quickReplies = validateQuickReplies(raw.quickReplies);
     if (!quickReplies.ok) return fail(`${context}: ${quickReplies.error}`);
@@ -880,7 +933,15 @@ export function validateOutboundInput(
         if (typeof body.url !== "string" || !HTTP_URL_RE.test(body.url.trim())) {
             return fail("URL deve ser http(s)");
         }
-        data.url = body.url.trim();
+        const cleaned = body.url.trim();
+        let hostname = "";
+        try {
+            hostname = new URL(cleaned).hostname;
+        } catch {
+            return fail("URL deve ser http(s)");
+        }
+        if (isBlockedOutboundHost(hostname)) return fail("URL não permitida");
+        data.url = cleaned;
     } else if (!partial) {
         return fail("URL é obrigatória");
     }

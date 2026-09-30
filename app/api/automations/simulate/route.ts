@@ -10,7 +10,11 @@ import { authOptions } from "@/lib/auth";
 import { getSessionUserId } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { simulate } from "@/lib/ig-automation/engine";
-import { IG_TRIGGERS } from "@/lib/ig-automation/validate";
+import {
+	IG_TRIGGERS,
+	validateAutomationInput,
+	type ValidatedAutomationInput,
+} from "@/lib/ig-automation/validate";
 import type { IgTrigger } from "@/lib/ig-automation/types";
 
 export const dynamic = "force-dynamic";
@@ -74,6 +78,16 @@ export async function POST(req: Request) {
 		return badRequest("ID do usuário do Instagram inválido");
 	}
 
+	// FIX-A7: rascunho do editor (opcional) validado no mesmo schema do CRUD.
+	let draft: ValidatedAutomationInput | null = null;
+	if (payload.draft !== undefined && payload.draft !== null) {
+		const validated = validateAutomationInput(payload.draft, { partial: true });
+		if (!validated.ok) {
+			return badRequest(`Rascunho inválido: ${validated.error}`);
+		}
+		draft = validated.data;
+	}
+
 	try {
 		const channel = await prisma.channel.findFirst({
 			where: { id: channelId, user_id: userId },
@@ -99,6 +113,7 @@ export async function POST(req: Request) {
 				igUserId: igUserId ?? null,
 			},
 			userId,
+			draft,
 		);
 
 		return NextResponse.json(result);
