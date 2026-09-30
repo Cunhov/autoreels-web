@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage } from "@/lib/api";
 import { Prisma } from "@prisma/client";
-import { isPlainObject, validateAutomationInput } from "@/lib/ig-automation/validate";
+import { isPlainObject, parseJsonArray, validateAutomationInput } from "@/lib/ig-automation/validate";
 import {
     CHANNEL_SUMMARY_SELECT,
     actionToDb,
@@ -61,12 +61,16 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     try {
         const existing = await prisma.igAutomation.findFirst({
             where: { id, user_id: userId },
-            select: { id: true },
+            select: { id: true, keywords: true, match_type: true },
         });
         if (!existing) return notFound("Automação não encontrada");
 
         const body = await readJsonBody(req);
-        const result = validateAutomationInput(body, { partial: true });
+        const result = validateAutomationInput(body, {
+            partial: true,
+            existingKeywords: parseJsonArray(existing.keywords),
+            existingMatchType: existing.match_type,
+        });
         if (!result.ok) return badRequest(result.error);
         const data = result.data;
 

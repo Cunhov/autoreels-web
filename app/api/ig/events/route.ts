@@ -4,6 +4,7 @@ import { getErrorMessage } from "@/lib/api";
 import { Prisma } from "@prisma/client";
 import { parseJsonValue } from "@/lib/ig-automation/validate";
 import {
+    AUTOMATION_SUMMARY_SELECT,
     CHANNEL_SUMMARY_SELECT,
     CONTACT_SUMMARY_SELECT,
     badRequest,
@@ -17,7 +18,7 @@ import {
 
 /**
  * GET /api/ig/events?direction=&kind=&status=&channelId=&automationId=&limit=&cursor=&includePayload=1
- *   → { items: IgEvent & {contact?, channel?}, nextCursor }
+ *   → { items: IgEvent & {contact?, channel?, automation?}, nextCursor }
  * `payload` fica fora por padrão; includePayload=1 devolve o JSON cru parseado.
  */
 export async function GET(req: Request) {
@@ -59,6 +60,7 @@ export async function GET(req: Request) {
             include: {
                 contact: { select: CONTACT_SUMMARY_SELECT },
                 channel: { select: CHANNEL_SUMMARY_SELECT },
+                automation: { select: AUTOMATION_SUMMARY_SELECT },
             },
         });
 

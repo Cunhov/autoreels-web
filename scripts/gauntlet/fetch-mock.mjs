@@ -16,6 +16,11 @@
  *   IG_MOCK_CALLS  — JSONL file; EVERY mocked request appends one line:
  *                    {ts, method, url, body, status, kind}
  *
+ * `mock-webhook.invalid` (outbound webhooks, module-08) records the request
+ * body and lowercased headers in the call row (`{..., body, headers, kind:"notify"}`)
+ * so the IG harness can verify `X-Autoreels-Signature` HMACs; older scenarios
+ * only counted `kind:"notify"` and are unaffected.
+ *
  * Rule: { match?, matchBody?, matchRegex?, method?, responses: [{status?, body?, delayMs?}] }
  *   - match      : substring of the full URL (e.g. "media_publish", "?fields=status_code")
  *   - matchBody  : substring of the (URL-encoded) request body — distinguishes
@@ -44,6 +49,7 @@ const MOCK_HOSTS = new Set([
 	"graph.instagram.com",
 	"graph.facebook.com",
 	"api.instagram.com",
+	"api.openrouter.ai",
 	"mock-webhook.invalid",
 ]);
 
@@ -80,6 +86,34 @@ function recordCall(entry) {
 	} catch {
 		/* ignore */
 	}
+}
+
+function normalizeHeaders(headers) {
+	const out = {};
+	if (!headers) return out;
+	try {
+		if (typeof Headers !== "undefined" && headers instanceof Headers) {
+			for (const [key, value] of headers.entries()) {
+				out[key.toLowerCase()] = value;
+			}
+			return out;
+		}
+		if (Array.isArray(headers)) {
+			for (const [key, value] of headers) {
+				if (key === undefined) continue;
+				out[String(key).toLowerCase()] = String(value);
+			}
+			return out;
+		}
+		if (typeof headers === "object") {
+			for (const [key, value] of Object.entries(headers)) {
+				out[key.toLowerCase()] = String(value);
+			}
+		}
+	} catch {
+		/* headers nunca derrubam o mock */
+	}
+	return out;
 }
 
 function ruleMatches(rule, url, method, body) {
@@ -303,11 +337,19 @@ globalThis.fetch = async function patchedFetch(input, options = {}) {
 	}
 
 	if (host === "mock-webhook.invalid") {
+		let notifyBody = "";
+		if (options?.body) {
+			notifyBody =
+				typeof options.body === "string"
+					? options.body.slice(0, 4000)
+					: String(options.body).slice(0, 4000);
+		}
 		recordCall({
 			ts: Date.now(),
 			method,
 			url: url.slice(0, 300),
-			body: "",
+			body: notifyBody,
+			headers: normalizeHeaders(options?.headers),
 			status: 200,
 			kind: "notify",
 		});

@@ -10,6 +10,7 @@
  *   APP_URL          - Base URL of the Next.js app  (default: http://app:${PORT:-80})
  *   CRON_SECRET      - Must match the app's CRON_SECRET env var
  *   WORKER_INTERVAL  - Interval between runs in seconds (default: 60, min 5)
+ *   AUTOMATION_INTERVAL - Min seconds between automation queue runs (default: 15, min 5)
  *
  * Also calls /api/cron/backup (idempotent — the route decides whether it is
  * time to run) roughly every 6 hours.
@@ -34,9 +35,18 @@ const ENDPOINT = `${APP_URL}/api/cron/publisher`;
 const BACKUP_ENDPOINT = `${APP_URL}/api/cron/backup`;
 const MAINTENANCE_ENDPOINT = `${APP_URL}/api/cron/maintenance`;
 const METRICS_ENDPOINT = `${APP_URL}/api/cron/metrics`;
+const AUTOMATION_ENDPOINT = `${APP_URL}/api/cron/automation`;
 const BACKUP_INTERVAL_MS = 6 * 60 * 60 * 1000; // attempt backup roughly every 6h
 const MAINTENANCE_INTERVAL_MS = 24 * 60 * 60 * 1000; // retention/cleanup roughly once a day
 const METRICS_INTERVAL_MS = 30 * 60 * 1000; // sync IG metrics roughly every 30 min
+
+const RAW_AUTOMATION_INTERVAL = process.env.AUTOMATION_INTERVAL || '15';
+let AUTOMATION_INTERVAL_SEC = parseInt(RAW_AUTOMATION_INTERVAL, 10);
+if (!Number.isFinite(AUTOMATION_INTERVAL_SEC) || AUTOMATION_INTERVAL_SEC < 5) {
+    console.error(`[${new Date().toISOString()}] ❌ Invalid AUTOMATION_INTERVAL "${RAW_AUTOMATION_INTERVAL}" — falling back to 15s (min 5s).`);
+    AUTOMATION_INTERVAL_SEC = 15;
+}
+const AUTOMATION_INTERVAL_MS = AUTOMATION_INTERVAL_SEC * 1000;
 
 // ── Coloured log helpers ───────────────────────────────────────────────────────
 const ts = () => new Date().toISOString();
@@ -156,6 +166,49 @@ async function maybeRunMetricsSync() {
     }
 }
 
+// ── Automation queue (jobs/sequências/eventos órfãos) ──────────────────────────
+let lastAutomationAt = 0;
+
+async function maybeRunAutomation() {
+    if (Date.now() - lastAutomationAt < AUTOMATION_INTERVAL_MS) return;
+    lastAutomationAt = Date.now();
+
+    const controller = new AbortController();
+    // Timeout próprio: não deixa a chamada passar do intervalo dedicado.
+    const timeoutMs = Math.max(5000, AUTOMATION_INTERVAL_MS - 2000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        const res = await fetch(AUTOMATION_ENDPOINT, {
+            method: 'POST',
+            headers: { 'x-cron-auth': CRON_SECRET },
+            signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        const body = await res.text().catch(() => '(no body)');
+        if (res.ok) {
+            log('🤖 Automações:', body);
+        } else {
+            err(`Automações HTTP ${res.status}: ${body}`);
+        }
+    } catch (e) {
+        clearTimeout(timeout);
+        if (e.name === 'AbortError') {
+            err(`Automações: timeout após ${Math.round(timeoutMs / 1000)}s`);
+        } else {
+            err('Automações falhou:', e.message);
+        }
+    }
+}
+
+// ── Automation loop (dedicado, independente do loop principal) ────────────────
+// Recursive setTimeout: re-agenda APÓS cada execução, garantindo
+// AUTOMATION_INTERVAL mesmo quando o loop do publisher demora.
+async function automationLoop() {
+    await maybeRunAutomation();
+    setTimeout(automationLoop, AUTOMATION_INTERVAL_MS);
+}
+
 // ── Main loop ──────────────────────────────────────────────────────────────────
 // Recursive setTimeout: the next run is only scheduled AFTER the previous one
 // finishes, so long runs never overlap.
@@ -177,7 +230,9 @@ async function main() {
     log(`   App URL  : ${APP_URL}`);
     log(`   Endpoint : ${ENDPOINT}`);
     log(`   Interval : ${INTERVAL_SEC}s`);
+    log(`   Automação: ${AUTOMATION_ENDPOINT} (min ${AUTOMATION_INTERVAL_SEC}s, loop dedicado)`);
 
+    void automationLoop().catch(e => err('Automation loop fatal:', e.message));
     await loop();
 }
 

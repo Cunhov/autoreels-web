@@ -332,6 +332,9 @@ function validateQuietHours(raw: unknown): ValidationResult<ValidatedQuietHours 
     if (typeof end !== "string" || !HHMM_RE.test(end)) {
         return fail("Horário de fim inválido (use HH:MM)");
     }
+    if (start === end) {
+        return fail("Horário inicial e final iguais");
+    }
     // Timezone inválida não bloqueia: cai no default America/Bahia (spec §6.1).
     const tz = typeof raw.tz === "string" && raw.tz.trim() && isValidTimezone(raw.tz.trim())
         ? raw.tz.trim()
@@ -544,7 +547,12 @@ function parseStrictRegexKeywords(keywords: string[]): string | null {
 
 export function validateAutomationInput(
     body: unknown,
-    options: { partial?: boolean } = {}
+    options: {
+        partial?: boolean;
+        /** Valores já persistidos no PATCH, usados p/ validar a regex efetiva. */
+        existingKeywords?: readonly string[] | null;
+        existingMatchType?: string | null;
+    } = {}
 ): ValidationResult<ValidatedAutomationInput> {
     if (!isPlainObject(body)) return fail("Corpo da requisição inválido");
     const partial = options.partial === true;
@@ -680,9 +688,18 @@ export function validateAutomationInput(
         }
     }
 
-    // Keywords em regex precisam compilar (só valida o que veio neste payload).
-    if (data.matchType === "regex" && data.keywords && data.keywords.length > 0) {
-        const invalid = parseStrictRegexKeywords(data.keywords);
+    // Keywords em regex precisam compilar. No PATCH sem keywords/matchType no
+    // payload, valida a regex efetiva usando os valores persistidos.
+    const effectiveMatchType =
+        data.matchType ?? options.existingMatchType ?? undefined;
+    const effectiveKeywords =
+        data.keywords ?? options.existingKeywords ?? undefined;
+    if (
+        effectiveMatchType === "regex" &&
+        effectiveKeywords &&
+        effectiveKeywords.length > 0
+    ) {
+        const invalid = parseStrictRegexKeywords([...effectiveKeywords]);
         if (invalid !== null) return fail(`Regex inválida: "${invalid}"`);
     }
 

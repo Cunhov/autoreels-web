@@ -65,10 +65,47 @@ Exit 0 only when all scenarios pass. Evidence: `gauntlet-runs/module-01-publishe
   `results.timeout === true` — the 45s `MAX_EXEC_MS` can never fire with the phase-3 `take: 5`
   cap alone).
 
+## IG Automation harness (`ig-*`, module-08)
+
+Bar: `docs/IG_AUTOMATION_SPEC.md` §15 (G1–G15).
+
+```bash
+bash scripts/gauntlet/ig-boot.sh   # db push + build + two phases + G1-G15
+```
+
+- `ig-boot.sh` — temp dir, `prisma db push` on a throwaway DB, `next build`, then
+  **two server phases** sharing the DB/mock files: phase A (G1–G15) with
+  `OPENROUTER_API_KEY` set (G12 asserts the mocked AI reply); phase B (`--scenarios G12`)
+  with the server started **without** `OPENROUTER_API_KEY` (G12 asserts the
+  `OPENROUTER_API_KEY não configurada` failure). Envs: `DATABASE_URL`,
+  `NEXTAUTH_SECRET`, `CRON_SECRET`, `INSTAGRAM_CLIENT_SECRET`,
+  `META_WEBHOOK_VERIFY_TOKEN`, `PUBLIC_BASE_URL`, `IG_MOCK_STATE`/`IG_MOCK_CALLS`.
+  Evidence: `gauntlet-runs/module-08-ig-automation/gates/round-<HHMMSS>-ig-automation.md`
+  (+ `-server.log`, `-calls.jsonl`, `-out-a/`, `-out-b/`). Exit 0 only if both phases pass.
+- `ig-automation-scenarios.mjs` — seeds User/Channel/IgAutomation(+actions)/IgSubstance/
+  IgSequence/IgOutboundWebhook directly via Prisma (better-sqlite3), mints a NextAuth
+  session JWT for G14 scoping, POSTs `/api/webhooks/instagram` with HMAC
+  `x-hub-signature-256` computed from `INSTAGRAM_CLIENT_SECRET`, and advances time by
+  editing `run_at`/`next_run_at` in the DB + `POST /api/cron/automation` (x-cron-auth) —
+  no long sleeps. Every call to a mock host that misses all rules (kind `unmatched`)
+  fails the scenario with `UNMATCHED_MOCK`.
+- `fetch-mock.mjs` (additive) — `api.openrouter.ai` added to the mock hosts; the
+  `mock-webhook.invalid` branch now records the request `body` and lowercased
+  `headers` on `kind:"notify"` rows so G11 can verify the outbound HMAC/payload.
+- `ig-core.mts` — unit checks (61), unchanged: `npx tsx scripts/gauntlet/ig-core.mts`.
+
+Documented deviations: on `bot_pause` the engine writes `IgEvent.status="paused"`
+(not `skipped`); G4 accepts either status and asserts zero sends during the pause.
+G15 lowers `ig_max_sends_per_minute` to 2 via `PUT /api/ig/settings` (same throttle
+code path as the 30/min default, deterministic and fast) and asserts the overflow
+becomes a pending retry job at ~now+60s.
+
 ## Sanity checks
 
 ```bash
 node --check scripts/gauntlet/fetch-mock.mjs
 node --check scripts/gauntlet/publisher-scenarios.mjs
+node --check scripts/gauntlet/ig-automation-scenarios.mjs
 bash -n scripts/gauntlet/boot.sh
+bash -n scripts/gauntlet/ig-boot.sh
 ```

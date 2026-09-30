@@ -65,10 +65,16 @@ export async function POST(req: Request) {
             where: { keyword: { in: keywords } },
             select: { id: true, keyword: true, user_id: true },
         });
-        const foreign = existing.find((row) => row.user_id && row.user_id !== userId);
+        // keyword é única globalmente: registros globais (user_id null) nunca
+        // são alterados/sequestrados — conflito 409 informativo.
+        const foreign = existing.find((row) => row.user_id !== userId);
         if (foreign) {
             return NextResponse.json(
-                { error: `Keyword "${foreign.keyword}" já cadastrada por outro usuário` },
+                {
+                    error: foreign.user_id === null
+                        ? `Keyword "${foreign.keyword}" já existe no catálogo global e não pode ser alterada`
+                        : `Keyword "${foreign.keyword}" já cadastrada por outro usuário`,
+                },
                 { status: 409 }
             );
         }

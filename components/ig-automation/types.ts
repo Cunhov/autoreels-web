@@ -220,6 +220,7 @@ export interface IgOutboundWebhook {
     name: string;
     url: string;
     secret: string;
+    hasSecret: boolean;
     events: string[];
     enabled: boolean;
     channelId: string;
@@ -714,6 +715,7 @@ export function normalizeOutboundWebhook(raw: unknown): IgOutboundWebhook {
         name: asString(o.name),
         url: asString(o.url),
         secret: asString(o.secret),
+        hasSecret: asBool(firstDefined(o, ["has_secret", "hasSecret"])),
         events: asStringArray(o.events),
         enabled: asBool(o.enabled, true),
         channelId: asString(firstDefined(o, ["channelId", "channel_id"])),

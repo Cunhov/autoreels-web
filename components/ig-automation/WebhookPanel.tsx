@@ -870,6 +870,9 @@ export function OutboundWebhooksPanel() {
                                         {ch
                                             ? ` · ${channelLabel(ch)}`
                                             : " · todos os canais"}
+                                        {w.hasSecret
+                                            ? " · segredo configurado"
+                                            : ""}
                                     </p>
                                 </div>
                                 <button

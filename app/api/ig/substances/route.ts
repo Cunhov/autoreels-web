@@ -62,9 +62,15 @@ export async function POST(req: Request) {
         if (!keyword) return badRequest("Keyword é obrigatória");
 
         const existing = await prisma.igSubstance.findUnique({ where: { keyword } });
-        if (existing && existing.user_id && existing.user_id !== userId) {
+        // keyword é única globalmente: registro global (user_id null) nunca é
+        // alterado/sequestrado — respondemos 409 informativo.
+        if (existing && existing.user_id !== userId) {
             return NextResponse.json(
-                { error: "Substância já cadastrada por outro usuário" },
+                {
+                    error: existing.user_id === null
+                        ? `Keyword "${keyword}" já existe no catálogo global e não pode ser alterada`
+                        : "Substância já cadastrada por outro usuário",
+                },
                 { status: 409 }
             );
         }

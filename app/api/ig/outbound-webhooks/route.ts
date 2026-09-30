@@ -56,6 +56,7 @@ export async function POST(req: Request) {
         if (data.channelId) {
             const channel = await findOwnedChannel(userId, data.channelId);
             if (!channel) return notFound("Canal não encontrado");
+            if (channel.platform !== "instagram") return badRequest("Canal não é do Instagram");
         }
 
         const created = await prisma.igOutboundWebhook.create({

@@ -105,12 +105,21 @@ async function postWebhook(
 	}
 }
 
+export interface DispatchOutboundResult {
+	/** Webhooks que responderam HTTP 2xx. */
+	delivered: number;
+	/** Webhooks que falharam ou não puderam ser disparados. */
+	failed: number;
+}
+
 export async function dispatchOutbound(
 	params: DispatchOutboundParams,
-): Promise<void> {
+): Promise<DispatchOutboundResult> {
 	const { userId, channelId, event } = params;
+	let delivered = 0;
+	let failed = 0;
 	try {
-		if (!userId || !event) return;
+		if (!userId || !event) return { delivered, failed };
 
 		const where: {
 			user_id: string;
@@ -125,7 +134,7 @@ export async function dispatchOutbound(
 		const targets = webhooks.filter((webhook) =>
 			parseEvents(webhook.events).includes(event),
 		);
-		if (!targets.length) return;
+		if (!targets.length) return { delivered, failed };
 
 		const payload: Record<string, unknown> = {
 			event,
@@ -154,6 +163,8 @@ export async function dispatchOutbound(
 				webhook.secret ?? null,
 				payload,
 			);
+			if (result.ok) delivered += 1;
+			else failed += 1;
 			fireLog({
 				userId,
 				channelId: channelId ?? null,
@@ -166,6 +177,7 @@ export async function dispatchOutbound(
 			});
 		}
 	} catch (err) {
+		failed += 1;
 		fireLog({
 			userId,
 			channelId: channelId ?? null,
@@ -175,4 +187,5 @@ export async function dispatchOutbound(
 			error: shortError(err),
 		});
 	}
+	return { delivered, failed };
 }

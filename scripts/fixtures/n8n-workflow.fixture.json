@@ -1,0 +1,647 @@
+{
+  "name": "Instagram Auto Reply - Fixture (sem segredos)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "instagram-fixture",
+        "httpMethod": "POST"
+      },
+      "id": "fixture-webhook",
+      "name": "📥 Webhook Instagram",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "fixture-webhook-id"
+    },
+    {
+      "parameters": {},
+      "id": "fixture-token-redis",
+      "name": "🔑 Token Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const substances = [\n  {\n    \"keyword\": \"creatina\",\n    \"name\": \"Creatina Monohidratada\",\n    \"keywords\": [\n      \"creatina\",\n      \"creatine\"\n    ],\n    \"description\": \"A Creatina é um composto de aminoácidos armazenado nos músculos como fosfocreatina.\",\n    \"action\": \"Aumenta a produção de ATP, melhorando força, potência e volume muscular.\",\n    \"dosage\": \"Tomar 3g a 5g por dia, todos os dias.\",\n    \"duration\": \"Uso contínuo, sem necessidade de pausas.\"\n  },\n  {\n    \"keyword\": \"cafeina\",\n    \"name\": \"Cafeína Anidra\",\n    \"keywords\": [\n      \"cafeina\",\n      \"cafeína\",\n      \"caffeine\"\n    ],\n    \"description\": \"A Cafeína é um alcaloide estimulante do sistema nervoso central.\",\n    \"action\": \"Reduz a percepção de fadiga, aumenta o foco e melhora o desempenho físico.\",\n    \"dosage\": \"Tomar 100mg a 300mg por dia, evitando após as 18h.\",\n    \"duration\": \"Uso pontual ou em ciclos de 4 a 8 semanas.\"\n  }\n];\n\nfunction normalizeText(text) {\n  if (!text) return '';\n  return text\n    .toLowerCase()\n    .normalize(\"NFD\")\n    .replace(/[\\u0300-\\u036f]/g, \"\")\n    .replace(/[^a-z0-9]/g, \"\");\n}\n\nfunction normalizeForWordBoundary(text) {\n  if (!text) return '';\n  return text\n    .toLowerCase()\n    .normalize(\"NFD\")\n    .replace(/[\\u0300-\\u036f]/g, \"\");\n}\n\nfor (const item of $input.all()) {\n  const comment = item.json.mensagem || '';\n  const dm = item.json.direct_message || '';\n  const textToCheck = (comment + ' ' + dm).trim();\n  let matchedSubstance = null;\n  if (textToCheck) {\n    const normalizedText = normalizeText(textToCheck);\n    const normalizedForBoundary = normalizeForWordBoundary(textToCheck);\n    for (const sub of substances) {\n      let isMatch = false;\n      for (const kw of sub.keywords) {\n        const normalizedKw = normalizeText(kw);\n        if (normalizedKw.length >= 4) {\n          if (normalizedText.includes(normalizedKw)) {\n            isMatch = true;\n            break;\n          }\n        } else if (normalizedKw.length > 0) {\n          const regex = new RegExp('\\\\b' + normalizedKw + '\\\\b', 'i');\n          if (regex.test(normalizedForWordBoundary)) {\n            isMatch = true;\n            break;\n          }\n        }\n      }\n      if (isMatch) {\n        matchedSubstance = {\n          nome: sub.name,\n          url: \"https://url.cunhov.site/\" + sub.keyword,\n          descricao: sub.description,\n          acao: sub.action,\n          dosagem: sub.dosage,\n          duracao: sub.duration\n        };\n        break;\n      }\n    }\n  }\n  item.json.substancia = matchedSubstance;\n}\n\nreturn $input.all();"
+      },
+      "id": "fixture-substances",
+      "name": "🧠 Identificar Substância",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-tipo-comment",
+                    "leftValue": "={{ $json.comment_id }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEmpty",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "comment"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "cond-tipo-dm",
+                    "leftValue": "={{ $json.direct_message }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "notEmpty",
+                      "singleValue": true
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "dm"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fixture-switch-tipo",
+      "name": "🔀 Tipo de Mensagem",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "kw-quero",
+              "leftValue": "={{ $json.mensagem }}",
+              "rightValue": "quero",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "kw-qro",
+              "leftValue": "={{ $json.mensagem }}",
+              "rightValue": "qro",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "id": "fixture-filter-quero",
+      "name": "🔍 Comentário: Eu Quero",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        800,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.instagram.com/v22.0/{{$('🔑 Token Redis').item.json.id_business}}/messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient\": {\n    \"comment_id\": \"{{ $json.comment_id }}\"\n  },\n  \"message\": {\n    \"attachment\": {\n      \"type\": \"template\",\n      \"payload\": {\n        \"template_type\": \"button\",\n        \"text\": \"Oi! Peguei seu comentário e te mandei o acesso no Direct. Qualquer dúvida me chama!\",\n        \"buttons\": [\n          {\n            \"type\": \"web_url\",\n            \"url\": \"https://exemplo.test/lp-quero\",\n            \"title\": \"Acessar o link\"\n          }\n        ]\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "fixture-resp-quero",
+      "name": "💬 Resposta: Eu Quero (Comentário)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1000,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "kw-gp3",
+              "leftValue": "={{ $json.direct_message }}",
+              "rightValue": "gp3",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "id": "fixture-filter-gp3",
+      "name": "🔍 Direct: GP3",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        800,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.instagram.com/v22.0/{{$('🔑 Token Redis').item.json.id_business}}/messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient\": {\n    \"id\": \"{{ $json.direct_sender_id }}\"\n  },\n  \"message\": {\n    \"attachment\": {\n      \"type\": \"template\",\n      \"payload\": {\n        \"template_type\": \"button\",\n        \"text\": \"Segue o link do GP3. Bom treino!\",\n        \"buttons\": [\n          {\n            \"type\": \"web_url\",\n            \"url\": \"https://exemplo.test/gp3\",\n            \"title\": \"Acessar agora\"\n          }\n        ]\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "fixture-resp-gp3",
+      "name": "💬 Resposta: GP3 (Direct)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1000,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-sub-comment",
+              "leftValue": "={{ $json.substancia }}",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "id": "fixture-filter-sub-comment",
+      "name": "🔍 Comentário: Substância",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.instagram.com/v22.0/{{$('🔑 Token Redis').item.json.id_business}}/messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient\": {\n    \"comment_id\": \"{{ $json.comment_id }}\"\n  },\n  \"message\": {\n    \"attachment\": {\n      \"type\": \"template\",\n      \"payload\": {\n        \"template_type\": \"button\",\n        \"text\": \"Aqui estão as informações sobre o {{ $json.substancia.nome }}:\\n\\n🔬 O que é: {{ $json.substancia.descricao }}\\n\\n⚙️ Como age: {{ $json.substancia.acao }}\\n\\n⚖️ Dosagem: {{ $json.substancia.dosagem }}\\n\\n⏳ Tempo de uso: {{ $json.substancia.duracao }}\\n\\nToque no botão abaixo para garantir o seu:\",\n        \"buttons\": [\n          {\n            \"type\": \"web_url\",\n            \"url\": \"{{ $json.substancia.url }}\",\n            \"title\": \"Comprar Agora\"\n          }\n        ]\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "fixture-resp-sub-comment",
+      "name": "💬 Resposta: Substância (Comentário)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1000,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cond-sub-dm",
+              "leftValue": "={{ $json.substancia }}",
+              "operator": {
+                "type": "object",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "looseTypeValidation": true,
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "id": "fixture-filter-sub-dm",
+      "name": "🔍 Direct: Substância",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [
+        800,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.instagram.com/v22.0/{{$('🔑 Token Redis').item.json.id_business}}/messages",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"recipient\": {\n    \"id\": \"{{ $json.direct_sender_id }}\"\n  },\n  \"message\": {\n    \"attachment\": {\n      \"type\": \"template\",\n      \"payload\": {\n        \"template_type\": \"button\",\n        \"text\": \"Aqui estão as informações sobre o {{ $json.substancia.nome }}:\\n\\n🔬 O que é: {{ $json.substancia.descricao }}\\n\\n⚙️ Como age: {{ $json.substancia.acao }}\\n\\n⚖️ Dosagem: {{ $json.substancia.dosagem }}\\n\\n⏳ Tempo de uso: {{ $json.substancia.duracao }}\\n\\nToque no botão abaixo para garantir o seu:\",\n        \"buttons\": [\n          {\n            \"type\": \"web_url\",\n            \"url\": \"{{ $json.substancia.url }}\",\n            \"title\": \"Comprar Agora\"\n          }\n        ]\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "id": "fixture-resp-sub-dm",
+      "name": "💬 Resposta: Substância (Direct)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1000,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fixture-mensagens",
+              "name": "mensagens",
+              "value": "=[{\"texto\":\"Opa! Te mandei os detalhes lá no Direct, dá uma olhada! 😉\"},{\"texto\":\"Feito! Acabei de enviar as informações no seu privado. Valeu!\"},{\"texto\":\"Tudo certo, te chamei lá no Direct para te explicar melhor. 👍\"}]",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fixture-isolar",
+      "name": "📋 Isolar Mensagem",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        1400,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 15
+      },
+      "id": "fixture-wait",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        -200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "fixture-split",
+      "name": "Split Out1",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "type": "random"
+      },
+      "id": "fixture-sort",
+      "name": "Sort2",
+      "type": "n8n-nodes-base.sort",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        -200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "fixture-aggregate",
+      "name": "Aggregate",
+      "type": "n8n-nodes-base.aggregate",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fixture-texto",
+              "name": "texto",
+              "value": "={{ $json.data[0].texto }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fixture-edit",
+      "name": "Edit Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        2200,
+        -200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.instagram.com/v22.0/{{ $('🔑 Token Redis').item.json.comment_id }}/replies",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"message\": \"{{ $json.texto }}\"\n}",
+        "options": {}
+      },
+      "id": "fixture-resp-public",
+      "name": "💬 Responder Comentário (No Post)1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2400,
+        -200
+      ]
+    }
+  ],
+  "connections": {
+    "📥 Webhook Instagram": {
+      "main": [
+        [
+          {
+            "node": "🔑 Token Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔑 Token Redis": {
+      "main": [
+        [
+          {
+            "node": "🧠 Identificar Substância",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Identificar Substância": {
+      "main": [
+        [
+          {
+            "node": "🔀 Tipo de Mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 Tipo de Mensagem": {
+      "main": [
+        [
+          {
+            "node": "🔍 Comentário: Eu Quero",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔍 Direct: GP3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔍 Comentário: Substância",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🔍 Direct: Substância",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Comentário: Eu Quero": {
+      "main": [
+        [
+          {
+            "node": "💬 Resposta: Eu Quero (Comentário)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Resposta: Eu Quero (Comentário)": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Direct: GP3": {
+      "main": [
+        [
+          {
+            "node": "💬 Resposta: GP3 (Direct)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Comentário: Substância": {
+      "main": [
+        [
+          {
+            "node": "💬 Resposta: Substância (Comentário)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💬 Resposta: Substância (Comentário)": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Direct: Substância": {
+      "main": [
+        [
+          {
+            "node": "💬 Resposta: Substância (Direct)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "📋 Isolar Mensagem",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📋 Isolar Mensagem": {
+      "main": [
+        [
+          {
+            "node": "Split Out1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Out1": {
+      "main": [
+        [
+          {
+            "node": "Sort2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sort2": {
+      "main": [
+        [
+          {
+            "node": "Aggregate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "💬 Responder Comentário (No Post)1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "active": false
+}

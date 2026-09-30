@@ -78,6 +78,9 @@ function localMinutes(at: Date, tz: string): number | null {
  * (ex.: 23:00→07:00). `quiet` nulo/inválido → false. Fuso default
  * `America/Bahia`; fuso inválido cai para o default e, em último caso,
  * para a hora local do servidor.
+ *
+ * `start === end` é rejeitado na entrada (400 em validate.ts); se aparecer
+ * em dado legado, é tratado defensivamente como janela vazia (sem silêncio).
  */
 export function isQuietNow(
 	quiet: IgQuietHours | null | undefined,

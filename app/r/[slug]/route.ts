@@ -1,11 +1,18 @@
 import { prisma } from "@/lib/prisma";
-import { appendUtm } from "@/lib/ig-automation/clicks";
+import { appendUtm, isHttpUrl } from "@/lib/ig-automation/clicks";
 
 export const dynamic = "force-dynamic";
 
 function notFound(): Response {
 	return new Response("Link não encontrado.", {
 		status: 404,
+		headers: { "content-type": "text/plain; charset=utf-8" },
+	});
+}
+
+function invalidTarget(): Response {
+	return new Response("Link inválido.", {
+		status: 400,
 		headers: { "content-type": "text/plain; charset=utf-8" },
 	});
 }
@@ -27,6 +34,8 @@ export async function GET(
 		campaign: click.utm_campaign ?? undefined,
 	});
 	if (!target) return notFound();
+	// Revalida no redirect: destino fora de http(s) nunca vira Location.
+	if (!isHttpUrl(target)) return invalidTarget();
 
 	try {
 		await prisma.igClick.update({

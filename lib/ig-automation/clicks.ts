@@ -5,6 +5,12 @@ const BASE62 =
 	"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 const SLUG_LENGTH = 8;
 const MAX_SLUG_ATTEMPTS = 5;
+const HTTP_URL_RE = /^https?:\/\/\S+$/i;
+
+/** Allowlist de destino: só http/https pode virar link curto ou redirecionar. */
+export function isHttpUrl(url: unknown): boolean {
+	return typeof url === "string" && HTTP_URL_RE.test(url.trim());
+}
 
 export interface IgUtmParams {
 	source?: string;
@@ -54,6 +60,8 @@ export async function createClickLink(
 	if (!targetUrl) {
 		throw new Error("URL de destino vazia — configure o link na ação.");
 	}
+	// Alvo não http(s) não ganha slug: devolve a própria URL (sem tracking).
+	if (!isHttpUrl(targetUrl)) return targetUrl;
 
 	let slug = "";
 	let created = false;

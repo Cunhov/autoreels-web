@@ -6,6 +6,7 @@ import {
     verifyOAuthState,
 } from "@/lib/instagram";
 import { prisma } from "@/lib/prisma";
+import { ensureSubscription } from "@/lib/ig-automation/subscription";
 
 export async function GET(req: Request) {
     const publicOrigin = getPublicOrigin(req);
@@ -48,7 +49,7 @@ export async function GET(req: Request) {
             throw new Error("Instagram account id was not returned.");
 
         const expiresAt = new Date(Date.now() + tokenData.expiresIn * 1000);
-        await prisma.channel.upsert({
+        const channel = await prisma.channel.upsert({
             where: {
                 user_id_account_id: {
                     user_id: userId,
@@ -78,6 +79,18 @@ export async function GET(req: Request) {
                 token_refreshed_at: new Date(),
                 status: "active",
             },
+        });
+
+        // Best-effort + fire-and-forget: assina os campos do webhook
+        // (comments/messages/messaging_postbacks) sem atrasar o redirect.
+        // Falha não bloqueia o OAuth nem altera o redirect.
+        void ensureSubscription(channel).catch((subscriptionError: unknown) => {
+            console.error(
+                "[ig-automation] ensureSubscription no OAuth falhou:",
+                subscriptionError instanceof Error
+                    ? subscriptionError.name
+                    : "Error",
+            );
         });
 
         redirect.searchParams.set("connect", "success");

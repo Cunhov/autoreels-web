@@ -40,6 +40,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
         if (data.channelId) {
             const channel = await findOwnedChannel(userId, data.channelId);
             if (!channel) return notFound("Canal não encontrado");
+            if (channel.platform !== "instagram") return badRequest("Canal não é do Instagram");
         }
 
         const updated = await prisma.igOutboundWebhook.update({

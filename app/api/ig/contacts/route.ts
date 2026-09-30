@@ -63,7 +63,9 @@ export async function GET(req: Request) {
                 where: { id: cursorId, user_id: userId },
                 select: { id: true, created_at: true },
             });
-            if (cursor) where = { ...baseWhere, ...cursorOrFilter(cursor) };
+            // `AND` preserva o OR da busca (`q`) e os filtros tag/channelId;
+            // o spread antigo sobrescrevia `OR` e perdia a busca na 2ª página.
+            if (cursor) where = { AND: [baseWhere, cursorOrFilter(cursor)] };
         }
 
         const rows = await prisma.igContact.findMany({

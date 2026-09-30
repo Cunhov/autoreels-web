@@ -41,6 +41,42 @@ const CONFIG_KEYS = [
 	"ig_human_takeover_pause_hours",
 ] as const;
 
+/**
+ * Tipos que chamam a Graph API (envios reais). `assign_tag`, `start_sequence`
+ * e `outbound_webhook` geram `IgActionLog` mas NÃO contam para limites.
+ * Espelha `SEND_ACTIONS` de actions.ts.
+ */
+export const IG_GRAPH_SEND_TYPES = [
+	"public_comment_reply",
+	"private_reply",
+	"dm_text",
+	"dm_buttons",
+	"dm_quick_replies",
+	"dm_media",
+	"ai_reply",
+] as const;
+
+/** Início do dia corrente no fuso America/Bahia (UTC-3, sem DST desde 2019). */
+function startOfTodayBahia(now: Date = new Date()): Date {
+	const parts = new Intl.DateTimeFormat("en-US", {
+		timeZone: "America/Bahia",
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+	}).formatToParts(now);
+	const get = (type: string): string =>
+		parts.find((part) => part.type === type)?.value ?? "";
+	const year = get("year");
+	const month = get("month");
+	const day = get("day");
+	if (year && month && day) {
+		return new Date(`${year}-${month}-${day}T03:00:00.000Z`);
+	}
+	const fallback = new Date(now.getTime() - 3 * 3_600_000);
+	fallback.setUTCHours(0, 0, 0, 0);
+	return new Date(fallback.getTime() + 3 * 3_600_000);
+}
+
 function parseBool(
 	value: string | null | undefined,
 	fallback: boolean,
@@ -114,8 +150,8 @@ export async function getLimits(): Promise<IgLimits> {
 }
 
 /**
- * Cooldown por (automação, contato): existe envio "sent" na janela (horas)?
- * Ações de baixo impacto (assign_tag/start_sequence) não contam.
+ * Cooldown por (automação, contato): existe envio real "sent" na janela
+ * (horas)? Só envios à Graph contam (tag/sequência/outbound webhook não).
  */
 export async function isCooldownBlocked(
 	automationId: string,
@@ -130,7 +166,7 @@ export async function isCooldownBlocked(
 			automation_id: automationId,
 			contact_id: contactId,
 			status: "sent",
-			action_type: { notIn: ["assign_tag", "start_sequence"] },
+			action_type: { in: [...IG_GRAPH_SEND_TYPES] },
 			created_at: { gte: since },
 		},
 	});
@@ -139,7 +175,7 @@ export async function isCooldownBlocked(
 
 /**
  * Limite diário por (automação, contato). `limit <= 0` = desligado.
- * Janela = desde 00:00 local do servidor.
+ * Janela = desde 00:00 no fuso America/Bahia; só envios reais à Graph contam.
  */
 export async function isDailyLimitReached(
 	automationId: string,
@@ -148,13 +184,13 @@ export async function isDailyLimitReached(
 ): Promise<boolean> {
 	if (!automationId || !contactId) return false;
 	if (!Number.isFinite(limit) || limit <= 0) return false;
-	const startOfDay = new Date();
-	startOfDay.setHours(0, 0, 0, 0);
+	const startOfDay = startOfTodayBahia();
 	const count = await prisma.igActionLog.count({
 		where: {
 			automation_id: automationId,
 			contact_id: contactId,
 			status: "sent",
+			action_type: { in: [...IG_GRAPH_SEND_TYPES] },
 			created_at: { gte: startOfDay },
 		},
 	});
@@ -162,7 +198,7 @@ export async function isDailyLimitReached(
 }
 
 /**
- * Rate limit do canal: envios "sent" nos últimos 60s >= maxPerMinute.
+ * Rate limit do canal: envios reais "sent" nos últimos 60s >= maxPerMinute.
  * `maxPerMinute <= 0` = desligado.
  */
 export async function isRateLimited(
@@ -176,6 +212,7 @@ export async function isRateLimited(
 		where: {
 			channel_id: channelId,
 			status: "sent",
+			action_type: { in: [...IG_GRAPH_SEND_TYPES] },
 			created_at: { gte: since },
 		},
 	});

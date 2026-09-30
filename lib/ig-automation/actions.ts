@@ -51,6 +51,13 @@ export interface ExecuteActionParams {
 	vars: IgRenderVars;
 	limits: IgLimits;
 	dryRun?: boolean;
+	/** id da row `IgEvent` (dedupe de private_reply); ausente = pula a checagem. */
+	eventId?: string | null;
+	/**
+	 * Override do `automation_id` usado nos logs/stats. Sequências passam
+	 * `null` (não existe `IgAutomation` real — evita FK inválida `seq:<id>`).
+	 */
+	automationIdOverride?: string | null;
 }
 
 export interface ExecuteActionResult {
@@ -143,18 +150,28 @@ export async function executeAction(
 	const { action, automation, channel, contact, event, vars, limits } = params;
 	const actionType = String(action?.type || "");
 	const dryRun = params.dryRun === true || limits?.dryRun === true;
+	const eventId =
+		typeof params.eventId === "string" && params.eventId.trim() !== ""
+			? params.eventId.trim()
+			: null;
+	// `null` explícito = log sem automation (sequências); ausente = automation real.
+	const automationId =
+		params.automationIdOverride !== undefined
+			? params.automationIdOverride
+			: automation?.id ?? null;
 
 	const baseLog = {
 		userId: channel.user_id,
 		channelId: channel.id,
-		automationId: automation.id,
+		automationId,
 		contactId: contact.id,
+		eventId,
 		actionType: actionType || "unknown",
 	};
 
 	const finishFailure = (error: string): ExecuteActionResult => {
 		fireLog({ ...baseLog, status: "failed", error: error.slice(0, 500) });
-		fireBump(automation.id, { failed: 1 });
+		if (automationId) fireBump(automationId, { failed: 1 });
 		return { ok: false, error };
 	};
 
@@ -168,7 +185,33 @@ export async function executeAction(
 			request: request === undefined ? null : summarize(request),
 			response: response === undefined ? null : summarize(response),
 		});
-		fireBump(automation.id, { sent: 1 });
+		// Apenas envios reais à Graph inflam `stats_sent`
+		// (assign_tag/start_sequence/outbound_webhook não contam).
+		if (automationId && SEND_ACTIONS.has(actionType)) {
+			fireBump(automationId, { sent: 1 });
+		}
+		return { ok: true };
+	};
+
+	// Igual a finishSuccess, mas persiste o log antes de retornar: garante que
+	// o dedupe de private_reply enxergue o envio imediatamente depois.
+	const finishSuccessPersisted = async (
+		request?: unknown,
+		response?: unknown,
+	): Promise<ExecuteActionResult> => {
+		try {
+			await logAction({
+				...baseLog,
+				status: "sent",
+				request: request === undefined ? null : summarize(request),
+				response: response === undefined ? null : summarize(response),
+			});
+		} catch {
+			/* log é best-effort */
+		}
+		if (automationId && SEND_ACTIONS.has(actionType)) {
+			fireBump(automationId, { sent: 1 });
+		}
 		return { ok: true };
 	};
 
@@ -218,6 +261,30 @@ export async function executeAction(
 				if (!event.igEventId) {
 					return finishFailure("Evento sem id de comentário — private reply indisponível.");
 				}
+				// Só há 1 private reply por comentário (spec §5.1): se já houve envio
+				// para este evento, não chama a Graph de novo nem infla stats.
+				if (eventId) {
+					const alreadySent = await prisma.igActionLog.findFirst({
+						where: {
+							event_id: eventId,
+							action_type: "private_reply",
+							status: "sent",
+						},
+						select: { id: true },
+					});
+					if (alreadySent) {
+						fireLog({
+							...baseLog,
+							status: "skipped",
+							error: "private_reply_ja_enviado",
+						});
+						return {
+							ok: true,
+							skipped: true,
+							reason: "private_reply_ja_enviado",
+						};
+					}
+				}
 				const rendered = await renderMessage(action, vars, channel, contact, automation, event);
 				if (!hasContent(rendered)) {
 					return finishFailure("Ação de private reply sem texto ou botões válidos.");
@@ -230,7 +297,7 @@ export async function executeAction(
 				if (!result.ok) {
 					return finishFailure(result.error || "Falha ao enviar a private reply.");
 				}
-				return finishSuccess(
+				return finishSuccessPersisted(
 					{
 						endpoint: "messages",
 						commentId: event.igEventId,
@@ -406,16 +473,44 @@ export async function executeAction(
 						{ enrollmentId: existing.id, existing: true, status: existing.status },
 					);
 				}
-				const enrollment = await prisma.igSequenceEnrollment.create({
-					data: {
-						sequence_id: sequenceId,
-						contact_id: contact.id,
-						channel_id: channel.id,
-						status: "active",
-						current_step: 0,
-						next_run_at: new Date(),
-					},
-				});
+				let enrollment: { id: string };
+				try {
+					enrollment = await prisma.igSequenceEnrollment.create({
+						data: {
+							sequence_id: sequenceId,
+							contact_id: contact.id,
+							channel_id: channel.id,
+							status: "active",
+							current_step: 0,
+							next_run_at: new Date(),
+						},
+						select: { id: true },
+					});
+				} catch (error) {
+					// Corrida no unique (sequence_id, contact_id): idempotente.
+					if (
+						error !== null &&
+						typeof error === "object" &&
+						(error as { code?: unknown }).code === "P2002"
+					) {
+						const raced = await prisma.igSequenceEnrollment.findUnique({
+							where: {
+								sequence_id_contact_id: {
+									sequence_id: sequenceId,
+									contact_id: contact.id,
+								},
+							},
+							select: { id: true },
+						});
+						if (raced) {
+							return finishSuccess(
+								{ sequenceId },
+								{ enrollmentId: raced.id, existing: true, raced: true },
+							);
+						}
+					}
+					throw error;
+				}
 				return finishSuccess(
 					{ sequenceId },
 					{ enrollmentId: enrollment.id, enrolled: true },
@@ -426,7 +521,7 @@ export async function executeAction(
 				const rendered = await renderMessage(action, vars, channel, contact, automation, event);
 				const outboundEvent =
 					event.kind === "comment" ? "comment.matched" : "dm.matched";
-				await dispatchOutbound({
+				const outbound = await dispatchOutbound({
 					userId: channel.user_id,
 					channelId: channel.id,
 					event: outboundEvent,
@@ -436,9 +531,19 @@ export async function executeAction(
 					mediaId: event.mediaId,
 					webhookId: action.webhook_id,
 				});
+				if (outbound.delivered === 0) {
+					if (outbound.failed > 0) {
+						return finishFailure("Nenhum webhook de saída entregou a requisição.");
+					}
+					fireLog({ ...baseLog, status: "skipped", error: "sem_webhook" });
+					return { ok: false, skipped: true, reason: "sem_webhook" };
+				}
 				return finishSuccess(
 					{ outboundEvent, webhookId: action.webhook_id ?? null },
-					{ dispatched: true },
+					{
+						delivered: outbound.delivered,
+						failed: outbound.failed,
+					},
 				);
 			}
 
