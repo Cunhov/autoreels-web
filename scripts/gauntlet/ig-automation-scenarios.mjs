@@ -212,6 +212,14 @@ function record(label, pass, line, detail = {}) {
 		/* non-fatal: summary remains the source of truth */
 	}
 	console.log(`SCENARIO ${label}: ${pass ? "PASS" : "FAIL"} — ${line}`);
+	if (!pass) {
+		// Diagnóstico acionável no summary.txt do boot (stdout+stderr capturados).
+		try {
+			console.error(`  detail ${label}: ${JSON.stringify(detail).slice(0, 900)}`);
+		} catch {
+			/* detail não-serializável não derruba o runner */
+		}
+	}
 }
 
 async function req(
@@ -641,9 +649,16 @@ async function scenarioG3() {
 			where: { channel_id: "ig-chan-g3" },
 		});
 		const job = jobs[0];
-		const privateBody = parseBody(
-			lastCall({ method: "POST", urlIncludes: "acct-g3/messages" }),
-		);
+		const privateCall = lastCall({
+			method: "POST",
+			urlIncludes: "acct-g3/messages",
+		});
+		const privateBody = parseBody(privateCall);
+		// Delay de 5s agendado a partir do processamento do evento (privateCall.ts é o
+		// relógio do engine) + job ainda no futuro: imune à latência do polling.
+		const jobDeltaMs = privateCall
+			? job.run_at.getTime() - privateCall.ts
+			: -1;
 		const step1 =
 			first.status === 200 &&
 			first.json?.stored === 1 &&
@@ -654,7 +669,8 @@ async function scenarioG3() {
 			replyCalls === 0 &&
 			jobs.length === 1 &&
 			job.type === "action" &&
-			job.run_at.getTime() > Date.now() + 3500 &&
+			jobDeltaMs >= 4000 &&
+			job.run_at.getTime() > Date.now() + 500 &&
 			job.payload.includes("act-g3-public") &&
 			privateBody?.recipient?.comment_id === "cmp-g3-1";
 
@@ -701,8 +717,32 @@ async function scenarioG3() {
 		record(
 			"G3",
 			step1 && step2 && step3,
-			`stored=${first.json?.stored} private=${privateCalls} job=${jobs.length} replayDup=${replay.json?.duplicates} replyCalls=${replyCalls} jobDone=${jobDone}`,
-			{ step1, step2, step3 },
+			`stored=${first.json?.stored} private=${privateCalls} job=${jobs.length} jobDelta=${jobDeltaMs}ms replayDup=${replay.json?.duplicates} replyCalls=${replyCalls} jobDone=${jobDone}`,
+			{
+				step1,
+				step2,
+				step3,
+				firstStatus: first.status,
+				firstStored: first.json?.stored,
+				privateCommentId: privateBody?.recipient?.comment_id,
+				eventStatus: eventRow?.status,
+				eventAutomation: eventRow?.automation_id,
+				jobType: job?.type,
+				jobPayloadHasAction: job?.payload?.includes("act-g3-public"),
+				jobRunAtDeltaMs: jobDeltaMs,
+				jobRunAtInFutureMs: job ? job.run_at.getTime() - Date.now() : null,
+				callsBeforeReplay,
+				callsAfterReplay: readCalls().length,
+				replayReceived: replay.json?.received,
+				replayStored: replay.json?.stored,
+				replayDuplicates: replay.json?.duplicates,
+				eventCount,
+				jobsAfterReplay,
+				cronStatus: cron.status,
+				delivered,
+				jobDone,
+				replyMessage: replyBody?.message,
+			},
 		);
 	} finally {
 		await cleanupChannel("ig-chan-g3");
@@ -1162,6 +1202,7 @@ async function scenarioG8() {
 				id: "sub-g8",
 				user_id: null,
 				keyword: "creatina",
+				name: "Creatina",
 				keywords: JSON.stringify(["creapure"]),
 				description: "aminoácido",
 				action: "força",
@@ -1607,7 +1648,7 @@ async function scenarioG12WithKey() {
 			],
 		});
 		writeState([
-			rule("api.openrouter.ai", [
+			rule("openrouter.ai", [
 				{
 					status: 200,
 					body: {
@@ -1628,7 +1669,7 @@ async function scenarioG12WithKey() {
 		);
 		const aiCalled = await waitFor(
 			() =>
-				countCalls({ method: "POST", urlIncludes: "api.openrouter.ai" }) >= 1,
+				countCalls({ method: "POST", urlIncludes: "openrouter.ai" }) >= 1,
 			{ label: "chamada ao OpenRouter mockado" },
 		);
 		const dmDelivered = await waitFor(
@@ -1638,7 +1679,7 @@ async function scenarioG12WithKey() {
 		);
 		const openrouterCall = lastCall({
 			method: "POST",
-			urlIncludes: "api.openrouter.ai",
+			urlIncludes: "openrouter.ai",
 		});
 		const body = parseBody(
 			lastCall({ method: "POST", urlIncludes: "acct-g12/messages" }),
@@ -1722,7 +1763,7 @@ async function scenarioG12WithoutKey() {
 		});
 		const openrouterCalls = countCalls({
 			method: "POST",
-			urlIncludes: "api.openrouter.ai",
+			urlIncludes: "openrouter.ai",
 		});
 		const dmCalls = countCalls({
 			method: "POST",

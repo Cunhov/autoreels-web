@@ -1,0 +1,30 @@
+{"ts":1790739183153,"kind":"scenario","name":"G1"}
+{"ts":1790739183319,"kind":"scenario","name":"G2"}
+{"ts":1790739184139,"kind":"scenario","name":"G3"}
+{"ts":1790739184884,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g3/messages","body":"{\"recipient\":{\"comment_id\":\"cmp-g3-1\"},\"message\":{\"text\":\"Oi! Te chamei no direct.\"}}","status":200,"kind":"mock"}
+{"ts":1790739185854,"method":"POST","url":"https://graph.instagram.com/v24.0/cmp-g3-1/replies","body":"{\"message\":\"Respondi no seu direct 🚀\"}","status":200,"kind":"mock"}
+{"ts":1790739186065,"kind":"scenario","name":"G4"}
+{"ts":1790739186212,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g4/messages","body":"{\"recipient\":{\"id\":\"u-g4\"},\"message\":{\"text\":\"Olá user_g4!\"}}","status":200,"kind":"mock"}
+{"ts":1790739186525,"kind":"scenario","name":"G5"}
+{"ts":1790739186703,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g5/messages","body":"{\"recipient\":{\"id\":\"u-g5\"},\"message\":{\"text\":\"Preço: R$ 10\"}}","status":200,"kind":"mock"}
+{"ts":1790739186957,"kind":"scenario","name":"G6"}
+{"ts":1790739187459,"kind":"scenario","name":"G7"}
+{"ts":1790739187717,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g7/messages","body":"{\"recipient\":{\"comment_id\":\"cmp-g7-1\"},\"message\":{\"text\":\"B ok\"}}","status":200,"kind":"mock"}
+{"ts":1790739188097,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g7/messages","body":"{\"recipient\":{\"comment_id\":\"cmp-g7-3\"},\"message\":{\"text\":\"A ok\"}}","status":200,"kind":"mock"}
+{"ts":1790739188227,"kind":"scenario","name":"G8"}
+{"ts":1790739188260,"kind":"scenario","name":"G9"}
+{"ts":1790739188617,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g9/messages","body":"{\"recipient\":{\"id\":\"u-g9\"},\"message\":{\"text\":\"Passo 1\"}}","status":200,"kind":"mock"}
+{"ts":1790739189174,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g9/messages","body":"{\"recipient\":{\"id\":\"u-g9\"},\"message\":{\"text\":\"Passo 2\"}}","status":200,"kind":"mock"}
+{"ts":1790739189377,"kind":"scenario","name":"G10"}
+{"ts":1790739189711,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g10/messages","body":"{\"recipient\":{\"id\":\"u-g10\"},\"message\":{\"attachment\":{\"type\":\"template\",\"payload\":{\"template_type\":\"button\",\"text\":\"Confira:\",\"buttons\":[{\"type\":\"web_url\",\"url\":\"http://127.0.0.1:41177/r/nBvpCWn3\",\"title\":\"Abrir\"}]}}}}","status":200,"kind":"mock"}
+{"ts":1790739189983,"kind":"scenario","name":"G11"}
+{"ts":1790739190239,"method":"POST","url":"https://mock-webhook.invalid/hook","body":"{\"event\":\"comment.matched\",\"automationId\":\"auto-g11\",\"channelId\":\"ig-chan-g11\",\"contact\":{\"igUserId\":\"u-g11\",\"username\":\"user_g11\"},\"text\":\"webhook ok user_g11\",\"mediaId\":\"media-g11\",\"ts\":\"2026-09-30T03:33:10.238Z\"}","headers":{"content-type":"application/json","x-autoreels-event":"comment.matched","x-autoreels-signature":"sha256=903a0cf5950c17add2e4f2edbe483620e814ab4404111f5a38afa5a4190522aa"},"status":200,"kind":"notify"}
+{"ts":1790739190468,"kind":"scenario","name":"G12"}
+{"ts":1790739214677,"kind":"scenario","name":"G13"}
+{"ts":1790739214758,"method":"POST","url":"https://graph.instagram.com/v24.0/me/subscribed_apps?subscribed_fields=comments%2Cmessages%2Cmessaging_postbacks","body":"","status":200,"kind":"mock"}
+{"ts":1790739214762,"method":"GET","url":"https://graph.instagram.com/v24.0/me/subscribed_apps","body":"","status":200,"kind":"mock"}
+{"ts":1790739214823,"kind":"scenario","name":"G14"}
+{"ts":1790739215123,"kind":"scenario","name":"G15"}
+{"ts":1790739215268,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g15/messages","body":"{\"recipient\":{\"id\":\"u-g15-1\"},\"message\":{\"text\":\"ok\"}}","status":200,"kind":"mock"}
+{"ts":1790739215379,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g15/messages","body":"{\"recipient\":{\"id\":\"u-g15-2\"},\"message\":{\"text\":\"ok\"}}","status":200,"kind":"mock"}
+{"ts":1790739218095,"kind":"scenario","name":"G12"}

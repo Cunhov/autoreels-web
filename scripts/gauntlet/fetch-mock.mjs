@@ -50,6 +50,7 @@ const MOCK_HOSTS = new Set([
 	"graph.facebook.com",
 	"api.instagram.com",
 	"api.openrouter.ai",
+	"openrouter.ai", // lib/ai.ts OPENROUTER_API_URL (openrouter.ai/api/v1/...)
 	"mock-webhook.invalid",
 ]);
 

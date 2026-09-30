@@ -89,7 +89,8 @@ bash scripts/gauntlet/ig-boot.sh   # db push + build + two phases + G1-G15
   editing `run_at`/`next_run_at` in the DB + `POST /api/cron/automation` (x-cron-auth) —
   no long sleeps. Every call to a mock host that misses all rules (kind `unmatched`)
   fails the scenario with `UNMATCHED_MOCK`.
-- `fetch-mock.mjs` (additive) — `api.openrouter.ai` added to the mock hosts; the
+- `fetch-mock.mjs` (additive) — OpenRouter hosts `openrouter.ai` (current
+  `OPENROUTER_API_URL` in `lib/ai.ts`) and `api.openrouter.ai` added to the mock hosts; the
   `mock-webhook.invalid` branch now records the request `body` and lowercased
   `headers` on `kind:"notify"` rows so G11 can verify the outbound HMAC/payload.
 - `ig-core.mts` — unit checks (61), unchanged: `npx tsx scripts/gauntlet/ig-core.mts`.
