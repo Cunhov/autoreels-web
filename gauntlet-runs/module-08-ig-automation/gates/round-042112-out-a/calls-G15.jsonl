@@ -1,0 +1,2 @@
+{"ts":1790742035225,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g15/messages","body":"{\"recipient\":{\"id\":\"u-g15-1\"},\"message\":{\"text\":\"ok\"}}","status":200,"kind":"mock"}
+{"ts":1790742035338,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g15/messages","body":"{\"recipient\":{\"id\":\"u-g15-2\"},\"message\":{\"text\":\"ok\"}}","status":200,"kind":"mock"}

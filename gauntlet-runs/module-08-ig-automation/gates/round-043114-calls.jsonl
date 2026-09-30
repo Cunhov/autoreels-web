@@ -1,0 +1,44 @@
+{"ts":1790742658803,"kind":"scenario","name":"G1"}
+{"ts":1790742658864,"kind":"scenario","name":"G2"}
+{"ts":1790742659395,"kind":"scenario","name":"G3"}
+{"ts":1790742659968,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g3/messages","body":"{\"recipient\":{\"comment_id\":\"cmp-g3-1\"},\"message\":{\"text\":\"Oi! Te chamei no direct.\"}}","status":200,"kind":"mock"}
+{"ts":1790742660967,"method":"POST","url":"https://graph.instagram.com/v24.0/cmp-g3-1/replies","body":"{\"message\":\"Respondi no seu direct 🚀\"}","status":200,"kind":"mock"}
+{"ts":1790742661220,"kind":"scenario","name":"G4"}
+{"ts":1790742661462,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g4/messages","body":"{\"recipient\":{\"id\":\"u-g4\"},\"message\":{\"text\":\"Olá user_g4!\"}}","status":200,"kind":"mock"}
+{"ts":1790742662122,"kind":"scenario","name":"G5"}
+{"ts":1790742662301,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g5/messages","body":"{\"recipient\":{\"id\":\"u-g5\"},\"message\":{\"text\":\"Preço: R$ 10\"}}","status":200,"kind":"mock"}
+{"ts":1790742662569,"kind":"scenario","name":"G6"}
+{"ts":1790742662870,"kind":"scenario","name":"G7"}
+{"ts":1790742663038,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g7/messages","body":"{\"recipient\":{\"comment_id\":\"cmp-g7-1\"},\"message\":{\"text\":\"B ok\"}}","status":200,"kind":"mock"}
+{"ts":1790742663585,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g7/messages","body":"{\"recipient\":{\"comment_id\":\"cmp-g7-3\"},\"message\":{\"text\":\"A ok\"}}","status":200,"kind":"mock"}
+{"ts":1790742663862,"kind":"scenario","name":"G8"}
+{"ts":1790742664274,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g8/messages","body":"{\"recipient\":{\"comment_id\":\"cmp-g8-1\"},\"message\":{\"text\":\"Creatina — 5g — https://url.test/creatina\"}}","status":200,"kind":"mock"}
+{"ts":1790742664452,"kind":"scenario","name":"G9"}
+{"ts":1790742664818,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g9/messages","body":"{\"recipient\":{\"id\":\"u-g9\"},\"message\":{\"text\":\"Passo 1\"}}","status":200,"kind":"mock"}
+{"ts":1790742665346,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g9/messages","body":"{\"recipient\":{\"id\":\"u-g9\"},\"message\":{\"text\":\"Passo 2\"}}","status":200,"kind":"mock"}
+{"ts":1790742665481,"kind":"scenario","name":"G10"}
+{"ts":1790742665665,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g10/messages","body":"{\"recipient\":{\"id\":\"u-g10\"},\"message\":{\"attachment\":{\"type\":\"template\",\"payload\":{\"template_type\":\"button\",\"text\":\"Confira:\",\"buttons\":[{\"type\":\"web_url\",\"url\":\"http://127.0.0.1:36915/r/ILr8p4ZN\",\"title\":\"Abrir\"}]}}}}","status":200,"kind":"mock"}
+{"ts":1790742666019,"kind":"scenario","name":"G11"}
+{"ts":1790742666282,"method":"POST","url":"https://example.org/hook","body":"{\"event\":\"comment.matched\",\"automationId\":\"auto-g11\",\"channelId\":\"ig-chan-g11\",\"contact\":{\"igUserId\":\"u-g11\",\"username\":\"user_g11\"},\"text\":\"webhook ok user_g11\",\"mediaId\":\"media-g11\",\"ts\":\"2026-09-30T04:31:06.267Z\"}","headers":{"content-type":"application/json","x-autoreels-event":"comment.matched","x-autoreels-signature":"sha256=780658b21525ce78227c6ae674d219c3c40c6401564b32c59b37007b98f8c77c"},"status":200,"kind":"notify"}
+{"ts":1790742666580,"kind":"scenario","name":"G12"}
+{"ts":1790742666808,"method":"POST","url":"https://openrouter.ai/api/v1/chat/completions","body":"{\"model\":\"openai/gpt-4o-mini\",\"messages\":[{\"role\":\"system\",\"content\":\"Você é o atendente virtual de um perfil no Instagram. Responda em português do Brasil, com tom natural, simpático e direto. Seja breve (até 3 frases), sem markdown e sem excesso de emojis. Nunca invente links, preços, prazos ou promessas: se não souber, diga que vai verificar.\"},{\"role\":\"user\",\"content\":\"Contexto da conversa (mais antiga primeiro):\\nContato: @user_g12\\nuser_g12: aciona ia\"},{\"role\":\"user\",\"content\":\"responda a","status":200,"kind":"mock"}
+{"ts":1790742666810,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g12/messages","body":"{\"recipient\":{\"id\":\"u-g12\"},\"message\":{\"text\":\"Olá do mock IA\"}}","status":200,"kind":"mock"}
+{"ts":1790742667123,"kind":"scenario","name":"G13"}
+{"ts":1790742667199,"method":"POST","url":"https://graph.instagram.com/v24.0/me/subscribed_apps?subscribed_fields=comments%2Cmessages%2Cmessaging_postbacks","body":"","status":200,"kind":"mock"}
+{"ts":1790742667201,"method":"GET","url":"https://graph.instagram.com/v24.0/me/subscribed_apps","body":"","status":200,"kind":"mock"}
+{"ts":1790742667272,"kind":"scenario","name":"G14"}
+{"ts":1790742667694,"kind":"scenario","name":"G15"}
+{"ts":1790742667834,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g15/messages","body":"{\"recipient\":{\"id\":\"u-g15-1\"},\"message\":{\"text\":\"ok\"}}","status":200,"kind":"mock"}
+{"ts":1790742667985,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g15/messages","body":"{\"recipient\":{\"id\":\"u-g15-2\"},\"message\":{\"text\":\"ok\"}}","status":200,"kind":"mock"}
+{"ts":1790742668349,"kind":"scenario","name":"G16"}
+{"ts":1790742668824,"kind":"scenario","name":"G17"}
+{"ts":1790742669276,"kind":"scenario","name":"G18"}
+{"ts":1790742669490,"kind":"scenario","name":"G19"}
+{"ts":1790742669946,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g19/messages","body":"{\"recipient\":{\"comment_id\":\"cmp-g19-1\"},\"message\":{\"text\":\"PR g19\"}}","status":200,"kind":"mock"}
+{"ts":1790742670001,"method":"POST","url":"https://graph.instagram.com/v24.0/cmp-g19-1/replies","body":"{\"message\":\"PUB g19\"}","status":200,"kind":"mock"}
+{"ts":1790742670252,"method":"POST","url":"https://example.org/hook","body":"{\"event\":\"action.sent\",\"automationId\":\"auto-g19\",\"channelId\":\"ig-chan-g19\",\"contact\":{\"igUserId\":\"u-g19\",\"username\":\"user_g19\"},\"text\":\"PR g19\",\"mediaId\":null,\"ts\":\"2026-09-30T04:31:09.953Z\"}","headers":{"content-type":"application/json","x-autoreels-event":"action.sent","x-autoreels-signature":"sha256=711b860929b797d44d598c80b2193aa2f690ec6e1af53dd084575676514aee6b"},"status":200,"kind":"notify"}
+{"ts":1790742670273,"method":"POST","url":"https://example.org/hook","body":"{\"event\":\"action.sent\",\"automationId\":\"auto-g19\",\"channelId\":\"ig-chan-g19\",\"contact\":{\"igUserId\":\"u-g19\",\"username\":\"user_g19\"},\"text\":\"PUB g19\",\"mediaId\":null,\"ts\":\"2026-09-30T04:31:10.014Z\"}","headers":{"content-type":"application/json","x-autoreels-event":"action.sent","x-autoreels-signature":"sha256=0ad9d43e792f452b979a47885de7d12c8375f2042a9d6ce558924523b11855bc"},"status":200,"kind":"notify"}
+{"ts":1790742670419,"method":"POST","url":"https://graph.instagram.com/v24.0/acct-g19/messages","body":"{\"recipient\":{\"id\":\"u-g19-seq\"},\"message\":{\"text\":\"Seq g19\"}}","status":200,"kind":"mock"}
+{"ts":1790742670449,"method":"POST","url":"https://example.org/hook","body":"{\"event\":\"action.sent\",\"automationId\":null,\"channelId\":\"ig-chan-g19\",\"contact\":{\"igUserId\":\"u-g19-seq\",\"username\":\"user_g19_seq\"},\"text\":\"Seq g19\",\"mediaId\":null,\"ts\":\"2026-09-30T04:31:10.440Z\"}","headers":{"content-type":"application/json","x-autoreels-event":"action.sent","x-autoreels-signature":"sha256=462cc54ee7fe8a87485ed66b774102c8aba1cdd3fd07ecb86caea18fc00e08fd"},"status":200,"kind":"notify"}
+{"ts":1790742670456,"method":"POST","url":"https://example.org/hook","body":"{\"event\":\"sequence.step\",\"automationId\":null,\"channelId\":\"ig-chan-g19\",\"contact\":{\"igUserId\":\"u-g19-seq\",\"username\":\"user_g19_seq\"},\"text\":null,\"mediaId\":null,\"ts\":\"2026-09-30T04:31:10.441Z\"}","headers":{"content-type":"application/json","x-autoreels-event":"sequence.step","x-autoreels-signature":"sha256=8a79b2ffe5d06b4008ae2e7bebf9b89539d077d722872556156c61a85e608bda"},"status":200,"kind":"notify"}
+{"ts":1790742672586,"kind":"scenario","name":"G12"}

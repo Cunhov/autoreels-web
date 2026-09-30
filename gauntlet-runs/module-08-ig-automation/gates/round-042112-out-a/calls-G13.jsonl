@@ -1,0 +1,2 @@
+{"ts":1790742034815,"method":"POST","url":"https://graph.instagram.com/v24.0/me/subscribed_apps?subscribed_fields=comments%2Cmessages%2Cmessaging_postbacks","body":"","status":200,"kind":"mock"}
+{"ts":1790742034816,"method":"GET","url":"https://graph.instagram.com/v24.0/me/subscribed_apps","body":"","status":200,"kind":"mock"}

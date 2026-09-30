@@ -13,6 +13,7 @@ performance budgets (UI modules). Delivery: local commits on every win; push onl
 | 2 | **Content Library** (ContentLibrary.tsx 2615ln + content-items API + storage/deleteFiles) | `gauntlet-runs/module-02-content/` | pending |
 | 3 | **Planners** (planner-runtime.ts 713ln + PlannerWizard 1134ln + planners API) | `gauntlet-runs/module-03-planners/` | pending |
 | 4 | **Canais + Media + Backup** (instagram OAuth/token lifecycle, ImageEditorModal/trim/thumbnail, backup/restore, insights) | `gauntlet-runs/module-04-channels-media/` | pending |
+| 8 | **IG Automation** (webhook/engine/jobs/sequências/CRM/IA/tracking + migração n8n) | `gauntlet-runs/module-08-ig-automation/` | ✅ done — 19/19 e2e (G1–G19 + fase B) + 61/61 core; evidência em `gates/round-043114-ig-automation.md` |
 
 Live status page: `gauntlet-runs/index.html`.
 

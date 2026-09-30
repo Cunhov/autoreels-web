@@ -1,0 +1,9 @@
+label | verdict | detail
+--- | --- | ---
+G12 | PASS | (sem chave) evento=matched log="OPENROUTER_API_KEY não configurada. Adicione a chave em .env (ve" retryJob=s
+label | verdict | detail
+--- | --- | ---
+G12 | PASS | (sem chave) evento=matched log="OPENROUTER_API_KEY não configurada. Adicione a chave em .env (ve" retryJob=sim openrouterCalls=0 dmCalls=0
+
+TOTAL: 1 cenários, 1 PASS, 0 FAIL (G12 modo: sem chave)
+

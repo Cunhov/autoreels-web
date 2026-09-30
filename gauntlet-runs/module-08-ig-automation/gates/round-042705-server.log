@@ -1,0 +1,19 @@
+▲ Next.js 16.1.6
+- Local:         http://127.0.0.1:38141
+- Network:       http://127.0.0.1:38141
+
+✓ Starting...
+✓ Ready in 97ms
+prisma:error 
+Invalid `prisma.igEvent.create()` invocation:
+
+
+Unique constraint failed on the fields: (`dedupe_key`)
+[next-auth][warn][NEXTAUTH_URL] 
+https://next-auth.js.org/warnings#nextauth_url
+▲ Next.js 16.1.6
+- Local:         http://127.0.0.1:45709
+- Network:       http://127.0.0.1:45709
+
+✓ Starting...
+✓ Ready in 108ms

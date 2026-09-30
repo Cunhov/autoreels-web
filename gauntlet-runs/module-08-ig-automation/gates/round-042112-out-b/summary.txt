@@ -1,0 +1,11 @@
+label | verdict | detail
+--- | --- | ---
+G12 | FAIL | (sem chave) evento=matched log="OPENROUTER_API_KEY não configurada. Adicione a chave em .env (ve" openrouterCalls=0 dmCalls=0
+
+TOTAL: 1 cenários, 0 PASS, 
+label | verdict | detail
+--- | --- | ---
+G12 | FAIL | (sem chave) evento=matched log="OPENROUTER_API_KEY não configurada. Adicione a chave em .env (ve" openrouterCalls=0 dmCalls=0
+
+TOTAL: 1 cenários, 0 PASS, 1 FAIL (G12 modo: sem chave)
+
