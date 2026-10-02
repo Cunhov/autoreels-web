@@ -201,6 +201,7 @@ export default function SimulatorPanel({
                                 Tipo de evento
                             </label>
                             <select
+                                aria-label="Tipo de evento"
                                 value={kind}
                                 onChange={(e) => setKind(e.target.value as IgTrigger)}
                                 className={inputCls}
@@ -214,9 +215,10 @@ export default function SimulatorPanel({
                         </div>
                         <div>
                             <label className="text-xs font-medium text-ios-text mb-1 block">
-                                @username (opcional)
+                                Usuário do Instagram (opcional)
                             </label>
                             <input
+                                aria-label="Usuário do Instagram (opcional)"
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
                                 placeholder="ex.: cliente_teste"
@@ -230,6 +232,7 @@ export default function SimulatorPanel({
                             Texto recebido
                         </label>
                         <textarea
+                            aria-label="Texto recebido"
                             rows={2}
                             value={text}
                             onChange={(e) => setText(e.target.value)}
@@ -245,6 +248,7 @@ export default function SimulatorPanel({
                             </label>
                             {mediaIds.length > 0 ? (
                                 <select
+                                    aria-label="Post para o teste"
                                     value={mediaId}
                                     onChange={(e) => setMediaId(e.target.value)}
                                     className={inputCls}
@@ -258,6 +262,7 @@ export default function SimulatorPanel({
                                 </select>
                             ) : (
                                 <input
+                                    aria-label="ID do post para o teste (opcional)"
                                     value={mediaId}
                                     onChange={(e) => setMediaId(e.target.value)}
                                     placeholder="ID do post"
@@ -270,6 +275,7 @@ export default function SimulatorPanel({
                                 ID do contato no Instagram (opcional)
                             </label>
                             <input
+                                aria-label="ID do contato no Instagram (opcional)"
                                 value={igUserId}
                                 onChange={(e) => setIgUserId(e.target.value)}
                                 placeholder="ID do usuário"

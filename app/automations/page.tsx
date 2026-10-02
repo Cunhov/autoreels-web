@@ -153,7 +153,7 @@ function RulesTab({ onToast }: { onToast: (msg: string, type?: "success" | "erro
             const settings = { ...payload.settings };
             delete settings._profileGroupId;
             await apiFetch<unknown>("/api/automations", { method: "POST", body: JSON.stringify({
-                ...payload, settings, name: `${a.name} (cópia)`, enabled: false,
+                ...payload, settings, name: `${a.name.length > 112 ? a.name.slice(0, 112).trimEnd() : a.name} (cópia)`, enabled: false,
                 channelIds: a.channelIds?.length ? a.channelIds : [a.channelId],
                 mediaIdsByChannel: a.mediaIdsByChannel,
             }) });
