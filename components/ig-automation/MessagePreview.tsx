@@ -20,7 +20,7 @@ export default function MessagePreview({ result, actions, profileLabel }: Props)
                 {tested ? (
                     <p className="text-xs text-ios-text-secondary">{result.matched ? `Regra encontrada: ${result.matched.name}` : "Nenhuma regra correspondeu"}</p>
                 ) : (
-                    <p className="text-xs text-ios-text-secondary">Contato de exemplo: Cliente{profileLabel ? ` · Perfil Instagram: @${profileLabel}` : ""}. Valores de variáveis e catálogo são exemplos; tokens permanecem visíveis.</p>
+                    <p className="text-xs text-ios-text-secondary">Contato de exemplo: Cliente{profileLabel ? ` · Perfil Instagram: ${profileLabel}` : ""}. Execute um teste para preencher as variáveis com os dados do evento.</p>
                 )}
             </div>
             {tested ? (
@@ -40,7 +40,7 @@ export default function MessagePreview({ result, actions, profileLabel }: Props)
                     </article>
                 )) : <p className="text-sm text-ios-text-secondary">As ações configuradas não geram uma mensagem de texto direta.</p>
             )}
-            {!tested && <p className="text-[11px] text-ios-text-secondary">Tokens como {"{{username}}"} e valores do catálogo aparecem como texto literal até o teste.</p>}
+            {!tested && <p className="text-[11px] text-ios-text-secondary">Variáveis como {"{username}"} e informações do catálogo são preenchidas no teste.</p>}
         </section>
     );
 }

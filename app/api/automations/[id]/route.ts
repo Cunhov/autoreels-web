@@ -105,7 +105,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
             desiredIds = [...new Set((body.channelIds as string[]).map((v) => v.trim()))];
             if (desiredIds.length !== body.channelIds.length) return badRequest("Perfis duplicados");
         }
-        if (body.channelId !== undefined && isGroup && body.channelIds !== undefined) {
+        if (body.channelId !== undefined && body.channelIds !== undefined) {
             if (typeof body.channelId !== "string" || !desiredIds.includes(body.channelId.trim())) return badRequest("Canal incompatível com os perfis selecionados");
         } else if (body.channelId !== undefined && !isGroup) {
             if (typeof body.channelId !== "string" || !body.channelId.trim()) return badRequest("Canal inválido");

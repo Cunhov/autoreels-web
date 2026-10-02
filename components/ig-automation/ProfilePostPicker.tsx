@@ -22,6 +22,13 @@ function parsePosts(rows: unknown[]): Post[] {
         thumbnailUrl: String(p.thumbnailUrl ?? ""), permalink: p.permalink ? String(p.permalink) : undefined,
     })).filter(p => p.mediaId);
 }
+function PostThumbnail({ src }: { src: string }) {
+    const [failed, setFailed] = useState(false);
+    useEffect(() => setFailed(false), [src]);
+    return <div className="aspect-square bg-ios-gray-5">{src && !failed
+        ? <img src={src} alt="" loading="lazy" onError={() => setFailed(true)} className="w-full h-full object-cover"/>
+        : <div className="w-full h-full flex items-center justify-center text-xs text-ios-text-secondary">Sem miniatura</div>}</div>;
+}
 export default function ProfilePostPicker({ channels, selectedIds, mediaIdsByChannel, scopeByChannel, onChange, onScopeChange }: Props) {
     const [posts, setPosts] = useState<Post[]>([]);
     const [hasMore, setHasMore] = useState(false);
@@ -86,7 +93,7 @@ export default function ProfilePostPicker({ channels, selectedIds, mediaIdsByCha
             return <div key={id} className="rounded-xl border border-ios-separator p-3 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-sm text-ios-text">{channel ? channelLabel(channel) : id}</p><div className="flex gap-1"><button type="button" onClick={() => setAll(id)} aria-pressed={allFor(id)} className={`min-h-11 px-3 rounded-lg text-sm ${allFor(id) ? "bg-ios-blue/10 text-ios-blue" : "text-ios-text-secondary hover:bg-ios-gray-5"}`}>Todos</button><button type="button" onClick={() => setSelected(id)} aria-pressed={!allFor(id)} className={`min-h-11 px-3 rounded-lg text-sm ${!allFor(id) ? "bg-ios-blue/10 text-ios-blue" : "text-ios-text-secondary hover:bg-ios-gray-5"}`}>Selecionados</button></div></div>
                 {allFor(id) ? <p className="text-xs text-ios-text-secondary">Qualquer post deste perfil pode disparar a regra.</p> : <p className="text-xs text-ios-text-secondary">Selecione ao menos um post. Sem seleção, este perfil não aceitará eventos.</p>}
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">{list.map(p => { const checked = selected.includes(p.mediaId); return <button key={p.mediaId} type="button" onClick={() => toggle(id, p.mediaId)} aria-pressed={checked} className={`text-left rounded-lg border overflow-hidden min-w-0 ${checked ? "border-ios-blue ring-2 ring-ios-blue/30" : "border-ios-separator"}`}><div className="aspect-square bg-ios-gray-5">{p.thumbnailUrl ? <img src={p.thumbnailUrl} alt="" className="w-full h-full object-cover"/> : <div className="w-full h-full flex items-center justify-center text-xs text-ios-text-secondary">Sem miniatura</div>}</div><p className="p-2 text-xs text-ios-text line-clamp-2">{p.caption || p.mediaId}</p><span className="sr-only">{checked ? "Selecionado" : "Não selecionado"}</span></button>; })}</div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">{list.map(p => { const checked = selected.includes(p.mediaId); return <button key={p.mediaId} type="button" onClick={() => toggle(id, p.mediaId)} aria-pressed={checked} className={`text-left rounded-lg border overflow-hidden min-w-0 ${checked ? "border-ios-blue ring-2 ring-ios-blue/30" : "border-ios-separator"}`}><PostThumbnail src={p.thumbnailUrl}/><p className="p-2 text-xs text-ios-text line-clamp-2">{p.caption || p.mediaId}</p><span className="sr-only">{checked ? "Selecionado" : "Não selecionado"}</span></button>; })}</div>
                 {!list.length && !loading && <p className="text-xs text-ios-text-secondary">Nenhum post encontrado para este perfil.</p>}
             </div>;
         })}

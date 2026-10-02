@@ -282,6 +282,7 @@ export default function AutomationEditor({
                 setLegacyTrigger(rawTrigger && !(TRIGGERS as string[]).includes(rawTrigger) ? rawTrigger : "");
                 const rawActions=Array.isArray(source.actions)?source.actions:[];
                 setLegacyActions(rawActions.filter((item):item is Record<string,unknown>=>isRecord(item)&&!(ACTION_TYPES as string[]).includes(asString(item.type))));
+                setRefreshBaseline(true);
                 setName(a.name);
                 setChannelId(a.channelId);
                 setChannelIds(a.channelIds.length ? a.channelIds : [a.channelId].filter(Boolean));
@@ -351,7 +352,7 @@ export default function AutomationEditor({
     useEffect(() => { if (channelIds.length && !channelIds.includes(channelId)) setChannelId(channelIds[0]); }, [channelIds, channelId]);
     useEffect(() => { if (!channelIds.includes(testChannelId)) setTestChannelId(channelIds[0] ?? ""); }, [channelIds, testChannelId]);
     useEffect(() => { let cancelled=false; apiFetch<unknown>("/api/ig/webhook-status").then(raw=>{ if(cancelled)return; const rows=Array.isArray(raw)?raw:(isRecord(raw)&&Array.isArray(raw.channels)?raw.channels:[]); const selected=rows.filter(isRecord).filter((x:any)=>channelIds.includes(String(x.channelId??x.channel_id??""))); const connected=selected.filter((x:any)=>String(x.status??"").toLowerCase()==="ok").length; setWebhookSummary({loading:false,text:selected.length?`${connected} de ${selected.length} perfil(is) com webhook conectado`:"Status de conexão indisponível"}); }).catch(()=>{if(!cancelled)setWebhookSummary({loading:false,text:"Status de conexão indisponível"});}); return()=>{cancelled=true;}; }, [channelIds]);
-    useEffect(()=>{let cancelled=false;apiFetch<unknown>("/api/ig/settings").then(raw=>{if(cancelled)return;const o=isRecord(raw)&&isRecord(raw.settings)?raw.settings:isRecord(raw)?raw:{};setGlobalMode(o.enabled===false?"Automações pausadas no sistema":o.dryRun===true||o.dry_run===true?"Modo de teste global ativo (dry run)":o.dryRun===false||o.dry_run===false?"Modo global de envio real":"Modo global desconhecido");}).catch(()=>{if(!cancelled)setGlobalMode("Modo global desconhecido");});return()=>{cancelled=true;};},[]);
+    useEffect(()=>{let cancelled=false;apiFetch<unknown>("/api/ig/settings").then(raw=>{if(cancelled)return;const o=isRecord(raw)&&isRecord(raw.settings)?raw.settings:isRecord(raw)?raw:{};setGlobalMode(o.enabled===false?"Automações pausadas no sistema":o.dryRun===true||o.dry_run===true?"Modo de teste global ativo":o.dryRun===false||o.dry_run===false?"Modo global de envio real":"Modo global desconhecido");}).catch(()=>{if(!cancelled)setGlobalMode("Modo global desconhecido");});return()=>{cancelled=true;};},[]);
     useEffect(()=>{if(!substanceCatalog&&template!=="catalog")return;let cancelled=false;apiFetch<unknown>("/api/ig/substances").then(raw=>{if(cancelled)return;const list=extractItems(raw,["substances","items"]).map(normalizeSubstance);setCatalogCount(list.filter(item=>item.enabled).length);}).catch(()=>{if(!cancelled)setCatalogCount(null);});return()=>{cancelled=true;};},[substanceCatalog,template]);
     useEffect(()=>{if(savedFingerprint===null&&(!editing||!loading))setSavedFingerprint(formFingerprint);},[savedFingerprint,editing,loading,formFingerprint]);
     useEffect(()=>{if(refreshBaseline){setSavedFingerprint(formFingerprint);setRefreshBaseline(false);}},[refreshBaseline,formFingerprint]);
@@ -365,7 +366,7 @@ export default function AutomationEditor({
         channelIds.forEach(id=>{if(postScopeByChannel[id]==="selected"&&!(mediaIdsByChannel[id]??[]).length)errs.push(`${channelLabel(channels.find(c=>c.id===id)??{id,name:id,platform:"instagram",username:"",accountId:"",status:""})}: selecione ao menos um post ou escolha Todos.`);});
         if (!name.trim()) errs.push("Informe um nome para a automação.");
         if (quietEnabled && (!quietStart || !quietEnd)) {
-            errs.push("Preencha o início e o fim das quiet hours.");
+            errs.push("Preencha o início e o fim do horário de silêncio.");
         }
         if (actions.length === 0 && legacyActions.length === 0) {
             errs.push("Adicione pelo menos uma ação.");
@@ -411,7 +412,7 @@ export default function AutomationEditor({
                     )
                 ) {
                     errs.push(
-                        `${label}: preencha título e link/payload de todos os botões.`,
+                        `${label}: preencha título e link ou código de resposta de todos os botões.`,
                     );
                 }
             }
@@ -549,7 +550,7 @@ export default function AutomationEditor({
     }
 
     return (
-        <div className="space-y-6 pb-28">
+        <fieldset disabled={saving} className="min-w-0 border-0 space-y-6 pb-28">
             <IOSToast
                 message={toast?.msg ?? ""}
                 type={toast?.type}
@@ -581,6 +582,7 @@ export default function AutomationEditor({
             {formErrors.length > 0 && (
                 <div
                     role="alert"
+                    tabIndex={-1}
                     className="p-3 rounded-xl bg-ios-red/10 border border-ios-red/30 text-[13px] text-ios-red space-y-1"
                 >
                     {formErrors.map((e, i) => (
@@ -662,7 +664,7 @@ export default function AutomationEditor({
                                 <Zap size={18} />
                             </div>
                             <h2 className="text-[17px] font-bold text-ios-text">
-                                Gatilho e matching
+                                Quando a automação responde
                             </h2>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -681,7 +683,7 @@ export default function AutomationEditor({
                                     ))}
                                 </select>
                             </Field>
-                            <Field label="Modo de match">
+                            <Field label="Quais palavras devem aparecer">
                                 <select
                                     value={matchMode}
                                     onChange={(e) =>
@@ -702,7 +704,7 @@ export default function AutomationEditor({
                                     ))}
                                 </select>
                             </Field>
-                            <Field label="Tipo de match">
+                            <Field label="Como comparar o texto">
                                 <select
                                     value={matchType}
                                     onChange={(e) =>
@@ -721,19 +723,19 @@ export default function AutomationEditor({
                             </Field>
                         </div>
                         <Field
-                            label="Keywords"
-                            hint="Vazio = responde a qualquer texto. Normalização ignora acentos e maiúsculas."
+                            label="Palavras que ativam a resposta"
+                            hint="Sem palavras, responde a qualquer texto. Não diferencia acentos ou letras maiúsculas."
                         >
                             <KeywordChips
                                 values={keywords}
                                 onChange={setKeywords}
-                                ariaLabel="Keywords da automação"
+                                ariaLabel="Palavras-chave da automação"
                                 placeholder="Ex.: link, quero, preço"
                             />
                         </Field>
                         <Field
                             label="Palavras negativas"
-                            hint="Se qualquer uma casar, a automação não responde."
+                            hint="Se encontrar alguma destas palavras, a automação não responde."
                         >
                             <KeywordChips
                                 values={negatives}
@@ -758,12 +760,12 @@ export default function AutomationEditor({
                                 <Clock size={18} />
                             </div>
                             <h2 className="text-[17px] font-bold text-ios-text">
-                                Cooldown e limites
+                                Intervalos e limites
                             </h2>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <Field
-                                label="Cooldown por contato (horas)"
+                                label="Intervalo por contato (horas)"
                                 hint="Vazio = usa o padrão global."
                             >
                                 <input
@@ -794,7 +796,7 @@ export default function AutomationEditor({
                             </Field>
                         </div>
                         <SwitchRow
-                            label="Quiet hours"
+                            label="Horário de silêncio"
                             hint="Não responde dentro da janela de silêncio."
                             checked={quietEnabled}
                             onChange={setQuietEnabled}
@@ -821,15 +823,16 @@ export default function AutomationEditor({
                                         className={inputCls}
                                     />
                                 </Field>
-                                <Field label="Fuso (tz)">
+                                <Field label="Fuso horário" hint="Escolha uma sugestão ou informe outro fuso.">
                                     <input
                                         value={quietTz}
                                         onChange={(e) =>
                                             setQuietTz(e.target.value)
                                         }
-                                        placeholder="America/Bahia"
+                                        placeholder="America/Bahia" list="automation-timezones"
                                         className={`${inputCls} font-mono`}
                                     />
+                                    <datalist id="automation-timezones"><option value="America/Bahia">Brasília</option><option value="America/Manaus">Manaus</option><option value="America/Rio_Branco">Rio Branco</option><option value="Europe/Lisbon">Lisboa</option><option value="UTC">UTC</option></datalist>
                                 </Field>
                             </div>
                         )}
@@ -905,6 +908,6 @@ export default function AutomationEditor({
                 </div>}
             </div>
             <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-0 md:left-64 md:w-[calc(100%-16rem)] inset-x-0 z-30 border-t border-ios-separator bg-ios-background/95 backdrop-blur p-3 pb-[max(env(safe-area-inset-bottom),0.75rem)]"><div className="max-w-5xl mx-auto flex gap-3"><button type="button" onClick={()=>step===0?leaveEditor():setStep(s=>Math.max(0,s-1))} className="min-h-11 px-4 rounded-xl border border-ios-separator text-sm font-medium text-ios-text">{step===0?"Sair":"Voltar"}</button>{step<4?<button type="button" onClick={()=>{if(step===0&&!name.trim()){setFormErrors(["Informe um nome para a automação."]);return;}if(step===1){if(!channelIds.length){setFormErrors(["Selecione ao menos um perfil do Instagram."]);return;}const noPosts=channelIds.filter(id=>postScopeByChannel[id]==="selected"&&!(mediaIdsByChannel[id]??[]).length).map(id=>`${channelLabel(channels.find(c=>c.id===id)??{id,name:id,platform:"instagram",username:"",accountId:"",status:""})}: selecione um post ou escolha Todos.`);if(noPosts.length){setFormErrors(noPosts);return;}}setFormErrors([]);setStep(s=>Math.min(4,s+1));window.scrollTo({top:0,behavior:"smooth"});}} className="flex-1 min-h-11 rounded-xl bg-ios-blue text-white text-sm font-semibold">Próxima etapa</button>:<button type="button" onClick={()=>save(false)} disabled={saving} className="flex-1 min-h-11 rounded-xl bg-ios-blue text-white text-sm font-semibold disabled:opacity-50">{saving?"Salvando…":"Salvar pausada"}</button>}</div></div>
-        </div>
+        </fieldset>
     );
 }
