@@ -11,6 +11,7 @@ import {
 	Film,
 	MessageSquare,
 	ImagePlus,
+	FolderOpen,
 } from "lucide-react";
 import { useUploadActions } from "@/contexts/UploadContext";
 import {
@@ -23,6 +24,9 @@ import {
 	escapeHtml,
 } from "@/lib/sanitize";
 import IOSSwitch from "@/components/IOSSwitch";
+import ContentLibrary from "@/components/ContentLibrary";
+import { useDialogA11y } from "@/lib/dialog-a11y";
+import { toLocalDateTimeInputValue } from "@/lib/format";
 
 interface Channel {
 	id: string;
@@ -38,6 +42,71 @@ const CAPTION_LIMIT = CAPTION_MAX;
 const DESCRIPTION_LIMIT = DESCRIPTION_MAX;
 const PINNED_LIMIT = PINNED_MAX;
 
+interface LibraryMedia {
+	id: string;
+	name: string;
+	type: string;
+	url: string;
+	thumbnail_url?: string;
+	caption?: string;
+	title?: string;
+	size?: number;
+}
+
+function MediaLibraryPicker({ images, onClose, onChoose }: {
+	images: boolean;
+	onClose: () => void;
+	onChoose: (items: LibraryMedia[]) => void;
+}) {
+	const [ids, setIds] = useState<string[]>([]);
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState("");
+	const dialogRef = useDialogA11y(true, onClose);
+	const requestRef = useRef<AbortController | null>(null);
+	useEffect(() => () => requestRef.current?.abort(), []);
+
+	async function choose() {
+		if (busy || ids.length === 0 || ids.length > (images ? MAX_COMMUNITY_IMAGES : 1)) return;
+		setBusy(true);
+		setError("");
+		const controller = new AbortController();
+		requestRef.current = controller;
+		try {
+			const items = await Promise.all(ids.map(async (id) => {
+				const response = await fetch(`/api/content-items/${encodeURIComponent(id)}`, { signal: controller.signal });
+				if (!response.ok) throw new Error("Não foi possível carregar a mídia selecionada. Tente novamente.");
+				const item = await response.json() as LibraryMedia;
+				const validType = images ? ["image", "carousel_item"].includes(item.type) : item.type === "video";
+				if (!validType || !item.url) throw new Error("Selecione uma mídia compatível com este tipo de publicação.");
+				if (item.size && item.size > (images ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES)) throw new Error("A mídia selecionada excede o limite de tamanho permitido.");
+				return item;
+			}));
+			if (!controller.signal.aborted) onChoose(items);
+		} catch (err) {
+			if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "Falha ao carregar a mídia.");
+		} finally {
+			if (!controller.signal.aborted) setBusy(false);
+		}
+	}
+
+	return (
+		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-3 sm:p-4" onClick={onClose} role="presentation">
+			<div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="media-library-title" tabIndex={-1} onClick={e => e.stopPropagation()} className="bg-ios-card w-full max-w-4xl max-h-[85dvh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+				<div className="p-4 border-b border-ios-separator flex items-start justify-between gap-3 shrink-0">
+					<div className="min-w-0"><h2 id="media-library-title" className="font-semibold text-lg">Escolher da Biblioteca</h2><p className="text-sm text-ios-text-secondary">{images ? "Selecione até 10 imagens." : "Selecione um vídeo."}</p></div>
+					<button type="button" onClick={onClose} aria-label="Fechar seleção de mídia" className="p-3 -m-2 rounded-lg shrink-0"><X size={20} /></button>
+				</div>
+				<div className="flex-1 min-h-0 overflow-y-auto"><ContentLibrary mode="select" disableUrlNavigation allowedTypes={images ? ["image", "carousel_item"] : ["video"]} onSelectionChange={setIds} /></div>
+				<div className="p-4 border-t border-ios-separator shrink-0 space-y-2">
+					{error && <p role="alert" className="text-sm text-ios-red">{error}</p>}
+					{ids.length > (images ? MAX_COMMUNITY_IMAGES : 1) && <p role="alert" className="text-sm text-ios-orange">{images ? "Selecione no máximo 10 imagens." : "Selecione apenas um vídeo."}</p>}
+					<div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="px-4 py-3 rounded-xl text-ios-blue">Cancelar</button><button type="button" disabled={busy || ids.length === 0 || ids.length > (images ? MAX_COMMUNITY_IMAGES : 1)} onClick={choose} className="px-4 py-3 rounded-xl bg-ios-blue text-white font-semibold disabled:opacity-50">{busy ? "Carregando…" : "Usar seleção"}</button></div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
 export default function NewPost() {
 	const router = useRouter();
 	const { data: session } = useSession();
@@ -46,6 +115,9 @@ export default function NewPost() {
 	const [selectedChannel, setSelectedChannel] = useState("");
 	const [scheduledAt, setScheduledAt] = useState("");
 	const [file, setFile] = useState<File | null>(null);
+	const [libraryVideo, setLibraryVideo] = useState<LibraryMedia | null>(null);
+	const [libraryOpen, setLibraryOpen] = useState(false);
+	const [minSchedule, setMinSchedule] = useState("");
 	const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 	const [caption, setCaption] = useState("");
 	const [uploading, setUploading] = useState(false);
@@ -75,9 +147,10 @@ export default function NewPost() {
 	const [ytPinnedComment, setYtPinnedComment] = useState("");
 	// BK-20: CONFIRMACAO VISUAL para PUBLIC (mantém default PUBLIC mas mitiga risco acidental)
 	const [showPublicConfirm, setShowPublicConfirm] = useState(false);
+	const publicConfirmRef = useDialogA11y(showPublicConfirm, () => setShowPublicConfirm(false));
 	// Imagens da Comunidade (até 10)
 	interface CommunityImage {
-		file: File;
+		file?: File;
 		url: string;
 	}
 	const [communityImages, setCommunityImages] = useState<CommunityImage[]>([]);
@@ -99,6 +172,13 @@ export default function NewPost() {
 
 	useEffect(() => {
 		fetchChannels();
+	}, []);
+
+	useEffect(() => {
+		const refresh = () => setMinSchedule(toLocalDateTimeInputValue(new Date().toISOString()));
+		refresh();
+		const timer = setInterval(refresh, 60_000);
+		return () => clearInterval(timer);
 	}, []);
 
 	// Deep link from the calendar: /new?scheduled_at=YYYY-MM-DDTHH:MM pre-fills
@@ -145,8 +225,8 @@ export default function NewPost() {
 			// BK-15: validar MIME e tamanho
 			const isVideo = selected.type.startsWith("video/");
 			const isImage = selected.type.startsWith("image/");
-			if (!isVideo && !isImage && selected.type) {
-				setError(`Tipo de arquivo não suportado: ${selected.type}`);
+			if (isImage || (!isVideo && !/\.(mp4|mov|m4v|webm|mkv)$/i.test(selected.name))) {
+				setError("Selecione um arquivo de vídeo para esta publicação.");
 				e.target.value = "";
 				return;
 			}
@@ -155,15 +235,11 @@ export default function NewPost() {
 				e.target.value = "";
 				return;
 			}
-			// Community image size check also
-			if (isImage && selected.size > MAX_IMAGE_BYTES) {
-				setError(`Imagem excede ${MAX_IMAGE_BYTES / 1024 / 1024}MB`);
-				e.target.value = "";
-				return;
-			}
 		}
 		if (previewUrl) URL.revokeObjectURL(previewUrl);
 		setFile(selected);
+		setLibraryVideo(null);
+		setError("");
 		setPreviewUrl(selected ? URL.createObjectURL(selected) : null);
 		// Reset so selecting the same file again re-triggers onChange
 		e.target.value = "";
@@ -239,21 +315,40 @@ export default function NewPost() {
 		setYoutubeType(next);
 	};
 
+	const chooseLibraryMedia = (items: LibraryMedia[]) => {
+		if (isYoutubeChannel && youtubeType === "community") {
+			const incoming = items.filter(item => !communityImages.some(img => img.url === item.url));
+			const combined = [...communityImages, ...incoming.map(item => ({ url: item.url }))];
+			setCommunityImages(combined.slice(0, MAX_COMMUNITY_IMAGES));
+			setImagesDropped(Math.max(0, combined.length - MAX_COMMUNITY_IMAGES));
+		} else {
+			const item = items[0];
+			if (!item) return;
+			setFile(null);
+			setLibraryVideo(item);
+			setPreviewUrl(item.url);
+			if (!caption.trim() && item.caption) setCaption(item.caption.slice(0, CAPTION_LIMIT));
+			if (!ytTitle.trim()) setYtTitle((item.title || item.name.replace(/\.[^.]+$/, "")).slice(0, YT_TITLE_MAX));
+		}
+		setError("");
+		setLibraryOpen(false);
+	};
+
 	const titleExceeds = ytTitle.length > MAX_TITLE_LENGTH;
 	const canSubmit = useMemo(() => {
 		if (isYoutubeChannel) {
 			if (youtubeType === "short") {
-				return Boolean(file) && ytTitle.trim().length > 0 && !titleExceeds;
+				return Boolean(file || libraryVideo) && ytTitle.trim().length > 0 && !titleExceeds;
 			}
 			// Comunidade do YouTube aceita 0..10 imagens — texto é o único obrigatório.
 			return caption.trim().length > 0;
 		}
-		return Boolean(file);
-	}, [isYoutubeChannel, youtubeType, file, ytTitle, titleExceeds, caption]);
+		return Boolean(file || libraryVideo);
+	}, [isYoutubeChannel, youtubeType, file, libraryVideo, ytTitle, titleExceeds, caption]);
 
 	// Upload the file via the global upload queue (chunked, resumable).
 	// uploadAndWait enqueues the file and resolves when the task finishes.
-	const handleSubmit = async (e: React.FormEvent) => {
+	const handleSubmit = async (e: React.FormEvent, publicConfirmed = false) => {
 		e.preventDefault();
 		if (!canSubmit || uploading) return;
 		// BK-20: CONFIRMACAO VISUAL para PUBLIC — modal antes de enviar (mantém PUBLIC como default)
@@ -261,7 +356,7 @@ export default function NewPost() {
 			isYoutubeChannel &&
 			youtubeType === "short" &&
 			ytPrivacy === "PUBLIC" &&
-			!showPublicConfirm
+			!publicConfirmed
 		) {
 			setShowPublicConfirm(true);
 			return;
@@ -319,20 +414,20 @@ export default function NewPost() {
 				// é exatamente o campo que o publisher lê para montar o multipart.
 				// Sem imagens, o post é SÓ texto (o publisher usa POST /api/post JSON).
 				if (communityImages.length > 0) {
-					const results = await uploadAndWait(
-						communityImages.map((img) => img.file),
-						{ folderId: null },
-					);
-					const urls: string[] = [];
-					for (const r of results) {
+					const uploads = communityImages.flatMap((img, index) => img.file ? [{ file: img.file, index }] : []);
+					const results = uploads.length ? await uploadAndWait(uploads.map(img => img.file), { folderId: null }) : [];
+					const urls = communityImages.map(img => img.url);
+					for (const [index, r] of results.entries()) {
 						if (r.error || !r.item?.url) {
 							throw new Error(r.error || "Falha ao enviar uma das imagens");
 						}
-						urls.push(r.item.url as string);
+						urls[uploads[index].index] = r.item.url as string;
 					}
 					imageUrl = urls[0];
 					childrenUrls = JSON.stringify(urls.map((url) => ({ url, type: "image" })));
 				}
+			} else if (libraryVideo) {
+				videoUrl = libraryVideo.url;
 			} else if (file) {
 				// 1. Upload the file through the global upload queue (root folder)
 				const results = await uploadAndWait([file], { folderId: null });
@@ -435,12 +530,13 @@ export default function NewPost() {
 			<form onSubmit={handleSubmit} className="space-y-6">
 				{/* Canal + tipo de conteúdo YouTube */}
 				<div className="ios-inset-grouped bg-ios-card divide-y divide-ios-separator">
-					<div className="flex items-center justify-between p-4 bg-ios-card">
-						<label className="text-[17px] text-ios-text font-medium flex items-center gap-2">
+					<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 bg-ios-card">
+						<label htmlFor="post-channel" className="text-[17px] text-ios-text font-medium flex items-center gap-2">
 							<Radio size={18} className="text-ios-blue" />
 							Canal
 						</label>
 						<select
+							id="post-channel"
 							title="Canal"
 							value={selectedChannel}
 							onChange={(e) => {
@@ -452,9 +548,9 @@ export default function NewPost() {
 									channels.find((c) => c.id === next)?.platform === "youtube";
 								if (!nextIsYoutube) clearCommunityImages();
 							}}
-							className="bg-transparent text-[17px] text-ios-blue text-right focus:outline-none max-w-[60%]"
+							className="bg-transparent text-[17px] text-ios-blue focus:outline-none min-w-0 w-full sm:w-auto sm:max-w-[60%] py-2"
 						>
-							<option value="">Default Account</option>
+							<option value="">Conta padrão</option>
 							{channels.map((c) => (
 								<option key={c.id} value={c.id}>
 									{c.platform === "youtube" ? "▶ " : ""}
@@ -464,18 +560,19 @@ export default function NewPost() {
 						</select>
 					</div>
 
-					<div className="flex items-center justify-between p-4 bg-ios-card">
-						<label className="text-[17px] text-ios-text font-medium flex items-center gap-2">
+					<div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 bg-ios-card">
+						<label htmlFor="post-schedule" className="text-[17px] text-ios-text font-medium flex items-center gap-2">
 							<CalendarIcon size={18} className="text-ios-blue" />
 							Agendar
 						</label>
 						<input
+							id="post-schedule"
 							title="Agendamento"
 							type="datetime-local"
 							value={scheduledAt}
-							min={new Date().toISOString().slice(0, 16)}
+							min={minSchedule || undefined}
 							onChange={(e) => setScheduledAt(e.target.value)}
-							className="bg-transparent text-[17px] text-ios-blue text-right focus:outline-none"
+							className="bg-transparent text-[17px] text-ios-blue focus:outline-none min-w-0 w-full sm:w-auto py-2"
 						/>
 					</div>
 				</div>
@@ -501,7 +598,7 @@ export default function NewPost() {
 				)}
 
 				{isYoutubeChannel && (
-					<div className="px-4">
+					<div className="px-4 space-y-3">
 						<div className="grid grid-cols-2 gap-2 p-1 bg-ios-separator/50 rounded-xl">
 							<button
 								type="button"
@@ -527,9 +624,9 @@ export default function NewPost() {
 					<div className="px-4">
 						<label
 							htmlFor="file-upload"
-							className={`block w-full aspect-[9/16] max-w-[200px] mx-auto rounded-xl border-2 border-dashed transition-all relative overflow-hidden bg-ios-card ${file ? "border-ios-blue" : "border-ios-separator hover:border-ios-blue/50"}`}
+							className={`block w-full aspect-[9/16] max-w-[200px] mx-auto rounded-xl border-2 border-dashed transition-all relative overflow-hidden bg-ios-card ${file || libraryVideo ? "border-ios-blue" : "border-ios-separator hover:border-ios-blue/50"}`}
 						>
-							{file ? (
+							{file || libraryVideo ? (
 								<div className="w-full h-full bg-black flex items-center justify-center relative">
 									<video
 										key={previewUrl || undefined}
@@ -540,7 +637,7 @@ export default function NewPost() {
 									/>
 									<div className="absolute inset-0 flex items-center justify-center">
 										<span className="text-white text-sm font-medium bg-black/50 px-3 py-1 rounded-full">
-											{file.name}
+											{file?.name || libraryVideo?.name}
 										</span>
 									</div>
 									<button
@@ -549,9 +646,11 @@ export default function NewPost() {
 											e.preventDefault();
 											if (previewUrl) URL.revokeObjectURL(previewUrl);
 											setFile(null);
+											setLibraryVideo(null);
 											setPreviewUrl(null);
 										}}
-										className="absolute top-2 right-2 bg-white/20 backdrop-blur-md p-1 rounded-full text-white"
+										aria-label="Remover vídeo selecionado"
+										className="absolute z-10 top-2 right-2 bg-black/50 backdrop-blur-md p-3 rounded-full text-white"
 									>
 										<X size={16} />
 									</button>
@@ -572,9 +671,10 @@ export default function NewPost() {
 								className="absolute inset-0 opacity-0 cursor-pointer"
 								accept="video/*"
 								onChange={handleFileChange}
-								required={!file && (!isYoutubeChannel || youtubeType === "short")}
+								required={!file && !libraryVideo && (!isYoutubeChannel || youtubeType === "short")}
 							/>
 						</label>
+						<button type="button" onClick={() => setLibraryOpen(true)} className="w-full py-3 flex items-center justify-center gap-2 rounded-xl bg-ios-card text-ios-blue border border-ios-separator font-medium"><FolderOpen size={18} />Escolher da Biblioteca</button>
 					</div>
 				) : (
 					/* Imagens da Comunidade (até 10) */
@@ -608,6 +708,7 @@ export default function NewPost() {
 								descartada(s). Remova uma imagem para adicionar outra.
 							</p>
 						)}
+						<button type="button" onClick={() => setLibraryOpen(true)} className="w-full py-3 flex items-center justify-center gap-2 rounded-xl bg-ios-card text-ios-blue border border-ios-separator font-medium"><FolderOpen size={18} />Escolher imagens da Biblioteca</button>
 						{communityImages.length === 0 && (
 							<p className="text-[11px] text-ios-text-secondary px-1">
 								0 imagens — post somente texto (OK)
@@ -617,27 +718,28 @@ export default function NewPost() {
 							communityImages.length <= MAX_COMMUNITY_IMAGES && (
 								<p className="text-[11px] text-ios-text-secondary px-1">
 									{communityImages.length === 1
-										? "1 imagem — envio multipart"
-										: `${communityImages.length} imagens — envio multipart`}
+										? "1 imagem selecionada"
+										: `${communityImages.length} imagens selecionadas`}
 								</p>
 							)}
 						{communityImages.length > 0 && (
 							<div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
 								{communityImages.map((img, i) => (
 									<div
-										key={`${img.file.name}-${i}`}
+										key={`${img.url}-${i}`}
 										className="relative aspect-square rounded-lg overflow-hidden bg-ios-gray-6 border border-ios-separator"
 									>
 										{/* eslint-disable-next-line @next/next/no-img-element -- preview local de blob URL */}
 										<img
 											src={img.url}
-											alt={img.file.name}
+											alt={img.file?.name || `Imagem ${i + 1} da Biblioteca`}
 											className="w-full h-full object-cover"
 										/>
 										<button
 											type="button"
 											onClick={() => removeCommunityImage(i)}
-											className="absolute top-1 right-1 bg-black/50 backdrop-blur p-0.5 rounded-full text-white"
+											aria-label={`Remover imagem ${i + 1}`}
+											className="absolute top-1 right-1 bg-black/50 backdrop-blur p-2 rounded-full text-white"
 										>
 											<X size={12} />
 										</button>
@@ -819,7 +921,7 @@ export default function NewPost() {
 				</div>
 
 				{error && (
-					<div className="mx-4 p-3 bg-red-50 dark:bg-red-900/20 text-ios-red text-sm rounded-xl text-center">
+					<div role="alert" className="mx-4 p-3 bg-red-50 dark:bg-red-900/20 text-ios-red text-sm rounded-xl text-center">
 						{error}
 					</div>
 				)}
@@ -830,12 +932,11 @@ export default function NewPost() {
 					youtubeType === "short" &&
 					ytPrivacy === "PUBLIC" && (
 						<div
-							className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
-							role="dialog"
-							aria-modal="true"
-							aria-labelledby="public-confirm-title"
+							className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+							role="presentation"
+							onClick={() => setShowPublicConfirm(false)}
 						>
-							<div className="bg-ios-card w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-ios-separator">
+							<div ref={publicConfirmRef} role="dialog" aria-modal="true" aria-labelledby="public-confirm-title" tabIndex={-1} onClick={e => e.stopPropagation()} className="bg-ios-card w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-ios-separator">
 								<div className="p-5 space-y-3">
 									<div className="flex items-center gap-2 text-amber-600">
 										<span className="w-8 h-8 rounded-full bg-amber-400 flex items-center justify-center text-amber-900 font-bold">
@@ -874,11 +975,11 @@ export default function NewPost() {
 												const evt = {
 													preventDefault: () => {},
 												} as unknown as React.FormEvent;
-												handleSubmit(evt);
+												handleSubmit(evt, true);
 											}}
 											className="flex-1 py-2.5 rounded-xl bg-amber-500 text-white font-semibold text-sm"
 										>
-											Confirmar e Publicar
+											{scheduledAt ? "Confirmar agendamento" : "Confirmar e publicar"}
 										</button>
 									</div>
 								</div>
@@ -895,12 +996,13 @@ export default function NewPost() {
 							? "Enviando..."
 							: isYoutubeChannel
 								? youtubeType === "short"
-									? "Agendar Short"
-									: "Agendar post na Comunidade"
-								: "Compartilhar"}
+									? `${scheduledAt ? "Agendar" : "Publicar"} Short`
+									: `${scheduledAt ? "Agendar" : "Publicar"} na Comunidade`
+								: scheduledAt ? "Agendar post" : "Publicar post"}
 					</button>
 				</div>
 			</form>
+			{libraryOpen && <MediaLibraryPicker images={Boolean(isYoutubeChannel && youtubeType === "community")} onClose={() => setLibraryOpen(false)} onChoose={chooseLibraryMedia} />}
 		</div>
 	);
 }
