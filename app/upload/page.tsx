@@ -59,14 +59,14 @@ export default function UploadPage() {
 		globalTotal > 0 ? Math.round((globalSent / globalTotal) * 100) : 0;
 
 	const addTag = useCallback(() => {
-		const parts = tagInput.split(",").map(t=>t.trim().toLowerCase()).filter(Boolean);
-		for (const trimmed of parts) {
-			if (trimmed && !tags.includes(trimmed)) {
-				setTags((prev) => [...prev, trimmed]);
-			}
-		}
+		const parts = tagInput.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+		setTags((previous) => {
+			const next = [...previous];
+			for (const tag of parts) if (!next.includes(tag)) next.push(tag);
+			return next;
+		});
 		setTagInput("");
-	}, [tagInput, tags]);
+	}, [tagInput]);
 
 	const removeTag = (tag: string) => {
 		setTags((prev) => prev.filter((t) => t !== tag));
@@ -138,31 +138,31 @@ export default function UploadPage() {
 			case "completed":
 				return (
 					<span className="flex items-center gap-1 text-ios-green">
-						<CheckCircle2 size={14} /> Completed
+						<CheckCircle2 size={14} /> Concluído
 					</span>
 				);
 			case "error":
 				return (
 					<span className="flex items-center gap-1 text-ios-red">
-						<AlertCircle size={14} /> Failed
+						<AlertCircle size={14} /> Falhou
 					</span>
 				);
 			case "frozen":
 				return (
 					<span className="flex items-center gap-1 text-ios-orange">
-						<RotateCcw size={14} className="animate-spin" /> Retrying
+						<RotateCcw size={14} className="animate-spin" /> Tentando novamente
 					</span>
 				);
 			case "uploading":
 				return (
 					<span className="text-ios-blue animate-pulse">
-						Uploading {task.progress}%
+						Enviando {task.progress}%
 					</span>
 				);
 			case "pending":
-				return <span className="text-ios-text-secondary">Queued</span>;
+				return <span className="text-ios-text-secondary">Na fila</span>;
 			case "canceled":
-				return <span className="text-ios-text-secondary">Canceled</span>;
+				return <span className="text-ios-text-secondary">Cancelado</span>;
 		}
 	};
 
@@ -183,11 +183,11 @@ export default function UploadPage() {
 				<div className="flex items-center justify-between">
 					<div>
 						<h1 className="text-[28px] font-bold tracking-tight text-ios-text">
-							Upload Queue
+							Fila de envios
 						</h1>
 						<p className="text-[15px] text-ios-text-secondary mt-1">
-							{activeTasks} active{activeTasks !== 1 ? "s" : ""} • {frozenTasks}{" "}
-							retrying • {errorTasks} failed • {completedTasks} completed
+							{activeTasks} ativo{activeTasks !== 1 ? "s" : ""} • {frozenTasks}{" "}
+							tentando novamente • {errorTasks} com falha • {completedTasks} concluídos
 						</p>
 					</div>
 					{completedTasks > 0 && (
@@ -195,7 +195,7 @@ export default function UploadPage() {
 							onClick={clearCompleted}
 							className="text-[14px] text-ios-blue font-medium hover:opacity-80 transition-opacity"
 						>
-							Clear Completed
+							Limpar concluídos
 						</button>
 					)}
 				</div>
@@ -205,7 +205,7 @@ export default function UploadPage() {
 					<div className="bg-ios-card dark:bg-[#1C1C1E] border border-ios-separator rounded-2xl p-4 shadow-sm">
 						<div className="flex items-center justify-between mb-2">
 							<span className="text-[13px] font-semibold text-ios-text-secondary uppercase tracking-wider">
-								Queue Progress
+								Progresso da fila
 							</span>
 							<span className="text-[13px] font-semibold text-ios-blue">
 								{globalProgress > 0 ? globalProgress : "0"}% ·{" "}
@@ -242,18 +242,18 @@ export default function UploadPage() {
 								strokeWidth={1.5}
 							/>
 							<h3 className="text-[17px] font-semibold text-ios-text mb-1">
-								{isDragging ? "Drop here" : "Drag & drop files or folders"}
+								{isDragging ? "Solte os arquivos aqui" : "Arraste arquivos ou pastas"}
 							</h3>
 							<p className="text-[14px] text-ios-text-secondary">
-								or{" "}
+								ou{" "}
 								<span className="text-ios-blue font-medium">
-									click to browse
+									escolha no dispositivo
 								</span>{" "}
-								— videos & images up to 1GB
+								— vídeos e imagens de até 1 GB
 							</p>
 							<p className="text-[12px] text-ios-text-secondary mt-2">
-								Folders with 2+ files become carousels · add a .txt for the
-								caption
+								Pastas com 2 ou mais arquivos viram carrosséis · adicione um .txt para a
+								legenda
 							</p>
 						</div>
 						<input
@@ -274,7 +274,7 @@ export default function UploadPage() {
 						<div className="flex items-center gap-2 mb-2">
 							<Tag size={14} className="text-ios-text-secondary" />
 							<span className="text-[13px] font-semibold text-ios-text-secondary uppercase tracking-wider">
-								Tags for next upload
+								Tags dos próximos envios
 							</span>
 						</div>
 						<div className="flex flex-wrap items-center gap-2 mb-3">
@@ -287,7 +287,7 @@ export default function UploadPage() {
 									<button
 										onClick={() => removeTag(tag)}
 										className="hover:text-ios-red transition-colors"
-										title={`Remove tag "${tag}"`}
+										title={`Remover tag "${tag}"`}
 									>
 										<X size={12} />
 									</button>
@@ -300,16 +300,16 @@ export default function UploadPage() {
 								value={tagInput}
 								onChange={(e) => setTagInput(e.target.value)}
 								onKeyDown={handleTagKeyDown}
-								placeholder="Type a tag and press Enter..."
+								placeholder="Digite uma tag e pressione Enter..."
 								className="flex-1 px-3 py-2 text-[14px] bg-ios-background border border-ios-separator rounded-xl text-ios-text placeholder:text-ios-text-secondary/50 focus:outline-none focus:ring-2 focus:ring-ios-blue/30 focus:border-ios-blue transition-all"
 							/>
 							<button
 								onClick={addTag}
 								disabled={!tagInput.trim()}
 								className="px-4 py-2 bg-ios-blue text-white text-[14px] font-medium rounded-xl hover:bg-ios-blue/90 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-1"
-								title="Add tag"
+								title="Adicionar tag"
 							>
-								<Plus size={16} /> Add
+								<Plus size={16} /> Adicionar
 							</button>
 						</div>
 					</div>
@@ -325,10 +325,10 @@ export default function UploadPage() {
 								strokeWidth={1.5}
 							/>
 							<h3 className="text-[17px] font-semibold text-ios-text mb-1">
-								Queue is empty
+								A fila está vazia
 							</h3>
 							<p className="text-[14px]">
-								Drop files above or use the Library to start uploading.
+								Solte arquivos acima ou abra a Biblioteca para começar a enviar.
 							</p>
 						</div>
 					) : (
@@ -422,7 +422,7 @@ export default function UploadPage() {
 												<button
 													onClick={() => retryTask(task.id)}
 													className="w-8 h-8 rounded-full bg-ios-gray-6 flex items-center justify-center text-ios-text hover:bg-ios-gray-5 transition-colors"
-													title="Retry Upload"
+													title="Tentar envio novamente"
 												>
 													<RotateCcw size={16} />
 												</button>
@@ -435,7 +435,7 @@ export default function UploadPage() {
 												<button
 													onClick={() => cancelTask(task.id)}
 													className="w-8 h-8 rounded-full bg-ios-gray-6 flex items-center justify-center text-ios-red hover:bg-ios-red/10 transition-colors"
-													title="Cancel Upload"
+													title="Cancelar envio"
 												>
 													<X size={16} />
 												</button>

@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { Folder, X, ChevronRight, Check } from "lucide-react";
 import IOSButton from "./IOSButton";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 
 interface ContentItem {
     id: string;
@@ -30,6 +31,7 @@ export default function MoveContentModal({
         string | null
     >(null);
     const [moving, setMoving] = useState(false);
+    const dialogRef = useDialogA11y(isOpen, onClose);
 
     // Fetch folders for the current directory level
     useEffect(() => {
@@ -50,7 +52,7 @@ export default function MoveContentModal({
             if (parentId) params.set("parent_id", parentId);
 
             const res = await fetch(`/api/content-items?${params.toString()}`);
-            if (!res.ok) throw new Error("Failed to fetch folders");
+            if (!res.ok) throw new Error("Falha ao carregar as pastas.");
             const json = await res.json();
             const data = json.items || json; // Support both paginated and legacy response
 
@@ -108,30 +110,21 @@ export default function MoveContentModal({
             if (!res.ok) {
                 throw new Error(
                     (json as { error?: string })?.error ||
-                        "Failed to move items",
+                        "Falha ao mover os itens.",
                 );
             }
 
             onMoveComplete();
             onClose();
         } catch (error) {
-            console.error("Move failed:", error);
+            console.error("Falha ao mover:", error);
             alert(
-                error instanceof Error ? error.message : "Failed to move items",
+                error instanceof Error ? error.message : "Falha ao mover os itens.",
             );
         } finally {
             setMoving(false);
         }
     };
-
-    useEffect(() => {
-        if (!isOpen) return;
-        const handler = (e: KeyboardEvent) => {
-            if (e.key === "Escape") onClose();
-        };
-        document.addEventListener("keydown", handler);
-        return () => document.removeEventListener("keydown", handler);
-    }, [isOpen, onClose]);
 
     if (!isOpen) return null;
 
@@ -142,6 +135,7 @@ export default function MoveContentModal({
             onClick={onClose}
         >
             <div
+                ref={dialogRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="move-content-title"
@@ -155,12 +149,12 @@ export default function MoveContentModal({
                         id="move-content-title"
                         className="font-semibold text-lg"
                     >
-                        Move {itemsToMove.length} Item
-                        {itemsToMove.length !== 1 ? "s" : ""}
+                        Mover {itemsToMove.length} {itemsToMove.length !== 1 ? "itens" : "item"}
                     </h3>
                     <button
                         onClick={onClose}
-                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
+                        aria-label="Fechar"
+                        className="min-h-11 min-w-11 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors"
                     >
                         <X size={20} className="text-gray-500" />
                     </button>
@@ -169,10 +163,11 @@ export default function MoveContentModal({
                 {/* Breadcrumbs */}
                 <div className="px-4 py-2 bg-gray-50 dark:bg-zinc-950/50 border-b border-gray-100 dark:border-gray-800 flex items-center overflow-x-auto whitespace-nowrap scrollbar-hide text-sm">
                     <button
+                        type="button"
                         onClick={handleRootClick}
-                        className={`flex items-center hover:text-blue-500 transition-colors ${currentPath.length === 0 ? "font-semibold text-blue-600" : "text-gray-600"}`}
+                        className={`min-h-11 px-2 flex items-center hover:text-blue-500 transition-colors ${currentPath.length === 0 ? "font-semibold text-blue-600" : "text-gray-600"}`}
                     >
-                        Library
+                        Biblioteca
                     </button>
                     {currentPath.map((folder, index) => (
                         <div key={folder.id} className="flex items-center">
@@ -181,6 +176,7 @@ export default function MoveContentModal({
                                 className="text-gray-400 mx-1"
                             />
                             <button
+                                type="button"
                                 onClick={() => {
                                     // Navigate to this specific crumb
                                     const newPath = currentPath.slice(
@@ -191,7 +187,7 @@ export default function MoveContentModal({
                                     fetchFolders(folder.id);
                                     setSelectedDestination(folder.id);
                                 }}
-                                className={`hover:text-blue-500 transition-colors ${index === currentPath.length - 1 ? "font-semibold text-blue-600" : "text-gray-600"}`}
+                                className={`min-h-11 px-2 hover:text-blue-500 transition-colors ${index === currentPath.length - 1 ? "font-semibold text-blue-600" : "text-gray-600"}`}
                             >
                                 {folder.name}
                             </button>
@@ -221,12 +217,12 @@ export default function MoveContentModal({
                                 </div>
                                 <div className="flex-1">
                                     <p className="font-medium text-sm">
-                                        Target:{" "}
+                                        Destino:{" "}
                                         {currentPath.length > 0
                                             ? currentPath[
                                                   currentPath.length - 1
                                               ].name
-                                            : "Root Library"}
+                                            : "Biblioteca (raiz)"}
                                     </p>
                                 </div>
                                 {selectedDestination ===
@@ -242,15 +238,17 @@ export default function MoveContentModal({
 
                             {folders.length === 0 && (
                                 <p className="text-center text-gray-400 py-4 text-sm">
-                                    No subfolders here
+                                    Nenhuma subpasta aqui
                                 </p>
                             )}
 
                             {folders.map((folder) => (
-                                <div
+                                <button
+                                    type="button"
                                     key={folder.id}
                                     onClick={() => handleFolderClick(folder)}
-                                    className="flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl cursor-pointer transition-colors group"
+                                    aria-label={`Abrir pasta ${folder.name} como destino`}
+                                    className="w-full text-left flex items-center gap-3 p-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 rounded-xl transition-colors group"
                                 >
                                     <div className="p-2 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-lg">
                                         <Folder size={20} />
@@ -264,7 +262,7 @@ export default function MoveContentModal({
                                         size={16}
                                         className="text-gray-400 group-hover:text-gray-600"
                                     />
-                                </div>
+                                </button>
                             ))}
                         </div>
                     )}
@@ -278,7 +276,7 @@ export default function MoveContentModal({
                         disabled={moving}
                         className="!py-2 !px-4 text-sm"
                     >
-                        Cancel
+                        Cancelar
                     </IOSButton>
                     <IOSButton
                         variant="primary"
@@ -289,7 +287,7 @@ export default function MoveContentModal({
                         {moving ? (
                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
                         ) : (
-                            "Move Here"
+                            "Mover para cá"
                         )}
                     </IOSButton>
                 </div>

@@ -47,6 +47,7 @@ import EditContentModal from "./EditContentModal";
 import ImageEditorModal from "./ImageEditorModal";
 import ImportUrlModal from "./ImportUrlModal";
 import { Palette } from "lucide-react";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 
 const formatBytes = (bytes: number) => {
 	if (bytes === 0) return "0 B";
@@ -261,6 +262,7 @@ const GridCellInner = ({
 						{item.thumbnail_url ? (
 							<>
 								<img
+									onError={(e) => { e.currentTarget.style.display = "none"; }}
 									src={item.thumbnail_url}
 									loading="lazy"
 									decoding="async"
@@ -294,6 +296,7 @@ const GridCellInner = ({
 						{item.type === "video" ? (
 							item.thumbnail_url ? (
 								<img
+									onError={(e) => { e.currentTarget.style.display = "none"; }}
 									src={item.thumbnail_url}
 									alt={item.name}
 									loading="lazy"
@@ -310,7 +313,8 @@ const GridCellInner = ({
 							)
 						) : (
 							<img
-								src={item.url}
+								onError={(e) => { e.currentTarget.style.display = "none"; }}
+									src={item.url}
 								alt={item.name}
 								loading="lazy"
 								decoding="async"
@@ -348,34 +352,37 @@ const GridCellInner = ({
 								? setInternalFolderId(item.id)
 								: router.push(`/content?folderId=${item.id}`);
 						}}
-						className="absolute bottom-2 left-2 p-1.5 bg-black/50 hover:bg-black/70 backdrop-blur text-white rounded-full shadow-sm transition-all z-20 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
-						title="Open Folder"
+						className="absolute bottom-2 left-2 min-h-11 min-w-11 p-2 bg-black/60 hover:bg-black/80 backdrop-blur text-white rounded-full shadow-sm transition-all z-20"
+						title="Abrir pasta"
 					>
 						<CornerDownRight size={14} />
 					</button>
 				)}
 
 				{/* Bottom Right: Preview Button */}
-				<button
+				{item.type !== "carousel_folder" && <button
 					onClick={(e) => {
 						e.stopPropagation();
-						window.open(item.url, "_blank");
+						const mediaUrl = item.url || item.path;
+						if (mediaUrl) window.open(mediaUrl, "_blank", "noopener,noreferrer");
 					}}
-					className="absolute bottom-2 right-2 p-1.5 bg-black/50 hover:bg-black/70 backdrop-blur text-white rounded-full shadow-sm transition-all z-20 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
-					title="Preview"
+					className="absolute bottom-2 right-2 min-h-11 min-w-11 p-2 bg-black/60 hover:bg-black/80 backdrop-blur text-white rounded-full shadow-sm transition-all z-20"
+					title="Visualizar mídia"
+					aria-label={`Visualizar ${item.name}`}
 				>
 					<Eye size={14} />
-				</button>
+				</button>}
 
 				{/* Hover Actions (Context Menu triggers) */}
-				<div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 translate-x-2 group-hover:translate-x-0 duration-200">
+				{mode === "manage" && <div className="absolute top-2 left-2 flex flex-col gap-1 opacity-100 transition-opacity z-20">
 					<button
 						onClick={(e) => {
 							e.stopPropagation();
 							openEditModal([item]);
 						}}
-						className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-						title="Edit Metadata"
+						className="min-h-11 min-w-11 p-2 bg-white/95 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
+						title="Editar detalhes"
+						aria-label={`Editar detalhes de ${item.name}`}
 					>
 						<Edit2 size={12} />
 					</button>
@@ -385,8 +392,9 @@ const GridCellInner = ({
 								e.stopPropagation();
 								openImageEditor(item);
 							}}
-							className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-purple-500 transition-colors"
-							title="Edit Image"
+							className="min-h-11 min-w-11 p-2 bg-white/95 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-purple-500 transition-colors"
+							title="Editar imagem"
+							aria-label={`Editar imagem ${item.name}`}
 						>
 							<Palette size={12} />
 						</button>
@@ -398,21 +406,23 @@ const GridCellInner = ({
 									e.stopPropagation();
 									openMoveModal([item]);
 								}}
-								className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-								title="Move"
+								className="min-h-11 min-w-11 p-2 bg-white/95 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
+								title="Mover"
+								aria-label={`Mover ${item.name}`}
 							>
 								<Move size={12} />
 							</button>
 							<button
 								onClick={(e) => deleteItem(e, item)}
-								className="p-1.5 bg-white/90 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
-								title="Delete"
+								className="min-h-11 min-w-11 p-2 bg-white/95 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
+								title="Excluir"
+								aria-label={`Excluir ${item.name}`}
 							>
 								<Trash2 size={12} />
 							</button>
 						</>
 					)}
-				</div>
+				</div>}
 			</div>
 		</div>
 	);
@@ -590,7 +600,7 @@ const GridArea = memo(function GridArea(props: GridAreaProps) {
 						onClick={loadMore}
 						className="text-sm text-ios-blue hover:underline"
 					>
-						Load more ({itemsCount} of {totalCount})
+						Carregar mais ({itemsCount} de {totalCount})
 					</button>
 				) : null}
 			</div>
@@ -675,6 +685,9 @@ export default function ContentLibrary({
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	// Abort in-flight content fetches when a newer one starts (prevents stale overwrites)
 	const contentFetchAbortRef = useRef<AbortController | null>(null);
+	const loadMoreAbortRef = useRef<AbortController | null>(null);
+	const contentRequestVersionRef = useRef(0);
+	const activeContentQueryRef = useRef("");
 
 	// Drag-drop items into folders
 	const [draggedItems, setDraggedItems] = useState<string[]>([]);
@@ -691,15 +704,18 @@ export default function ContentLibrary({
 
 	// Create-folder dialog (replaces window.prompt)
 	const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+	const createFolderDialogRef = useDialogA11y(isCreateFolderOpen, () => setIsCreateFolderOpen(false));
 	const [newFolderName, setNewFolderName] = useState("");
 
 	// Bulk move (Select-All) dialog — pick a destination folder server-side
 	const [isBulkMoveOpen, setIsBulkMoveOpen] = useState(false);
+	const bulkMoveDialogRef = useDialogA11y(isBulkMoveOpen, () => setIsBulkMoveOpen(false));
 	const [bulkMoveTarget, setBulkMoveTarget] = useState<string | null>(null);
 	const [moveFolders, setMoveFolders] = useState<ContentItem[]>([]);
 
 	// Bulk rename modal
 	const [isBulkRenameOpen, setIsBulkRenameOpen] = useState(false);
+	const bulkRenameDialogRef = useDialogA11y(isBulkRenameOpen, () => setIsBulkRenameOpen(false));
 	const [bulkRenamePrefix, setBulkRenamePrefix] = useState("");
 	const [selectionOrder, setSelectionOrder] = useState<string[]>([]);
 
@@ -820,6 +836,9 @@ export default function ContentLibrary({
 			sortBy,
 		],
 	);
+	// Updated during render, before effects abort requests, so a response that
+	// races a folder/filter navigation can detect the newly active query.
+	activeContentQueryRef.current = buildQueryParams(currentFolderId, 0).toString();
 
 	// Fetch current folder details and its ancestors for Breadcrumbs
 	useEffect(() => {
@@ -863,8 +882,12 @@ export default function ContentLibrary({
 
 	const fetchContent = useCallback(
 		async (folderId: string | null, opts?: { keepSelection?: boolean }) => {
+			const requestVersion = ++contentRequestVersionRef.current;
 			// Abort any in-flight request from a previous navigation/filter change
 			contentFetchAbortRef.current?.abort();
+			loadMoreAbortRef.current?.abort();
+			loadMoreAbortRef.current = null;
+			setLoadingMore(false);
 			const controller = new AbortController();
 			contentFetchAbortRef.current = controller;
 			const keepSelection = opts?.keepSelection ?? false;
@@ -887,7 +910,7 @@ export default function ContentLibrary({
 				const data = json.items || json;
 
 				// Ignore responses from requests that were superseded
-				if (controller.signal.aborted) return;
+				if (controller.signal.aborted || requestVersion !== contentRequestVersionRef.current) return;
 
 				setItems((data as ContentItem[]).map(normalizeItem));
 				// When keepSelection is true we intentionally do NOT prune the
@@ -909,8 +932,8 @@ export default function ContentLibrary({
 					"Não foi possível carregar a biblioteca. Verifique sua conexão.",
 				);
 			} finally {
-				setLoading(false);
 				if (contentFetchAbortRef.current === controller) {
+					setLoading(false);
 					contentFetchAbortRef.current = null;
 				}
 			}
@@ -920,28 +943,37 @@ export default function ContentLibrary({
 
 	const loadMore = useCallback(async () => {
 		if (loadingMore || !hasMore) return;
+		const requestVersion = contentRequestVersionRef.current;
+		const queryAtStart = buildQueryParams(currentFolderId, currentOffset).toString();
+		const queryKeyAtStart = buildQueryParams(currentFolderId, 0).toString();
+		const controller = new AbortController();
+		loadMoreAbortRef.current?.abort();
+		loadMoreAbortRef.current = controller;
 		setLoadingMore(true);
-		// Capture the folder at request time so a navigation mid-flight is ignored
-		const folderAtStart = currentFolderId;
 		try {
 			const res = await fetch(
-				`/api/content-items?${buildQueryParams(currentFolderId, currentOffset).toString()}`,
+				`/api/content-items?${queryAtStart}`,
+				{ signal: controller.signal },
 			);
 			if (!res.ok) throw new Error("Failed to fetch more items");
 			const json = await res.json();
 			const data = json.items || json;
 
-			// Stale response after navigating away — discard it
-			if (folderAtStart !== currentFolderId) return;
+			// Discard results from an earlier folder, filter, search, or sort query.
+			if (controller.signal.aborted || requestVersion !== contentRequestVersionRef.current || queryKeyAtStart !== activeContentQueryRef.current) return;
 
 			setItems((prev) => [...prev, ...(data as ContentItem[]).map(normalizeItem)]);
 			setTotalCount(json.totalCount ?? items.length + data.length);
 			setHasMore(json.hasMore ?? false);
 			setCurrentOffset((prev) => prev + PAGE_SIZE);
 		} catch (error) {
+			if ((error as { name?: string })?.name === "AbortError") return;
 			console.error("Error loading more content:", error);
 		} finally {
-			setLoadingMore(false);
+			if (loadMoreAbortRef.current === controller) {
+				loadMoreAbortRef.current = null;
+				setLoadingMore(false);
+			}
 		}
 	}, [
 		loadingMore,
@@ -1144,14 +1176,14 @@ export default function ContentLibrary({
 					});
 				}
 				setToast({
-					msg: `Moved ${draggedItems.length} item(s)`,
+								msg: `${draggedItems.length} ${draggedItems.length === 1 ? "item movido" : "itens movidos"}`,
 					type: "success",
 					show: true,
 				});
 				fetchContent(currentFolderId, { keepSelection: true });
 			} catch (error) {
 				console.error("Move failed:", error);
-				setToast({ msg: "Failed to move items", type: "error", show: true });
+				setToast({ msg: "Não foi possível mover os itens.", type: "error", show: true });
 			}
 			setDraggedItems([]);
 		},
@@ -1234,7 +1266,7 @@ export default function ContentLibrary({
 			if (!res.ok) throw new Error("Bulk rename failed");
 			const result = await res.json();
 			setToast({
-				msg: `Renamed ${result.affected} items`,
+				msg: `${result.affected} itens renomeados`,
 				type: "success",
 				show: true,
 			});
@@ -1246,7 +1278,7 @@ export default function ContentLibrary({
 			fetchContent(currentFolderId, { keepSelection: true });
 		} catch (error) {
 			console.error("Rename failed:", error);
-			setToast({ msg: "Failed to rename items", type: "error", show: true });
+			setToast({ msg: "Não foi possível renomear os itens.", type: "error", show: true });
 		} finally {
 			setBulkLoading(false);
 		}
@@ -1264,8 +1296,8 @@ export default function ContentLibrary({
 			e.stopPropagation();
 			const message =
 				item.type === "carousel_folder"
-					? `Delete folder "${item.name}" and ALL its contents? This cannot be undone.`
-					: "Delete this item?";
+					? `Excluir a pasta "${item.name}" e todo o seu conteúdo? Esta ação não pode ser desfeita.`
+					: "Excluir este item?";
 
 			if (!confirm(message)) return;
 
@@ -1275,10 +1307,10 @@ export default function ContentLibrary({
 				// If we deleted selected items, cleanup
 				setSelectedIds((prev) => prev.filter((id) => id !== item.id));
 				setSelectionOrder((prev) => prev.filter((id) => id !== item.id));
-				setToast({ msg: "Item deleted", type: "success", show: true });
+				setToast({ msg: "Item excluído.", type: "success", show: true });
 			} catch (error) {
 				console.error("Delete failed:", error);
-				setToast({ msg: "Failed to delete item", type: "error", show: true });
+				setToast({ msg: "Não foi possível excluir o item.", type: "error", show: true });
 			}
 		},
 		[currentFolderId, fetchContent],
@@ -1464,7 +1496,7 @@ export default function ContentLibrary({
 			setSelectAllServer(true);
 		} catch {
 			setToast({
-				msg: "Failed to select all items",
+				msg: "Não foi possível selecionar todos os itens.",
 				type: "error",
 				show: true,
 			});
@@ -1509,8 +1541,8 @@ export default function ContentLibrary({
 
 		const message =
 			descendants > 0
-				? `Delete ${count} items and ${descendants} nested contents? This cannot be undone.`
-				: `Delete ${count} items? This cannot be undone.`;
+				? `Excluir ${count} itens e mais ${descendants} conteúdos dentro das pastas? Esta ação não pode ser desfeita.`
+				: `Excluir ${count} itens? Esta ação não pode ser desfeita.`;
 		if (!confirm(message)) return;
 		try {
 			setBulkLoading(true);
@@ -1536,8 +1568,8 @@ export default function ContentLibrary({
 			setToast({
 				msg:
 					result.descendants > 0
-						? `Deleted ${result.affected} items and ${result.descendants} nested contents`
-						: `Deleted ${result.affected} items`,
+						? `${result.affected} itens excluídos e mais ${result.descendants} dentro das pastas`
+						: `${result.affected} itens excluídos`,
 				type: "success",
 				show: true,
 			});
@@ -1547,7 +1579,7 @@ export default function ContentLibrary({
 			fetchContent(currentFolderId, { keepSelection: true });
 		} catch (error) {
 			console.error("Bulk delete failed:", error);
-			setToast({ msg: "Failed to delete items", type: "error", show: true });
+			setToast({ msg: "Não foi possível excluir os itens.", type: "error", show: true });
 		} finally {
 			setBulkLoading(false);
 		}
@@ -1607,7 +1639,7 @@ export default function ContentLibrary({
 			if (!res.ok) throw new Error("Bulk move failed");
 			const result = await res.json();
 			setToast({
-				msg: `Moved ${result.affected} items`,
+				msg: `${result.affected} itens movidos`,
 				type: "success",
 				show: true,
 			});
@@ -1619,7 +1651,7 @@ export default function ContentLibrary({
 			fetchContent(currentFolderId);
 		} catch (error) {
 			console.error("Bulk move failed:", error);
-			setToast({ msg: "Failed to move items", type: "error", show: true });
+			setToast({ msg: "Não foi possível mover os itens.", type: "error", show: true });
 		} finally {
 			setBulkLoading(false);
 		}
@@ -1710,7 +1742,7 @@ export default function ContentLibrary({
 									}
 									className="hover:bg-black/5 p-1 rounded-md text-ios-secondary hover:text-ios-text transition-colors"
 								>
-									Library
+									Biblioteca
 								</button>
 								{folderPath.map((item) => (
 									<div key={item.id} className="flex items-center">
@@ -1733,7 +1765,7 @@ export default function ContentLibrary({
 								))}
 							</div>
 						) : (
-							<h2 className="text-xl font-bold text-ios-text">Library</h2>
+							<h2 className="text-xl font-bold text-ios-text">Biblioteca</h2>
 						)}
 					</div>
 
@@ -1743,14 +1775,14 @@ export default function ContentLibrary({
 						<select
 							value={sortBy}
 							onChange={(e) => setSortBy(e.target.value as SortOption)}
-							title="Sort order"
-							aria-label="Sort order"
+							title="Ordenar por"
+							aria-label="Ordenar por"
 							className="text-xs bg-ios-card border border-ios-separator rounded-lg px-2 py-1.5 focus:border-ios-blue outline-none"
 						>
 							<option value="name-asc">A→Z</option>
 							<option value="name-desc">Z→A</option>
-							<option value="created-asc">Oldest</option>
-							<option value="created-desc">Newest</option>
+							<option value="created-asc">Mais antigos</option>
+							<option value="created-desc">Mais recentes</option>
 						</select>
 
 						{/* Select All / Deselect All Toggle */}
@@ -1765,21 +1797,21 @@ export default function ContentLibrary({
 									}`}
 								>
 									{selectAllServer
-										? `Deselect All`
+										? `Desmarcar todos`
 										: sortedItems.every((i) => selectedIds.includes(i.id))
-											? "Deselect All"
-											: `Select All`}
+											? "Desmarcar página"
+											: `Selecionar página`}
 								</button>
 								{totalCount > items.length && !selectAllServer && (
 									<button
 										onClick={handleSelectAllServer}
 										disabled={selectAllLoading}
-										title="Select every item matching the current filters (including items not loaded yet)"
+										title="Selecionar todos os itens encontrados pelos filtros, inclusive os que ainda não foram carregados"
 										className="text-xs font-semibold px-3 py-1.5 rounded-lg border bg-amber-50 border-amber-300 text-amber-700 hover:bg-amber-100 transition-all disabled:opacity-60"
 									>
 										{selectAllLoading
-											? "Selecting…"
-											: `Select All ${totalCount}`}
+											? "Selecionando…"
+											: `Selecionar todos (${totalCount})`}
 									</button>
 								)}
 							</div>
@@ -1788,21 +1820,21 @@ export default function ContentLibrary({
 						{/* Selection Actions */}
 						{selectedIds.length > 0 && mode === "manage" && (
 							<div className="flex items-center gap-1 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded-lg border border-blue-100 dark:border-blue-900/30">
-								<span className="text-xs font-semibold text-ios-blue mr-1">
-									{selectedIds.length} selected
+										<span className="text-xs font-semibold text-ios-blue mr-1">
+											{selectedIds.length} selecionados
 								</span>
 								{/* Bulk Rename Button */}
 								<button
 									onClick={() => setIsBulkRenameOpen(true)}
 									className="p-1 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-ios-blue"
-									title="Rename in Order"
+									title="Renomear em ordem"
 								>
 									<TextCursorInput size={14} />
 								</button>
 								<button
 									onClick={openBulkMove}
 									className="p-1 hover:bg-blue-200 dark:hover:bg-blue-800 rounded text-ios-blue"
-									title="Move Selected"
+									title="Mover selecionados"
 								>
 									<Move size={14} />
 								</button>
@@ -1810,7 +1842,7 @@ export default function ContentLibrary({
 									onClick={handleBulkDelete}
 									disabled={bulkLoading}
 									className="p-1 hover:bg-red-100 dark:hover:bg-red-900/30 rounded text-red-500 disabled:opacity-50"
-									title="Delete Selected"
+									title="Excluir selecionados"
 								>
 									{bulkLoading ? (
 										<div className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-red-500" />
@@ -1830,33 +1862,33 @@ export default function ContentLibrary({
 								}
 								className="!py-1.5 !px-3 text-sm flex items-center gap-1"
 							>
-								<Edit2 size={14} /> Edit
+				<Edit2 size={14} /> Editar
 							</IOSButton>
 						)}
 
-						<IOSButton
+						{mode === "manage" && <IOSButton
 							variant="secondary"
 							onClick={() => setIsCreateFolderOpen(true)}
 							className="!py-1.5 !px-3 text-sm flex items-center gap-1"
 						>
-							<Plus size={16} /> Folder
-						</IOSButton>
+							<Plus size={16} /> Pasta
+						</IOSButton>}
 
-						<IOSButton
+						{mode === "manage" && <IOSButton
 							variant="secondary"
 							onClick={() => setIsImportModalOpen(true)}
 							className="!py-1.5 !px-3 text-sm flex items-center gap-1"
 						>
-							<Globe size={16} /> Import
-						</IOSButton>
+							<Globe size={16} /> Importar
+						</IOSButton>}
 
-						<div className="relative">
+						{mode === "manage" && <div className="relative">
 							<IOSButton
 								variant="primary"
 								onClick={() => fileInputRef.current?.click()}
 								className="!py-1.5 !px-3 text-sm flex items-center gap-1"
 							>
-								<Upload size={16} /> Upload
+								<Upload size={16} /> Enviar
 							</IOSButton>
 							<input
 								ref={fileInputRef}
@@ -1870,7 +1902,7 @@ export default function ContentLibrary({
 									e.target.value = "";
 								}}
 							/>
-						</div>
+						</div>}
 					</div>
 				</div>
 
@@ -1883,7 +1915,7 @@ export default function ContentLibrary({
 						/>
 						<input
 							type="text"
-							placeholder="Search name, caption, tags..."
+							placeholder="Buscar por nome, legenda ou tags..."
 							value={search}
 							onChange={(e) => setSearch(e.target.value)}
 							className="w-full bg-ios-card/50 border border-ios-separator rounded-xl py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-1 focus:ring-ios-blue transition-all"
@@ -1895,7 +1927,7 @@ export default function ContentLibrary({
 						<span className="text-xs text-ios-secondary bg-ios-card border border-ios-separator px-2.5 py-2 rounded-xl whitespace-nowrap">
 							{selectedIds.length > 0
 								? `${selectedIds.length} / ${totalCount}`
-								: `${totalCount} items`}
+								: `${totalCount} itens`}
 						</span>
 					)}
 
@@ -1910,14 +1942,14 @@ export default function ContentLibrary({
 						<button
 							onClick={() => setViewMode("grid")}
 							className={`p-1.5 rounded-lg transition-colors ${viewMode === "grid" ? "bg-ios-blue text-white shadow-sm" : "text-ios-secondary hover:text-ios-text"}`}
-							title="Grid View"
+							title="Visualização em grade"
 						>
 							<GridIcon size={16} />
 						</button>
 						<button
 							onClick={() => setViewMode("list")}
 							className={`p-1.5 rounded-lg transition-colors ${viewMode === "list" ? "bg-ios-blue text-white shadow-sm" : "text-ios-secondary hover:text-ios-text"}`}
-							title="List View"
+							title="Visualização em lista"
 						>
 							<ListIcon size={16} />
 						</button>
@@ -1929,7 +1961,7 @@ export default function ContentLibrary({
 					<div className="animate-in slide-in-from-top-2 fade-in duration-200 bg-ios-card/50 border border-ios-separator rounded-xl p-4 space-y-4">
 						<div>
 							<span className="text-xs font-medium text-ios-secondary uppercase tracking-wide mb-2 block">
-								Include Tags
+								Incluir tags
 							</span>
 							<div className="flex flex-wrap gap-2">
 								{allTags.map((tag) => (
@@ -1950,20 +1982,20 @@ export default function ContentLibrary({
 									</button>
 								))}
 								{allTags.length === 0 && (
-									<span className="text-xs text-gray-400">No tags found.</span>
+									<span className="text-xs text-gray-400">Nenhuma tag encontrada.</span>
 								)}
 							</div>
 						</div>
 
 						<div>
 							<span className="text-xs font-medium text-ios-secondary uppercase tracking-wide mb-2 block">
-								Content Type
+								Tipo de conteúdo
 							</span>
 							<div className="flex flex-wrap gap-2">
 								{[
-									{ id: "carousel_folder", label: "Folders / Carousels" },
-									{ id: "image", label: "Images" },
-									{ id: "video", label: "Videos" },
+									{ id: "carousel_folder", label: "Pastas / Carrosséis" },
+									{ id: "image", label: "Imagens" },
+									{ id: "video", label: "Vídeos" },
 								].map((type) => (
 									<button
 										key={type.id}
@@ -1986,7 +2018,7 @@ export default function ContentLibrary({
 
 						<div>
 							<span className="text-xs font-medium text-ios-secondary uppercase tracking-wide mb-2 block">
-								Exclude Tags
+								Excluir tags
 							</span>
 							<div className="flex flex-wrap gap-2">
 								{allTags.map((tag) => (
@@ -2016,7 +2048,7 @@ export default function ContentLibrary({
 			{isDragActive && (
 				<div className="absolute inset-0 bg-ios-blue/10 border-2 border-dashed border-ios-blue z-50 flex items-center justify-center backdrop-blur-sm m-4 rounded-xl pointer-events-none">
 					<p className="text-ios-blue font-bold text-lg bg-white/80 dark:bg-black/50 px-6 py-3 rounded-full shadow-sm">
-						Drop to upload here
+						Solte os arquivos aqui para enviar
 					</p>
 				</div>
 			)}
@@ -2026,7 +2058,7 @@ export default function ContentLibrary({
 			{selectAllServer && (
 				<div className="mx-4 mt-2 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl flex items-center justify-between">
 					<span className="text-sm font-medium text-amber-800 dark:text-amber-200">
-						All {totalCount} items in this folder are selected
+						Todos os {totalCount} itens encontrados pelos filtros estão selecionados
 					</span>
 					<button
 						onClick={() => {
@@ -2036,7 +2068,7 @@ export default function ContentLibrary({
 						}}
 						className="text-xs font-semibold text-amber-700 hover:text-amber-900 underline"
 					>
-						Clear selection
+						Limpar seleção
 					</button>
 				</div>
 			)}
@@ -2080,12 +2112,12 @@ export default function ContentLibrary({
 						</div>
 						<div>
 							<p className="font-medium text-lg">
-								{debouncedSearch ? "Nenhum item encontrado" : "Current folder is empty"}
+								{debouncedSearch ? "Nenhum item encontrado" : "Esta pasta está vazia"}
 							</p>
 							<p className="text-sm mt-1 opacity-70">
 								{debouncedSearch
 									? `Nada corresponde a "${debouncedSearch}". Tente outro termo ou limpe a busca.`
-									: "Drag and drop files or create a new folder."}
+									: "Arraste arquivos para cá ou crie uma pasta."}
 							</p>
 						</div>
 						<div className="flex gap-2 mt-2">
@@ -2116,13 +2148,13 @@ export default function ContentLibrary({
 												e.stopPropagation();
 												handleSelectAll();
 											}}
-											className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
+											className={`min-h-11 min-w-11 rounded border-2 flex items-center justify-center transition-all ${
 												sortedItems.length > 0 &&
 												sortedItems.every((i) => selectedIds.includes(i.id))
 													? "bg-ios-blue border-ios-blue text-white"
 													: "border-ios-separator hover:border-ios-blue"
 											}`}
-											title="Select / Deselect All"
+											title="Selecionar ou desmarcar página"
 										>
 											{sortedItems.length > 0 &&
 												sortedItems.every((i) => selectedIds.includes(i.id)) && (
@@ -2138,7 +2170,7 @@ export default function ContentLibrary({
 										}
 									>
 										<div className="flex items-center gap-1">
-											Name
+											Nome
 											{sortBy.startsWith("name") && (
 												<span className="text-ios-blue">
 													{sortBy === "name-asc" ? "↑" : "↓"}
@@ -2150,19 +2182,19 @@ export default function ContentLibrary({
 										scope="col"
 										className="px-3 py-3 text-left text-xs font-semibold text-ios-secondary uppercase tracking-wider hidden sm:table-cell"
 									>
-										Type
+										Tipo
 									</th>
 									<th
 										scope="col"
 										className="px-3 py-3 text-left text-xs font-semibold text-ios-secondary uppercase tracking-wider hidden md:table-cell"
 									>
-										Size
+										Tamanho
 									</th>
 									<th
 										scope="col"
 										className="px-3 py-3 text-left text-xs font-semibold text-ios-secondary uppercase tracking-wider hidden lg:table-cell"
 									>
-										Duration
+										Duração
 									</th>
 									<th
 										scope="col"
@@ -2174,7 +2206,7 @@ export default function ContentLibrary({
 										}
 									>
 										<div className="flex items-center gap-1">
-											Date
+										Data
 											{sortBy.startsWith("created") && (
 												<span className="text-ios-blue">
 													{sortBy === "created-asc" ? "↑" : "↓"}
@@ -2186,7 +2218,7 @@ export default function ContentLibrary({
 										scope="col"
 										className="px-3 py-3 text-right text-xs font-semibold text-ios-secondary uppercase tracking-wider"
 									>
-										Actions
+										Ações
 									</th>
 								</tr>
 							</thead>
@@ -2243,7 +2275,8 @@ export default function ContentLibrary({
 															item.thumbnail_url ? (
 																<>
 																	<img
-																		src={item.thumbnail_url}
+																		onError={(e) => { e.currentTarget.style.display = "none"; }}
+									src={item.thumbnail_url}
 																		loading="lazy"
 																		decoding="async"
 																		className="w-full h-full object-cover opacity-80"
@@ -2262,7 +2295,8 @@ export default function ContentLibrary({
 																	loading="lazy"
 																	decoding="async"
 																	className="w-full h-full object-cover"
-																	src={item.thumbnail_url}
+																	onError={(e) => { e.currentTarget.style.display = "none"; }}
+									src={item.thumbnail_url}
 																	alt=""
 																/>
 															) : (
@@ -2276,7 +2310,8 @@ export default function ContentLibrary({
 																loading="lazy"
 																decoding="async"
 																className="w-full h-full object-cover"
-																src={item.url}
+																onError={(e) => { e.currentTarget.style.display = "none"; }}
+									src={item.url}
 																alt=""
 															/>
 														)}
@@ -2330,10 +2365,10 @@ export default function ContentLibrary({
 													}`}
 												>
 													{item.type === "carousel_folder"
-														? "Carousel"
+									? "Carrossel"
 														: item.type === "video"
-															? "Video"
-															: "Image"}
+										? "Vídeo"
+										: "Imagem"}
 												</span>
 											</td>
 
@@ -2353,11 +2388,14 @@ export default function ContentLibrary({
 
 											{/* Date */}
 											<td className="px-3 py-2.5 whitespace-nowrap text-xs text-ios-secondary hidden xl:table-cell">
-												{new Date(item.created_at).toLocaleDateString("pt-BR", {
-													day: "2-digit",
-													month: "short",
-													year: "2-digit",
-												})}
+								{new Date(item.created_at).toLocaleString("pt-BR", {
+									day: "2-digit",
+									month: "short",
+								year: "2-digit",
+									hour: "2-digit",
+									minute: "2-digit",
+									hour12: false,
+								})}
 											</td>
 
 											{/* Actions */}
@@ -2372,8 +2410,9 @@ export default function ContentLibrary({
 																e.stopPropagation();
 																openEditModal([item]);
 															}}
-															className="p-1.5 rounded-lg text-ios-secondary hover:text-ios-blue hover:bg-ios-blue/10 transition-colors"
-															title="Edit metadata"
+											className="min-h-11 min-w-11 p-2 rounded-lg text-ios-secondary hover:text-ios-blue hover:bg-ios-blue/10 transition-colors"
+											title="Editar detalhes"
+											aria-label={`Editar detalhes de ${item.name}`}
 														>
 															<Edit2 size={15} />
 														</button>
@@ -2383,8 +2422,9 @@ export default function ContentLibrary({
 																	e.stopPropagation();
 																	openImageEditor(item);
 																}}
-																className="p-1.5 rounded-lg text-ios-secondary hover:text-violet-500 hover:bg-violet-500/10 transition-colors"
-																title="Edit image"
+											className="min-h-11 min-w-11 p-2 rounded-lg text-ios-secondary hover:text-violet-500 hover:bg-violet-500/10 transition-colors"
+											title="Editar imagem"
+											aria-label={`Editar imagem ${item.name}`}
 															>
 																<Palette size={15} />
 															</button>
@@ -2394,15 +2434,17 @@ export default function ContentLibrary({
 																e.stopPropagation();
 																openMoveModal([item]);
 															}}
-															className="p-1.5 rounded-lg text-ios-secondary hover:text-ios-blue hover:bg-ios-blue/10 transition-colors"
-															title="Move"
+											className="min-h-11 min-w-11 p-2 rounded-lg text-ios-secondary hover:text-ios-blue hover:bg-ios-blue/10 transition-colors"
+											title="Mover"
+											aria-label={`Mover ${item.name}`}
 														>
 															<Move size={15} />
 														</button>
 														<button
 															onClick={(e) => deleteItem(e, item)}
-															className="p-1.5 rounded-lg text-ios-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors"
-															title="Delete"
+										className="min-h-11 min-w-11 p-2 rounded-lg text-ios-secondary hover:text-red-500 hover:bg-red-500/10 transition-colors"
+										title="Excluir"
+										aria-label={`Excluir ${item.name}`}
 														>
 															<Trash2 size={15} />
 														</button>
@@ -2438,19 +2480,19 @@ export default function ContentLibrary({
 						{(loadingMore || (hasMore && !loadingMore)) && (
 							<div className="border-t border-ios-separator/50 px-4 py-3 flex items-center justify-between bg-ios-background/50">
 								<span className="text-xs text-ios-secondary">
-									Showing {items.length} of {totalCount} items
+									Exibindo {items.length} de {totalCount} itens
 								</span>
 								{loadingMore ? (
 									<div className="flex items-center gap-2 text-xs text-ios-secondary">
 										<div className="animate-spin rounded-full h-4 w-4 border-b-2 border-ios-blue" />
-										Loading…
+										Carregando…
 									</div>
 								) : (
 									<button
 										onClick={loadMore}
 										className="text-xs font-semibold text-ios-blue hover:underline px-3 py-1.5 rounded-lg hover:bg-ios-blue/5 transition-colors"
 									>
-										Load more
+										Carregar mais
 									</button>
 								)}
 							</div>
@@ -2543,15 +2585,14 @@ export default function ContentLibrary({
 			{/* Bulk Rename Modal */}
 			{isBulkRenameOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={()=>setIsBulkRenameOpen(false)}>
-					<div role="dialog" aria-modal="true" aria-labelledby="bulk-rename-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl max-h-[85dvh] overflow-y-auto">
+					<div ref={bulkRenameDialogRef} role="dialog" aria-modal="true" aria-labelledby="bulk-rename-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl max-h-[85dvh] overflow-y-auto">
 						<h3 id="bulk-rename-title" className="text-lg font-semibold text-ios-text mb-4">
-							Rename {selectAllServer ? totalCount : selectionOrder.length} Items in
-							Order
+							Renomear {selectAllServer ? totalCount : selectionOrder.length} itens em ordem
 						</h3>
 						<p className="text-sm text-ios-secondary mb-4">
 							{selectAllServer
 								? `Todos os ${totalCount} itens (com os filtros atuais) serão renomeados como:`
-								: "Items will be renamed as:"}{" "}
+								: "Os itens serão renomeados assim:"}{" "}
 							<code className="bg-ios-background px-2 py-1 rounded">prefix_001</code>,{" "}
 							<code className="bg-ios-background px-2 py-1 rounded">prefix_002</code>,
 							etc.
@@ -2560,7 +2601,7 @@ export default function ContentLibrary({
 							type="text"
 							value={bulkRenamePrefix}
 							onChange={(e) => setBulkRenamePrefix(e.target.value)}
-							placeholder="Enter prefix (e.g., slide)"
+							placeholder="Prefixo (ex.: slide)"
 							className="w-full bg-ios-background border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue mb-4"
 							autoFocus
 						/>
@@ -2572,14 +2613,14 @@ export default function ContentLibrary({
 									setBulkRenamePrefix("");
 								}}
 							>
-								Cancel
+								Cancelar
 							</IOSButton>
 							<IOSButton
 								variant="primary"
 								onClick={handleBulkRename}
 								disabled={!bulkRenamePrefix.trim()}
 							>
-								Rename
+								Renomear
 							</IOSButton>
 						</div>
 					</div>
@@ -2589,7 +2630,7 @@ export default function ContentLibrary({
 			{/* Create Folder Dialog (replaces window.prompt) */}
 			{isCreateFolderOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={()=>setIsCreateFolderOpen(false)}>
-					<div role="dialog" aria-modal="true" aria-labelledby="create-folder-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl max-h-[85dvh] overflow-y-auto">
+					<div ref={createFolderDialogRef} role="dialog" aria-modal="true" aria-labelledby="create-folder-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl max-h-[85dvh] overflow-y-auto">
 						<h3 id="create-folder-title" className="text-lg font-semibold text-ios-text mb-4">Nova pasta</h3>
 						<input
 							type="text"
@@ -2627,7 +2668,7 @@ export default function ContentLibrary({
 			{/* Bulk Move Dialog (Select-All destination picker) */}
 			{isBulkMoveOpen && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={()=>setIsBulkMoveOpen(false)}>
-					<div role="dialog" aria-modal="true" aria-labelledby="bulk-move-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto">
+					<div ref={bulkMoveDialogRef} role="dialog" aria-modal="true" aria-labelledby="bulk-move-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl p-6 shadow-2xl flex flex-col max-h-[85dvh] overflow-y-auto">
 						<h3 id="bulk-move-title" className="text-lg font-semibold text-ios-text mb-1">
 							Mover {totalCount} itens
 						</h3>

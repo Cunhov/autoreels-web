@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { X, Globe, Folder, ChevronRight, Check } from 'lucide-react';
 import IOSButton from './IOSButton';
+import { useDialogA11y } from '@/lib/dialog-a11y';
 
 interface FolderItem {
     id: string;
@@ -25,6 +26,7 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
     const [selectedFolderId, setSelectedFolderId] = useState<string | null>(currentFolderId);
     const [importing, setImporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const dialogRef = useDialogA11y(true, onClose);
 
     // Fetch folders for the current directory level (same pattern as MoveContentModal)
     async function fetchFolders(parentId: string | null) {
@@ -45,8 +47,42 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
     }
 
     useEffect(() => {
-        setSelectedFolderId(currentFolderId);
-        fetchFolders(null);
+        let cancelled = false;
+        const loadCurrentFolder = async () => {
+            setSelectedFolderId(currentFolderId);
+            if (currentFolderId) {
+                try {
+                    const path: FolderItem[] = [];
+                    let id: string | null = currentFolderId;
+                    while (id && path.length < 20) {
+                        const res = await fetch(`/api/content-items/${id}`);
+                        if (!res.ok) break;
+                        const folder = await res.json() as FolderItem;
+                        path.unshift(folder);
+                        id = folder.parent_id || null;
+                    }
+                    if (!cancelled && path[path.length - 1]?.id === currentFolderId) {
+                        setCurrentPath(path);
+                        await fetchFolders(currentFolderId);
+                    } else if (!cancelled) {
+                        setSelectedFolderId(null);
+                        setCurrentPath([]);
+                        await fetchFolders(null);
+                    }
+                } catch {
+                    if (!cancelled) {
+                        setSelectedFolderId(null);
+                        setCurrentPath([]);
+                        await fetchFolders(null);
+                    }
+                }
+            } else {
+                setCurrentPath([]);
+                await fetchFolders(null);
+            }
+        };
+        void loadCurrentFolder();
+        return () => { cancelled = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -95,14 +131,14 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200" role="presentation" onClick={onClose}>
-            <div role="dialog" aria-modal="true" aria-labelledby="import-url-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-2xl shadow-2xl flex flex-col max-h-[85dvh] overflow-hidden">
+            <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="import-url-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-white dark:bg-zinc-900 w-full max-w-md rounded-2xl shadow-2xl flex flex-col max-h-[85dvh] overflow-hidden">
                 {/* Header */}
                 <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
                     <h3 id="import-url-title" className="font-semibold text-lg flex items-center gap-2">
                         <Globe size={18} className="text-blue-500" />
                         Importar de URL
                     </h3>
-                    <button onClick={onClose} className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
+                    <button onClick={onClose} aria-label="Fechar" className="min-h-11 min-w-11 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full transition-colors">
                         <X size={20} className="text-gray-500" />
                     </button>
                 </div>
@@ -149,9 +185,9 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
                         <div className="bg-gray-50 dark:bg-zinc-950/50 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden">
                             {/* Breadcrumbs */}
                             <div className="px-3 py-2 border-b border-gray-100 dark:border-gray-800 flex items-center overflow-x-auto whitespace-nowrap scrollbar-hide text-sm">
-                                <button
+                                <button type="button"
                                     onClick={handleRootClick}
-                                    className={`flex items-center hover:text-blue-500 transition-colors ${currentPath.length === 0 ? 'font-semibold text-blue-600' : 'text-gray-600'}`}
+                                    className={`min-h-11 px-2 flex items-center hover:text-blue-500 transition-colors ${currentPath.length === 0 ? 'font-semibold text-blue-600' : 'text-gray-600'}`}
                                 >
                                     Biblioteca
                                 </button>

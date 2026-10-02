@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import IOSButton from "./IOSButton";
 import { escapeHtml, CAPTION_MAX, FIRST_COMMENT_MAX } from "@/lib/sanitize";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 
 interface ContentItem {
 	id: string;
@@ -102,6 +103,7 @@ export default function EditContentModal({
 	const [videoMsgType, setVideoMsgType] = useState<"success" | "error">(
 		"success",
 	);
+	const dialogRef = useDialogA11y(isOpen, onClose);
 
 	const isBulk = itemsToEdit.length > 1;
 	const singleItem = isBulk ? null : (itemsToEdit[0] ?? null);
@@ -391,15 +393,6 @@ export default function EditContentModal({
 		}
 	};
 
-	useEffect(() => {
-		if (!isOpen) return;
-		const h = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onClose();
-		};
-		document.addEventListener("keydown", h);
-		return () => document.removeEventListener("keydown", h);
-	}, [isOpen, onClose]);
-
 	if (!isOpen) return null;
 
 	return (
@@ -409,6 +402,7 @@ export default function EditContentModal({
 			onClick={onClose}
 		>
 			<div
+				ref={dialogRef}
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="edit-content-title"
@@ -428,7 +422,8 @@ export default function EditContentModal({
 					</div>
 					<button
 						onClick={onClose}
-						className="p-1 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-gray-500 transition-colors"
+						aria-label="Fechar"
+						className="min-h-11 min-w-11 p-2 rounded-full hover:bg-black/5 dark:hover:bg-white/10 text-gray-500 transition-colors"
 					>
 						<X size={20} />
 					</button>

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { getCroppedImg } from "@/lib/utils";
 import FabricCanvas from "./FabricCanvas";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 
 interface ImageEditorModalProps {
     imageUrl: string;
@@ -40,6 +41,7 @@ export default function ImageEditorModal({
         null,
     );
     const [activeTool, setActiveTool] = useState<EditorTool>("crop");
+    const dialogRef = useDialogA11y(isOpen, onClose);
 
     // Fabric state
     const fabricCanvasRef = useRef<fabric.Canvas | null>(null);
@@ -245,15 +247,6 @@ export default function ImageEditorModal({
         }
     }, [activeTool, currentImage, handleApplyCrop, onSave, onClose]);
 
-    useEffect(() => {
-        if (!isOpen) return;
-        const h = (e: KeyboardEvent) => {
-            if (e.key === "Escape") onClose();
-        };
-        document.addEventListener("keydown", h);
-        return () => document.removeEventListener("keydown", h);
-    }, [isOpen, onClose]);
-
     if (!isOpen) return null;
 
     return (
@@ -264,6 +257,7 @@ export default function ImageEditorModal({
         >
             {/* Main Editor Area */}
             <div
+                ref={dialogRef}
                 role="dialog"
                 aria-modal="true"
                 aria-label="Editor de imagem"
@@ -275,7 +269,7 @@ export default function ImageEditorModal({
                 <div className="h-16 flex items-center justify-between px-4 bg-black/50 backdrop-blur-md border-b border-white/10 z-10">
                     <button
                         onClick={onClose}
-                        className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                        aria-label="Fechar editor" className="min-h-11 min-w-11 p-2 hover:bg-white/10 rounded-full transition-colors"
                     >
                         <X className="text-white" />
                     </button>
@@ -283,7 +277,8 @@ export default function ImageEditorModal({
                         <button
                             onClick={handleUndo}
                             disabled={historyIndex <= 0}
-                            className={`p-2 rounded-full transition-colors ${historyIndex > 0 ? "hover:bg-white/10 text-white" : "text-white/30 cursor-not-allowed"}`}
+                            aria-label="Desfazer"
+                            className={`min-h-11 min-w-11 p-2 rounded-full transition-colors ${historyIndex > 0 ? "hover:bg-white/10 text-white" : "text-white/30 cursor-not-allowed"}`}
                         >
                             <Undo size={20} />
                         </button>
@@ -291,9 +286,9 @@ export default function ImageEditorModal({
                     </div>
                     <button
                         onClick={handleSave}
-                        className="px-4 py-2 bg-white text-black font-semibold rounded-full hover:bg-gray-200 transition-colors"
+                        className="min-h-11 px-4 py-2 bg-white text-black font-semibold rounded-full hover:bg-gray-200 transition-colors"
                     >
-                        Save
+                        Salvar
                     </button>
                 </div>
 
@@ -338,7 +333,7 @@ export default function ImageEditorModal({
                                     className="text-xs font-bold text-ios-blue p-2 bg-white/10 rounded ml-2"
                                     onClick={handleApplyCrop}
                                 >
-                                    Apply Crop
+                                    Aplicar corte
                                 </button>
                             </div>
                         </div>
@@ -367,7 +362,7 @@ export default function ImageEditorModal({
                         >
                             <Crop size={24} />
                         </div>
-                        <span className="text-[10px] font-medium">Crop</span>
+                        <span className="text-[10px] font-medium">Cortar</span>
                     </button>
 
                     <button
@@ -379,7 +374,7 @@ export default function ImageEditorModal({
                         >
                             <Pen size={24} />
                         </div>
-                        <span className="text-[10px] font-medium">Draw</span>
+                        <span className="text-[10px] font-medium">Desenhar</span>
                     </button>
 
                     <button
@@ -391,7 +386,7 @@ export default function ImageEditorModal({
                         >
                             <Type size={24} />
                         </div>
-                        <span className="text-[10px] font-medium">Text</span>
+                        <span className="text-[10px] font-medium">Texto</span>
                     </button>
                 </div>
             </div>
