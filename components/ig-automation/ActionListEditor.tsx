@@ -36,9 +36,9 @@ function FieldLabel({
 }) {
     return (
         <div className="mb-1">
-            <label className="text-xs font-medium text-ios-text block">
+            <p className="text-xs font-medium text-ios-text block">
                 {children}
-            </label>
+            </p>
             {hint && (
                 <p className="text-[11px] text-ios-text-secondary">{hint}</p>
             )}
@@ -161,6 +161,7 @@ export default function ActionListEditor({
                             <div>
                                 <FieldLabel>Tipo</FieldLabel>
                                 <select
+                                    aria-label={`${itemNoun} ${index + 1}: tipo`}
                                     value={action.type}
                                     disabled={disabled}
                                     onChange={(e) => {
@@ -201,6 +202,7 @@ export default function ActionListEditor({
                                 </FieldLabel>
                                 <input
                                     type="number"
+                                    aria-label={`${itemNoun} ${index + 1}: atraso em segundos`}
                                     min={0}
                                     value={action.delaySeconds}
                                     disabled={disabled}
@@ -225,6 +227,7 @@ export default function ActionListEditor({
                                 </FieldLabel>
                                 <textarea
                                     rows={3}
+                                    aria-label={`${itemNoun} ${index + 1}: variações de texto`}
                                     value={action.textVariants.join("\n")}
                                     disabled={disabled}
                                     onChange={(e) =>
@@ -260,6 +263,7 @@ export default function ActionListEditor({
                                 </FieldLabel>
                                 <input
                                     type="url"
+                                    aria-label={`${itemNoun} ${index + 1}: URL da mídia`}
                                     value={action.mediaUrl}
                                     disabled={disabled}
                                     onChange={(e) =>
@@ -281,6 +285,7 @@ export default function ActionListEditor({
                                 </FieldLabel>
                                 <textarea
                                     rows={3}
+                                    aria-label={`${itemNoun} ${index + 1}: prompt da IA`}
                                     value={action.aiPrompt}
                                     disabled={disabled}
                                     onChange={(e) =>
@@ -439,7 +444,7 @@ export default function ActionListEditor({
                                             />
                                         )}
                                         {buttonType === "web_url" && (
-                                            <label className="flex items-center justify-between gap-2 text-[12px] text-ios-text-secondary">
+                                            <div className="flex items-center justify-between gap-2 text-[12px] text-ios-text-secondary">
                                                 <span>
                                                     Rastrear cliques (UTM)
                                                 </span>
@@ -464,7 +469,7 @@ export default function ActionListEditor({
                                                         })
                                                     }
                                                 />
-                                            </label>
+                                            </div>
                                         )}
                                     </div>
                                     );
@@ -598,6 +603,7 @@ export default function ActionListEditor({
                                     Tag aplicada ao contato
                                 </FieldLabel>
                                 <input
+                                    aria-label={`${itemNoun} ${index + 1}: tag aplicada ao contato`}
                                     value={action.tag}
                                     disabled={disabled}
                                     onChange={(e) =>
@@ -616,6 +622,7 @@ export default function ActionListEditor({
                                     Sequência a iniciar
                                 </FieldLabel>
                                 <select
+                                    aria-label={`${itemNoun} ${index + 1}: sequência a iniciar`}
                                     value={action.sequenceId}
                                     disabled={disabled}
                                     onChange={(e) =>
@@ -649,6 +656,7 @@ export default function ActionListEditor({
                                     Webhook de saída
                                 </FieldLabel>
                                 <select
+                                    aria-label={`${itemNoun} ${index + 1}: webhook de saída`}
                                     value={action.webhookId}
                                     disabled={disabled}
                                     onChange={(e) =>

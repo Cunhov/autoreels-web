@@ -317,10 +317,11 @@ export default function SequenceEditor() {
                             <IOSCard className="p-5 space-y-4">
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div>
-                                        <label className="text-xs font-medium text-ios-text mb-1 block">
+                                        <label htmlFor="sequence-name" className="text-xs font-medium text-ios-text mb-1 block">
                                             Nome *
                                         </label>
                                         <input
+                                            id="sequence-name"
                                             value={form.name}
                                             onChange={(e) =>
                                                 setForm({
@@ -333,10 +334,11 @@ export default function SequenceEditor() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="text-xs font-medium text-ios-text mb-1 block">
+                                        <label htmlFor="sequence-channel" className="text-xs font-medium text-ios-text mb-1 block">
                                             Canal *
                                         </label>
                                         <select
+                                            id="sequence-channel"
                                             value={form.channelId}
                                             onChange={(e) =>
                                                 setForm({

@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useId, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -63,12 +63,24 @@ function Field({
     hint?: string;
     children: React.ReactNode;
 }) {
+    const id = useId();
+    const nativeControl = isValidElement<{ id?: string }>(children) && typeof children.type === "string";
+    const controlId = nativeControl && isValidElement<{ id?: string }>(children)
+        ? children.props.id ?? id
+        : undefined;
+    const control = nativeControl && isValidElement<{ id?: string }>(children)
+        ? cloneElement(children, { id: controlId })
+        : children;
     return (
         <div>
-            <label className="text-xs font-medium text-ios-text mb-1 block">
-                {label}
-            </label>
-            {children}
+            {nativeControl ? (
+                <label htmlFor={controlId} className="text-xs font-medium text-ios-text mb-1 block">
+                    {label}
+                </label>
+            ) : (
+                <p className="text-xs font-medium text-ios-text mb-1">{label}</p>
+            )}
+            {control}
             {hint && (
                 <p className="text-[11px] text-ios-text-secondary mt-1">
                     {hint}

@@ -15,6 +15,7 @@ import IOSButton from "@/components/IOSButton";
 import IOSCard from "@/components/IOSComponents";
 import IOSSwitch from "@/components/IOSSwitch";
 import IOSToast from "@/components/IOSToast";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 import KeywordChips from "./KeywordChips";
 import type { IgSubstance } from "./types";
 import { ApiError, apiFetch, extractItems, isRecord, normalizeSubstance } from "./types";
@@ -66,6 +67,7 @@ export default function SubstanceManager() {
     const [error, setError] = useState("");
     const [search, setSearch] = useState("");
     const [modalOpen, setModalOpen] = useState(false);
+    const dialogRef = useDialogA11y(modalOpen, () => setModalOpen(false));
     const [editingId, setEditingId] = useState<string | null>(null);
     const [form, setForm] = useState<FormState>(emptyForm);
     const [saving, setSaving] = useState(false);
@@ -515,6 +517,8 @@ export default function SubstanceManager() {
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="substance-modal-title"
+                        tabIndex={-1}
+                        ref={dialogRef}
                         onClick={(e) => e.stopPropagation()}
                         className="bg-ios-card w-full max-w-lg max-h-[85dvh] rounded-3xl shadow-2xl flex flex-col overflow-hidden"
                     >
@@ -539,11 +543,13 @@ export default function SubstanceManager() {
                         <div className="flex-1 overflow-y-auto p-4 space-y-3">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
-                                    <label className="text-xs font-medium text-ios-text mb-1 block">
+                                    <label htmlFor="substance-keyword" className="text-xs font-medium text-ios-text mb-1 block">
                                         Palavra-chave *
                                     </label>
                                     <input
+                                        id="substance-keyword"
                                         value={form.keyword}
+                                        data-autofocus
                                         onChange={(e) =>
                                             setForm({
                                                 ...form,
@@ -555,10 +561,11 @@ export default function SubstanceManager() {
                                     />
                                 </div>
                                 <div>
-                                    <label className="text-xs font-medium text-ios-text mb-1 block">
+                                    <label htmlFor="substance-name" className="text-xs font-medium text-ios-text mb-1 block">
                                         Nome *
                                     </label>
                                     <input
+                                        id="substance-name"
                                         value={form.name}
                                         onChange={(e) =>
                                             setForm({
@@ -572,9 +579,9 @@ export default function SubstanceManager() {
                                 </div>
                             </div>
                             <div>
-                                <label className="text-xs font-medium text-ios-text mb-1 block">
+                                <p className="text-xs font-medium text-ios-text mb-1">
                                     Sinônimos (keywords)
-                                </label>
+                                </p>
                                 <KeywordChips
                                     values={form.keywords}
                                     onChange={(keywords) =>
@@ -585,11 +592,12 @@ export default function SubstanceManager() {
                                 />
                             </div>
                             <div>
-                                <label className="text-xs font-medium text-ios-text mb-1 block">
+                                <label htmlFor="substance-description" className="text-xs font-medium text-ios-text mb-1 block">
                                     Descrição
                                 </label>
                                 <textarea
                                     rows={2}
+                                    id="substance-description"
                                     value={form.description}
                                     onChange={(e) =>
                                         setForm({
@@ -602,10 +610,11 @@ export default function SubstanceManager() {
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
-                                    <label className="text-xs font-medium text-ios-text mb-1 block">
+                                    <label htmlFor="substance-action" className="text-xs font-medium text-ios-text mb-1 block">
                                         Ação
                                     </label>
                                     <input
+                                        id="substance-action"
                                         value={form.action}
                                         onChange={(e) =>
                                             setForm({
@@ -617,10 +626,11 @@ export default function SubstanceManager() {
                                     />
                                 </div>
                                 <div>
-                                    <label className="text-xs font-medium text-ios-text mb-1 block">
+                                    <label htmlFor="substance-dosage" className="text-xs font-medium text-ios-text mb-1 block">
                                         Dosagem
                                     </label>
                                     <input
+                                        id="substance-dosage"
                                         value={form.dosage}
                                         onChange={(e) =>
                                             setForm({
@@ -634,10 +644,11 @@ export default function SubstanceManager() {
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                 <div>
-                                    <label className="text-xs font-medium text-ios-text mb-1 block">
+                                    <label htmlFor="substance-duration" className="text-xs font-medium text-ios-text mb-1 block">
                                         Duração
                                     </label>
                                     <input
+                                        id="substance-duration"
                                         value={form.duration}
                                         onChange={(e) =>
                                             setForm({
@@ -649,11 +660,12 @@ export default function SubstanceManager() {
                                     />
                                 </div>
                                 <div>
-                                    <label className="text-xs font-medium text-ios-text mb-1 block">
+                                    <label htmlFor="substance-url" className="text-xs font-medium text-ios-text mb-1 block">
                                         URL
                                     </label>
                                     <input
                                         type="url"
+                                        id="substance-url"
                                         value={form.url}
                                         onChange={(e) =>
                                             setForm({

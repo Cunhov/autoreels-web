@@ -21,6 +21,7 @@ import IOSButton from "@/components/IOSButton";
 import IOSCard from "@/components/IOSComponents";
 import IOSSwitch from "@/components/IOSSwitch";
 import IOSToast from "@/components/IOSToast";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 import type {
     ChannelLite,
     IgOutboundWebhook,
@@ -651,6 +652,7 @@ export function OutboundWebhooksPanel() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [modalOpen, setModalOpen] = useState(false);
+    const dialogRef = useDialogA11y(modalOpen, () => setModalOpen(false));
     const [editingId, setEditingId] = useState<string | null>(null);
     const [form, setForm] = useState<OutboundForm>(emptyOutbound);
     const [saving, setSaving] = useState(false);
@@ -915,6 +917,8 @@ export function OutboundWebhooksPanel() {
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="outbound-modal-title"
+                        tabIndex={-1}
+                        ref={dialogRef}
                         onClick={(e) => e.stopPropagation()}
                         className="bg-ios-card w-full max-w-lg max-h-[85dvh] rounded-3xl shadow-2xl flex flex-col overflow-hidden"
                     >
@@ -938,11 +942,13 @@ export function OutboundWebhooksPanel() {
                         </div>
                         <div className="flex-1 overflow-y-auto p-4 space-y-3">
                             <div>
-                                <label className="text-xs font-medium text-ios-text mb-1 block">
+                                <label htmlFor="outbound-name" className="text-xs font-medium text-ios-text mb-1 block">
                                     Nome *
                                 </label>
                                 <input
                                     value={form.name}
+                                    id="outbound-name"
+                                    data-autofocus
                                     onChange={(e) =>
                                         setForm({
                                             ...form,
@@ -954,11 +960,12 @@ export function OutboundWebhooksPanel() {
                                 />
                             </div>
                             <div>
-                                <label className="text-xs font-medium text-ios-text mb-1 block">
+                                <label htmlFor="outbound-url" className="text-xs font-medium text-ios-text mb-1 block">
                                     URL *
                                 </label>
                                 <input
                                     type="url"
+                                    id="outbound-url"
                                     value={form.url}
                                     onChange={(e) =>
                                         setForm({
@@ -971,11 +978,12 @@ export function OutboundWebhooksPanel() {
                                 />
                             </div>
                             <div>
-                                <label className="text-xs font-medium text-ios-text mb-1 block">
+                                <label htmlFor="outbound-secret" className="text-xs font-medium text-ios-text mb-1 block">
                                     Segredo (HMAC)
                                 </label>
                                 <input
                                     type="password"
+                                    id="outbound-secret"
                                     value={form.secret}
                                     onChange={(e) =>
                                         setForm({
@@ -992,10 +1000,11 @@ export function OutboundWebhooksPanel() {
                                 />
                             </div>
                             <div>
-                                <label className="text-xs font-medium text-ios-text mb-1 block">
+                                <label htmlFor="outbound-channel" className="text-xs font-medium text-ios-text mb-1 block">
                                     Canal (opcional)
                                 </label>
                                 <select
+                                    id="outbound-channel"
                                     value={form.channelId}
                                     onChange={(e) =>
                                         setForm({

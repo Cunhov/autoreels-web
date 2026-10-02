@@ -237,11 +237,11 @@ export default function AnalyticsPanel() {
 
                     {/* Série */}
                     <IOSCard className="p-4">
-                        <div className="flex items-center justify-between mb-3">
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
                             <h3 className="text-[15px] font-bold text-ios-text">
                                 Série diária
                             </h3>
-                            <div className="flex items-center gap-2 text-[10px] text-ios-text-secondary">
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-ios-text-secondary">
                                 <span className="flex items-center gap-1">
                                     <span className="w-2.5 h-2.5 rounded-sm bg-ios-blue/60" />{" "}
                                     matches

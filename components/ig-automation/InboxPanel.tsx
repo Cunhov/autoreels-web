@@ -212,8 +212,10 @@ export default function InboxPanel() {
                     opts.append ? [...prev, ...collected] : collected,
                 );
                 if (opts.append) {
-                    if (nextEv) setNextEvents(nextEv);
-                    if (nextLg) setNextLogs(nextLg);
+                    // Clear an exhausted cursor for fetched sources, while
+                    // preserving the cursor for a source excluded by the filter.
+                    if (source !== "acoes") setNextEvents(nextEv);
+                    if (source !== "eventos") setNextLogs(nextLg);
                 } else {
                     setNextEvents(nextEv);
                     setNextLogs(nextLg);

@@ -22,6 +22,7 @@ import {
     Zap,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 import IOSCard from "@/components/IOSComponents";
 import IOSSwitch from "@/components/IOSSwitch";
 import IOSToast from "@/components/IOSToast";
@@ -85,6 +86,10 @@ function RulesTab({
     const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [deleting, setDeleting] = useState(false);
+    const deleteDialogRef = useDialogA11y(
+        deletingId !== null,
+        () => setDeletingId(null),
+    );
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -436,14 +441,17 @@ function RulesTab({
                 <div
                     className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
                     role="presentation"
-                    onClick={() => setDeletingId(null)}
+                    onClick={() => { if (!deleting) setDeletingId(null); }}
                 >
                     <div
-                        role="dialog"
+                        role="alertdialog"
                         aria-modal="true"
                         aria-labelledby="delete-automation-title"
+                        aria-describedby="delete-automation-description"
+                        tabIndex={-1}
+                        ref={deleteDialogRef}
                         onClick={(e) => e.stopPropagation()}
-                        className="bg-ios-card w-80 rounded-2xl shadow-2xl overflow-hidden"
+                        className="bg-ios-card w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden"
                     >
                         <div className="p-6 text-center">
                             <div className="w-12 h-12 rounded-full bg-ios-red/15 flex items-center justify-center mx-auto mb-4">
@@ -455,7 +463,7 @@ function RulesTab({
                             >
                                 Excluir automação?
                             </h3>
-                            <p className="text-[14px] text-ios-text-secondary">
+                            <p id="delete-automation-description" className="text-[14px] text-ios-text-secondary">
                                 Esta ação não pode ser desfeita.
                             </p>
                         </div>
@@ -464,6 +472,7 @@ function RulesTab({
                                 type="button"
                                 onClick={() => setDeletingId(null)}
                                 disabled={deleting}
+                                data-autofocus
                                 className="flex-1 py-3.5 text-[17px] text-ios-blue font-medium border-r border-ios-separator hover:bg-ios-gray-6 disabled:opacity-40"
                             >
                                 Cancelar
