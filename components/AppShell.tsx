@@ -8,7 +8,7 @@ import { usePathname } from 'next/navigation';
 export default function AppShell({ children }: { children: React.ReactNode }) {
     const [paletteOpen, setPaletteOpen] = useState(false);
     const pathname = usePathname();
-    const isPublicPage = pathname === '/login' || pathname === '/signup';
+    const isPublicPage = ['/login', '/signup', '/termos', '/privacidade'].includes(pathname);
 
     const openPalette = useCallback(() => setPaletteOpen(true), []);
     const closePalette = useCallback(() => setPaletteOpen(false), []);
@@ -29,6 +29,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         return (
             <main className="min-h-screen bg-ios-background text-ios-text">
                 {children}
+                <footer className="px-4 pb-6 text-center text-xs text-ios-text-secondary">
+                    <a href="/termos" className="underline underline-offset-2 hover:text-ios-text">Termos de uso</a>
+                    <span className="mx-2" aria-hidden="true">·</span>
+                    <a href="/privacidade" className="underline underline-offset-2 hover:text-ios-text">Privacidade</a>
+                </footer>
             </main>
         );
     }

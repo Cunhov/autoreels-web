@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useId } from "react";
 import {
 	Bell,
 	Clock,
@@ -90,12 +90,14 @@ function Field({
 	type?: string;
 	mono?: boolean;
 }) {
+	const inputId = useId();
 	return (
 		<div>
-			<label className="text-xs font-medium text-ios-text mb-1.5 block">
+			<label htmlFor={inputId} className="text-xs font-medium text-ios-text mb-1.5 block">
 				{label}
 			</label>
 			<input
+				id={inputId}
 				type={type}
 				value={value}
 				onChange={(e) => onChange(e.target.value)}
@@ -142,6 +144,7 @@ export default function SettingsPage() {
 
 	// Integração YouTube (leitura)
 	const [ytHealth, setYtHealth] = useState<YoutubeHealthResponse | null>(null);
+	const [ytHealthError, setYtHealthError] = useState("");
 	const [ytLoading, setYtLoading] = useState(true);
 
 	const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -201,26 +204,26 @@ export default function SettingsPage() {
 
 	const loadYoutubeHealth = useCallback(async () => {
 		setYtLoading(true);
+		setYtHealthError("");
 		try {
 			const res = await fetch("/api/youtube/health");
-			// Um 502 da rota pode vir com corpo útil (configured:true + error) —
-			// nesse caso usamos o diagnóstico do backend em vez de descartá-lo.
-			let data: YoutubeHealthResponse | null = null;
-			if (!res.ok) {
-				data = (await res.json().catch(() => null)) as YoutubeHealthResponse | null;
-				if (!data || data.configured !== true) {
-					// 401/500 sem corpo `configured` — diagnóstico enganoso tratar
-					// como "Não configurada no servidor".
-					throw new Error(`Falha ao verificar o status (HTTP ${res.status})`);
-				}
-			} else {
-				data = (await res.json().catch(() => null)) as YoutubeHealthResponse | null;
+			const contentType = res.headers.get("content-type")?.toLowerCase() ?? "";
+			if (!contentType.includes("application/json")) {
+				const kind = res.status === 502 ? "A API do YouTube está temporariamente indisponível (HTTP 502)." : `A resposta do servidor não está em JSON (HTTP ${res.status}).`;
+				throw new Error(`${kind} Tente novamente em instantes.`);
 			}
-			if (!data) throw new Error("Resposta inválida");
+			const data = (await res.json().catch(() => null)) as YoutubeHealthResponse | null;
+			if (!data || typeof data.configured !== "boolean") {
+				throw new Error(`Resposta de status inválida (HTTP ${res.status}). Tente novamente.`);
+			}
+			if (!res.ok && data.configured !== true) {
+				throw new Error(`Falha ao verificar o status (HTTP ${res.status}). Tente novamente.`);
+			}
 			setYtHealth(data);
 		} catch (e: unknown) {
 			console.error("Error loading YouTube health:", e);
 			setYtHealth(null);
+			setYtHealthError(errMsg(e, "Não foi possível verificar o status da integração."));
 		} finally {
 			setYtLoading(false);
 		}
@@ -380,8 +383,8 @@ export default function SettingsPage() {
 				<div className="space-y-4">
 					<div>
 						<div className="flex items-center justify-between">
-							<label className="text-xs font-medium text-ios-text mb-1.5 block">
-								Telegram Bot Token
+							<label htmlFor="telegram-bot-token" className="text-xs font-medium text-ios-text mb-1.5 block">
+								Token do bot do Telegram
 							</label>
 							{botTokenState.set && (
 								<button
@@ -393,6 +396,7 @@ export default function SettingsPage() {
 							)}
 						</div>
 						<input
+							id="telegram-bot-token"
 							value={botToken}
 							onChange={(e) => setBotToken(e.target.value)}
 							type="password"
@@ -410,17 +414,17 @@ export default function SettingsPage() {
 					</div>
 
 					<Field
-						label="Telegram Chat ID"
+						label="ID do chat do Telegram"
 						value={chatId}
 						onChange={setChatId}
-						placeholder="e.g. 123456789 or @yourusername"
-						hint="ID numérico ou @username do chat que receberá os alertas."
+						placeholder="Ex.: 123456789 ou @seuusuario"
+						hint="ID numérico ou @usuário do chat que receberá os alertas."
 					/>
 
 					<div>
 						<div className="flex items-center justify-between">
-							<label className="text-xs font-medium text-ios-text mb-1.5 block">
-								Webhook URL (alternative)
+							<label htmlFor="webhook-url" className="text-xs font-medium text-ios-text mb-1.5 block">
+								URL do webhook (alternativa)
 							</label>
 							{webhookState.set && (
 								<button
@@ -432,13 +436,14 @@ export default function SettingsPage() {
 							)}
 						</div>
 						<input
+							id="webhook-url"
 							value={webhook}
 							onChange={(e) => setWebhook(e.target.value)}
 							type="url"
 							placeholder={
 								webhookState.set
 									? `Definido — deixe vazio para manter (${webhookState.masked})`
-									: "https://hooks.example.com/..."
+									: "https://hooks.exemplo.com/..."
 							}
 							className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
 						/>
@@ -463,7 +468,7 @@ export default function SettingsPage() {
 					value={minInterval}
 					onChange={setMinInterval}
 					type="number"
-					placeholder="e.g. 300"
+					placeholder="Ex.: 300"
 					hint="O cron pula o post se o canal publicou há menos que este intervalo (em segundos). 0 ou vazio = sem limite. Ajuda a evitar limites de taxa (429)."
 				/>
 			</IOSCard>
@@ -505,7 +510,7 @@ export default function SettingsPage() {
 						<div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center text-amber-600">
 							<HardDrive size={18} />
 						</div>
-						<h3 className="text-[17px] font-bold text-ios-text">Backups</h3>
+						<h3 className="text-[17px] font-bold text-ios-text">Cópias de segurança</h3>
 					</div>
 					<IOSButton
 						variant="secondary"
@@ -521,18 +526,18 @@ export default function SettingsPage() {
 					</IOSButton>
 				</div>
 				<p className="text-[12px] text-ios-text-secondary mb-3">
-					Backups diários são gravados em /app/data/backups (mantidos os 7 mais
+					Cópias de segurança diárias são salvas em /app/data/backups (mantidos os 7 mais
 					recentes). Restaurar substitui o banco atual e reinicia o app.
 				</p>
 				{loadingBackups ? (
 					<div className="flex justify-center py-6 text-ios-text-secondary">
 						<RefreshCw size={16} className="animate-spin mr-2" /> Carregando
-						backups...
+						cópias de segurança...
 					</div>
 				) : backups.length === 0 ? (
 					<div className="py-6 text-center text-ios-text-secondary text-sm">
 						<Database size={28} className="mx-auto mb-2 opacity-20" />
-						Nenhum backup ainda — o job diário criará o primeiro.
+						Nenhuma cópia de segurança ainda — o job diário criará o primeiro.
 					</div>
 				) : (
 					<div className="divide-y divide-ios-separator rounded-xl border border-ios-separator overflow-hidden">
@@ -592,8 +597,9 @@ export default function SettingsPage() {
 						<div className="w-6 h-6 border-2 border-ios-blue border-t-transparent rounded-full animate-spin" />
 					</div>
 				) : !ytHealth ? (
-					<div className="py-4 text-center text-ios-text-secondary text-sm">
-						Não foi possível verificar o status da integração.
+					<div className="py-4 text-center text-ios-text-secondary text-sm space-y-3">
+						<p role="alert">{ytHealthError || "Não foi possível verificar o status da integração."}</p>
+						<IOSButton variant="secondary" onClick={loadYoutubeHealth}>Tentar novamente</IOSButton>
 					</div>
 				) : !ytHealth.configured ? (
 					<div className="space-y-2">
@@ -618,7 +624,7 @@ export default function SettingsPage() {
 				) : ytHealth.ok ? (
 					<div className="space-y-2">
 						<p className="text-sm font-medium text-ios-green flex items-center gap-1.5">
-							<CheckCircle2 size={15} /> API externa online
+							<CheckCircle2 size={15} /> API externa disponível
 						</p>
 						<div className="grid grid-cols-3 gap-2 text-center pt-1">
 							<div className="rounded-xl bg-ios-background border border-ios-separator p-2">
@@ -629,7 +635,7 @@ export default function SettingsPage() {
 								<p className={`text-[17px] font-bold ${ytHealth.db_connected ? "text-ios-green" : "text-ios-red"}`}>
 									{ytHealth.db_connected ? "OK" : "Falha"}
 								</p>
-								<p className="text-[10px] text-ios-text-secondary uppercase tracking-wide">Banco remoto</p>
+								<p className="text-[10px] text-ios-text-secondary uppercase tracking-wide">Banco de dados remoto</p>
 							</div>
 							<div className="rounded-xl bg-ios-background border border-ios-separator p-2">
 								<p className="text-[13px] font-bold text-ios-text truncate" title={ytHealth.version}>{ytHealth.version || "—"}</p>
@@ -655,14 +661,14 @@ export default function SettingsPage() {
 					// enganoso; o caminho é a saúde interna da API externa.
 					<div className="space-y-1.5">
 						<p className="text-sm font-medium text-ios-orange flex items-center gap-1.5">
-							<AlertTriangle size={15} /> API externa degradada
+							<AlertTriangle size={15} /> API externa com falhas
 						</p>
 						<p className="text-[12px] text-ios-text-secondary">
 							A API respondeu, mas sinaliza problemas internos
 							{ytHealth.db_connected === false
 								? " — banco remoto indisponível"
 								: " "}
-							. Verifique os logs da API externa (as variáveis do servidor estão configuradas).
+							. Verifique os registros da API externa (as variáveis do servidor estão configuradas).
 						</p>
 					</div>
 				)}

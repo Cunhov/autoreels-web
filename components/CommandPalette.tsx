@@ -1,7 +1,8 @@
 'use client';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Search, Calendar, BarChart2, Radio, Sliders, Folder, X, ArrowRight, Clock, Youtube } from 'lucide-react';
+import { Search, Calendar, BarChart2, Radio, Sliders, Folder, X, ArrowRight, Clock, Youtube, Bot, Settings, CloudUpload } from 'lucide-react';
+import { useDialogA11y } from '@/lib/dialog-a11y';
 
 interface SearchResult {
     id: string;
@@ -36,6 +37,9 @@ const STATIC_PAGES: SearchResult[] = [
     { id: 'page-youtube-comments', type: 'page', label: 'Comentários do YouTube', sublabel: 'Gerenciar comentários de Shorts', href: '/youtube/comments', icon: Youtube },
     { id: 'page-planners', type: 'page', label: 'Planners', sublabel: 'Regras de automação', href: '/planners', icon: Sliders },
     { id: 'page-library', type: 'page', label: 'Biblioteca', sublabel: 'Arquivos de mídia', href: '/content', icon: Folder },
+    { id: 'page-automations', type: 'page', label: 'Automações', sublabel: 'Regras automáticas', href: '/automations', icon: Bot },
+    { id: 'page-settings', type: 'page', label: 'Configurações', sublabel: 'Preferências e integração', href: '/settings', icon: Settings },
+    { id: 'page-uploads', type: 'page', label: 'Uploads', sublabel: 'Envios em andamento', href: '/upload', icon: CloudUpload },
 ];
 
 interface CommandPaletteProps {
@@ -50,6 +54,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
     const [selected, setSelected] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const router = useRouter();
+    const dialogRef = useDialogA11y(open, onClose);
 
     // Focus input when opened
     useEffect(() => {
@@ -150,8 +155,6 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
             setSelected(s => Math.max(s - 1, 0));
         } else if (e.key === 'Enter' && results[selected]) {
             navigate(results[selected]);
-        } else if (e.key === 'Escape') {
-            onClose();
         }
     };
 
@@ -169,13 +172,13 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
             role="presentation"
             className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh] px-4 bg-black/60 backdrop-blur-sm fade-in"
             onClick={onClose}
-            onKeyDown={(e)=>{ if(e.key==="Escape") onClose(); }}
         >
             <div
                 role="dialog"
                 aria-modal="true"
                 aria-label="Paleta de comandos"
                 tabIndex={-1}
+                ref={dialogRef}
                 className="bg-ios-card w-full max-w-lg rounded-2xl shadow-2xl border border-ios-separator overflow-hidden zoom-in-95"
                 onClick={e => e.stopPropagation()}
                 onKeyDown={handleKeyDown}
@@ -185,6 +188,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
                     <Search size={18} className="text-ios-secondary shrink-0" />
                     <input
                         ref={inputRef}
+                        data-autofocus
                         role="combobox"
                         aria-autocomplete="list"
                         aria-expanded="true"
@@ -192,12 +196,13 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
                         aria-activedescendant={results[selected] ? `option-${results[selected].id}` : undefined}
                         value={query}
                         onChange={e => setQuery(e.target.value)}
-                        placeholder="Search posts, planners, channels…"
+                        placeholder="Buscar posts, planners e canais…"
+                        aria-label="Buscar no AutoReels"
                         className="flex-1 bg-transparent text-ios-text text-[16px] placeholder:text-ios-secondary outline-none"
                         autoComplete="off"
                     />
                     {loading && <div className="w-4 h-4 border-2 border-ios-blue border-t-transparent rounded-full animate-spin shrink-0" />}
-                    <button onClick={onClose} title="Close" className="text-ios-secondary hover:text-ios-text transition-colors">
+                    <button onClick={onClose} title="Fechar" aria-label="Fechar busca" className="text-ios-secondary hover:text-ios-text transition-colors">
                         <X size={18} />
                     </button>
                 </div>
@@ -205,7 +210,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 {/* Results */}
                 <div id="command-listbox" role="listbox" aria-label="Resultados da busca" className="max-h-80 overflow-y-auto custom-scrollbar py-1">
                     {results.length === 0 && (
-                        <p className="text-center text-ios-secondary text-sm py-8">No results for “{query}”</p>
+                        <p className="text-center text-ios-secondary text-sm py-8">Nenhum resultado para “{query}”</p>
                     )}
                     {results.map((r, i) => (
                         <button
@@ -232,11 +237,11 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
                 {/* Footer */}
                 <div className="flex items-center gap-4 px-4 py-2.5 border-t border-ios-separator bg-ios-gray-6/50">
                     <kbd className="text-[11px] text-ios-secondary bg-ios-separator px-1.5 py-0.5 rounded font-mono">↑↓</kbd>
-                    <span className="text-[11px] text-ios-secondary">Navigate</span>
+                    <span className="text-[11px] text-ios-secondary">Navegar</span>
                     <kbd className="text-[11px] text-ios-secondary bg-ios-separator px-1.5 py-0.5 rounded font-mono">↵</kbd>
-                    <span className="text-[11px] text-ios-secondary">Open</span>
+                    <span className="text-[11px] text-ios-secondary">Abrir</span>
                     <kbd className="text-[11px] text-ios-secondary bg-ios-separator px-1.5 py-0.5 rounded font-mono">Esc</kbd>
-                    <span className="text-[11px] text-ios-secondary">Close</span>
+                    <span className="text-[11px] text-ios-secondary">Fechar</span>
                 </div>
             </div>
         </div>

@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { X, Instagram, Link as LinkIcon, ShieldCheck, Youtube, Music2, ClipboardPaste, Download, CheckCircle2, XCircle, RefreshCw } from 'lucide-react';
 import IOSButton from '@/components/IOSButton';
 import { useSession } from 'next-auth/react';
+import { useDialogA11y } from '@/lib/dialog-a11y';
 
 interface Channel {
     id: string;
@@ -88,6 +89,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
     const [proxyTestMsg, setProxyTestMsg] = useState('');
     const [proxyMasked, setProxyMasked] = useState<string | null>(null);
     const { data: session } = useSession();
+    const dialogRef = useDialogA11y(isOpen, onClose);
 
     useEffect(() => {
         if (isOpen && channel) {
@@ -388,8 +390,8 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={onClose} onKeyDown={(e)=>{ if(e.key==="Escape") onClose(); }}>
-            <div role="dialog" aria-modal="true" aria-labelledby="channel-modal-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-h-[85dvh] flex flex-col">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" role="presentation" onClick={onClose}>
+            <div role="dialog" aria-modal="true" aria-labelledby="channel-modal-title" tabIndex={-1} ref={dialogRef} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-md rounded-2xl overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-h-[85dvh] flex flex-col">
                 <div className="px-6 py-4 border-b border-ios-separator flex items-center justify-between bg-ios-background">
                     <h2 id="channel-modal-title" className="text-[17px] font-semibold text-ios-text">
                         {!channel
@@ -400,7 +402,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                                     ? 'Canal do TikTok'
                                     : 'Edit Channel'}
                     </h2>
-                    <button onClick={onClose} className="p-1 rounded-full hover:bg-black/5 text-ios-secondary transition-colors">
+                    <button onClick={onClose} aria-label="Fechar janela de canal" className="p-1 rounded-full hover:bg-black/5 text-ios-secondary transition-colors">
                         <X size={20} />
                     </button>
                 </div>
@@ -461,10 +463,11 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                                     Cole os 4 cookies da sua sessão do YouTube (chrome://devtools → Application → Cookies). Eles são enviados apenas para a API externa e nunca armazenados neste app.
                                 </p>
                                 <div>
-                                    <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
+                                    <label htmlFor="youtube-channel-name" className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
                                         Nome do canal (opcional)
                                     </label>
                                     <input
+                                        id="youtube-channel-name"
                                         type="text"
                                         value={ytLabel}
                                         onChange={(e) => setYtLabel(e.target.value)}
@@ -506,9 +509,9 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                                 )})}
                                 {/* Proxy YouTube (criação) */}
                                 <div className="pt-2 border-t border-ios-separator mt-2">
-                                    <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">Proxy (opcional)</label>
+                                    <label htmlFor="proxy-url" className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">Proxy (opcional)</label>
                                     <div className="flex gap-2">
-                                        <input type="text" value={proxyUrl} onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }} placeholder="http://user:pass@host:porta" className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue" />
+                                        <input id="proxy-url" aria-label="Endereço do proxy" type="text" value={proxyUrl} onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }} placeholder="http://user:pass@host:porta" className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue" />
                                         <button type="button" onClick={handleTestProxy} disabled={proxyTestStatus==='loading'} className="px-3 py-2 rounded-xl bg-ios-blue/10 text-ios-blue text-[13px] font-semibold hover:bg-ios-blue/20 disabled:opacity-50 shrink-0">{proxyTestStatus==='loading' ? 'Testando...' : 'Testar'}</button>
                                     </div>
                                     <p className="text-[11px] text-ios-secondary mt-1 px-1">Proxy HTTP/HTTPS usado nas chamadas YouTube API deste canal.</p>
@@ -634,20 +637,20 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                             Canais YouTube só permitem editar o proxy. Desconecte e reconecte para alterar cookies/sessão.
                         </p>
                         <div>
-                            <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">Proxy (opcional)</label>
+                            <label htmlFor="proxy-url" className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">Proxy (opcional)</label>
                             {proxyMasked && !proxyUrl ? (
                                 <div className="mb-1.5 px-3 py-2 rounded-xl bg-ios-separator/30 text-[12px] font-mono text-ios-secondary flex items-center justify-between">
                                     <span className="truncate">Salvo: {proxyMasked}</span>
-                                    <button type="button" onClick={()=>{ setProxyMasked(null); setProxyUrl(''); }} className="ml-2 text-[11px] text-ios-red font-semibold shrink-0">Remover</button>
+                                    <button type="button" onClick={()=>{ setProxyMasked(null); setProxyUrl(''); }} aria-label="Remover proxy salvo" className="ml-2 text-[11px] text-ios-red font-semibold shrink-0">Remover</button>
                                 </div>
                             ) : null}
                             <div className="flex gap-2">
-                                <input type="text" value={proxyUrl} onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }} placeholder="http://user:pass@host:porta" className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue" />
+                                <input id="proxy-url" aria-label="Endereço do proxy" type="text" value={proxyUrl} onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }} placeholder="http://user:pass@host:porta" className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue" />
                                 <button type="button" onClick={handleTestProxy} disabled={proxyTestStatus==='loading'} className="px-3 py-2 rounded-xl bg-ios-blue/10 text-ios-blue text-[13px] font-semibold hover:bg-ios-blue/20 disabled:opacity-50 shrink-0">{proxyTestStatus==='loading' ? 'Testando...' : 'Testar Proxy'}</button>
                             </div>
                             {proxyTestStatus!=='idle' && proxyTestMsg ? (<p className={`text-[12px] mt-1 ${proxyTestStatus==='ok'?'text-ios-green':'text-ios-red'}`}>{proxyTestMsg}</p>) : null}
                             <label className="flex items-center gap-2 mt-2 text-[13px] text-ios-secondary">
-                                <input type="checkbox" checked={proxyEnabled} onChange={(e)=>setProxyEnabled(e.target.checked)} className="rounded" />
+                                <input type="checkbox" aria-label="Proxy habilitado" checked={proxyEnabled} onChange={(e)=>setProxyEnabled(e.target.checked)} className="rounded" />
                                 Proxy habilitado
                             </label>
                         </div>
@@ -672,20 +675,20 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                         </IOSButton>
                         <div className="border-t border-ios-separator pt-4">
                             <div>
-                                <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">Proxy (opcional)</label>
+                                <label htmlFor="proxy-url" className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">Proxy (opcional)</label>
                                 {proxyMasked && !proxyUrl ? (
                                     <div className="mb-1.5 px-3 py-2 rounded-xl bg-ios-separator/30 text-[12px] font-mono text-ios-secondary flex items-center justify-between">
                                         <span className="truncate">Salvo: {proxyMasked}</span>
-                                        <button type="button" onClick={()=>{ setProxyMasked(null); setProxyUrl(''); }} className="ml-2 text-[11px] text-ios-red font-semibold shrink-0">Remover</button>
+                                        <button type="button" onClick={()=>{ setProxyMasked(null); setProxyUrl(''); }} aria-label="Remover proxy salvo" className="ml-2 text-[11px] text-ios-red font-semibold shrink-0">Remover</button>
                                     </div>
                                 ) : null}
                                 <div className="flex gap-2">
-                                    <input type="text" value={proxyUrl} onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }} placeholder="http://user:pass@host:porta" className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue" />
+                                    <input id="proxy-url" aria-label="Endereço do proxy" type="text" value={proxyUrl} onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }} placeholder="http://user:pass@host:porta" className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[14px] font-mono focus:outline-none focus:border-ios-blue" />
                                     <button type="button" onClick={handleTestProxy} disabled={proxyTestStatus==='loading'} className="px-3 py-2 rounded-xl bg-ios-blue/10 text-ios-blue text-[13px] font-semibold hover:bg-ios-blue/20 disabled:opacity-50 shrink-0">{proxyTestStatus==='loading' ? 'Testando...' : 'Testar Proxy'}</button>
                                 </div>
                                 {proxyTestStatus!=='idle' && proxyTestMsg ? (<p className={`text-[12px] mt-1 ${proxyTestStatus==='ok'?'text-ios-green':'text-ios-red'}`}>{proxyTestMsg}</p>) : null}
                                 <label className="flex items-center gap-2 mt-2 text-[13px] text-ios-secondary">
-                                    <input type="checkbox" checked={proxyEnabled} onChange={(e)=>setProxyEnabled(e.target.checked)} className="rounded" />
+                                    <input type="checkbox" aria-label="Proxy habilitado" checked={proxyEnabled} onChange={(e)=>setProxyEnabled(e.target.checked)} className="rounded" />
                                     Proxy habilitado
                                 </label>
                             </div>
@@ -748,10 +751,11 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                         {(channel || mode === 'manual') && (
                         <div className="space-y-4">
                             <div>
-                                <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
-                                    Channel Name
+                                <label htmlFor="channel-name" className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
+                                    Nome do canal
                                 </label>
                                 <input
+                                    id="channel-name"
                                     type="text"
                                     required
                                     value={name}
@@ -762,10 +766,11 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                             </div>
 
                             <div>
-                                <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
-                                    Instagram Account ID
+                                <label htmlFor="instagram-account-id" className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
+                                    ID da conta do Instagram
                                 </label>
                                 <input
+                                    id="instagram-account-id"
                                     type="text"
                                     required
                                     value={accountId}
@@ -776,11 +781,12 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                             </div>
 
                             <div>
-                                <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
-                                    Profile Picture URL
+                                <label htmlFor="channel-profile-picture" className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
+                                    URL da foto do perfil
                                 </label>
                                 <div className="relative">
                                     <input
+                                        id="channel-profile-picture"
                                         type="url"
                                         value={profilePictureUrl}
                                         onChange={(e) => setProfilePictureUrl(e.target.value)}
@@ -794,11 +800,12 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                             </div>
 
                             <div>
-                                <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
-                                    Access Token
+                                <label htmlFor="channel-access-token" className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
+                                    Token de acesso
                                 </label>
                                 <div className="relative">
                                     <input
+                                        id="channel-access-token"
                                         type="text"
                                         required={!channel}
                                         value={accessToken}
@@ -816,17 +823,19 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                             </div>
                             {/* ── Proxy por canal (Instagram) ── */}
                             <div>
-                                <label className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
+                                <label htmlFor="proxy-url" className="block text-[13px] font-medium text-ios-secondary mb-1.5 uppercase tracking-wide">
                                     Proxy (opcional)
                                 </label>
                                 {proxyMasked && !proxyUrl ? (
                                     <div className="mb-1.5 px-3 py-2 rounded-xl bg-ios-separator/30 text-[12px] font-mono text-ios-secondary flex items-center justify-between">
                                         <span className="truncate">Salvo: {proxyMasked}</span>
-                                        <button type="button" onClick={()=>{ setProxyMasked(null); setProxyUrl(''); }} className="ml-2 text-[11px] text-ios-red font-semibold shrink-0">Remover</button>
+                                        <button type="button" onClick={()=>{ setProxyMasked(null); setProxyUrl(''); }} aria-label="Remover proxy salvo" className="ml-2 text-[11px] text-ios-red font-semibold shrink-0">Remover</button>
                                     </div>
                                 ) : null}
                                 <div className="flex gap-2">
                                     <input
+                                        id="proxy-url"
+                                        aria-label="Endereço do proxy"
                                         type="text"
                                         value={proxyUrl}
                                         onChange={(e)=>{ setProxyUrl(e.target.value); setProxyTestStatus('idle'); setProxyTestMsg(''); }}
@@ -849,7 +858,7 @@ export default function ChannelModal({ isOpen, onClose, onSuccess, channel }: Ch
                                     <p className={`text-[12px] mt-1 px-1 ${proxyTestStatus==='ok'?'text-ios-green':'text-ios-red'}`}>{proxyTestMsg}</p>
                                 ) : null}
                                 <label className="flex items-center gap-2 mt-2 text-[13px] text-ios-secondary">
-                                    <input type="checkbox" checked={proxyEnabled} onChange={(e)=>setProxyEnabled(e.target.checked)} className="rounded" />
+                                    <input type="checkbox" aria-label="Proxy habilitado" checked={proxyEnabled} onChange={(e)=>setProxyEnabled(e.target.checked)} className="rounded" />
                                     Proxy habilitado
                                 </label>
                             </div>

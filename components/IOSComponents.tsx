@@ -1,5 +1,5 @@
 "use client";
-import React from "react";
+import React, { useId } from "react";
 
 // --- Card ---
 export default function IOSCard({
@@ -54,8 +54,10 @@ export function IOSRow({
     onClick,
     icon,
     className = "",
+    id: providedId,
 }: {
     label: string;
+    id?: string;
     value?: React.ReactNode;
     onClick?: () => void;
     icon?: React.ReactNode;
@@ -99,22 +101,27 @@ export function IOSInputRow({
     type = "text",
     placeholder,
     className = "",
+    id: providedId,
 }: {
     label: string;
+    id?: string;
     value: string;
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
     type?: string;
     placeholder?: string;
     className?: string;
 }) {
+    const generatedId = useId();
+    const inputId = providedId ?? generatedId;
     return (
         <div
             className={`flex items-center justify-between p-4 bg-ios-card ${className}`}
         >
-            <label className="text-[17px] text-ios-text w-24 flex-shrink-0">
+            <label htmlFor={inputId} className="text-[17px] text-ios-text w-24 flex-shrink-0">
                 {label}
             </label>
             <input
+                id={inputId}
                 type={type}
                 value={value}
                 onChange={onChange}

@@ -5,7 +5,7 @@
   --ios-background: #F2F2F7;
   --ios-card: #FFFFFF;
   --ios-text: #000000;
-  --ios-text-secondary: #8E8E93;
+  --ios-text-secondary: #6D6D72;
   --ios-blue: #007AFF;
   --ios-indigo: #5856D6;
   --ios-red: #FF3B30;
@@ -38,6 +38,17 @@
 
 @theme inline {
   --color-background: var(--ios-background);
+  /* Compatibility tokens used throughout the app's Tailwind classes. */
+  --color-ios-background: var(--ios-background);
+  --color-ios-card: var(--ios-card);
+  --color-ios-text: var(--ios-text);
+  --color-ios-text-secondary: var(--ios-text-secondary);
+  --color-ios-secondary: var(--ios-text-secondary);
+  --color-ios-gray-2: var(--ios-gray-2);
+  --color-ios-gray-3: var(--ios-gray-3);
+  --color-ios-gray-4: var(--ios-gray-4);
+  --color-ios-gray-5: var(--ios-gray-5);
+  --color-ios-gray-6: var(--ios-gray-6);
   --color-card: var(--ios-card);
   --color-foreground: var(--ios-text);
   --color-secondary-foreground: var(--ios-text-secondary);
@@ -58,6 +69,9 @@
   --animate-slide-up: slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   --animate-slide-in-from-top-2: slide-in-from-top-2 0.2s ease forwards;
 }
+
+html { color-scheme: light dark; }
+input[type="date"], input[type="datetime-local"], input[type="time"] { color-scheme: light dark; }
 
 body {
   background-color: var(--ios-background);

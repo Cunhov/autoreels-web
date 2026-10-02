@@ -55,8 +55,8 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
     const userInitial = userEmail ? userEmail[0].toUpperCase() : '?';
 
     return (
-        <div className="w-64 flex-shrink-0 h-screen sticky top-0 flex flex-col justify-between p-4 bg-ios-card dark:bg-[#111] border-r border-ios-separator backdrop-blur-xl hidden md:flex">
-            <div className="space-y-5">
+        <div className="w-64 flex-shrink-0 h-screen sticky top-0 flex flex-col p-4 overflow-hidden bg-ios-card dark:bg-[#111] border-r border-ios-separator backdrop-blur-xl hidden md:flex">
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar space-y-5 pb-4">
                 {/* App Logo & Title */}
                 <div className="px-2 pt-2 pb-1">
                     <h1 className="text-[22px] font-bold tracking-tight text-ios-blue select-none">AutoReels</h1>
@@ -108,7 +108,7 @@ export default function Sidebar({ onSearchOpen }: SidebarProps) {
             </div>
 
             {/* User info + Logout */}
-            <div className="pt-4 border-t border-ios-separator space-y-3">
+            <div className="pt-4 border-t border-ios-separator space-y-3 shrink-0">
                 <div className="flex items-center gap-3 px-2">
                     <div className="w-8 h-8 rounded-full bg-ios-blue/20 text-ios-blue flex items-center justify-center text-[13px] font-bold shrink-0">
                         {userInitial}

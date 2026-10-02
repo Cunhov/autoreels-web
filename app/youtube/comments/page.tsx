@@ -381,6 +381,7 @@ export default function YoutubeCommentsPage() {
                             <IOSCard className="p-4 space-y-3">
                                 <form onSubmit={submitComment} className="flex items-end gap-2">
                                     <textarea
+                                        aria-label="Texto do comentário"
                                         rows={2}
                                         maxLength={10000}
                                         value={newComment}
@@ -400,6 +401,7 @@ export default function YoutubeCommentsPage() {
                                     </div>
                                     <div className="flex items-end gap-2">
                                         <input
+                                            aria-label="Texto do comentário fixado"
                                             type="text"
                                             maxLength={10000}
                                             value={pinnedComment}
@@ -407,8 +409,9 @@ export default function YoutubeCommentsPage() {
                                             placeholder="Texto do comentário que será criado e fixado"
                                             className="flex-1 bg-ios-background border border-ios-separator rounded-xl px-4 py-2.5 text-[15px] focus:outline-none focus:ring-1 focus:ring-ios-red"
                                         />
-                                        <label className="flex items-center gap-1.5 text-[12px] text-ios-text-secondary cursor-pointer select-none pb-2.5">
+                                        <label htmlFor="pinned-heart" className="flex items-center gap-1.5 text-[12px] text-ios-text-secondary cursor-pointer select-none pb-2.5">
                                             <input
+                                                id="pinned-heart"
                                                 type="checkbox"
                                                 checked={pinnedHeart}
                                                 onChange={(e) => setPinnedHeart(e.target.checked)}
@@ -482,7 +485,7 @@ export default function YoutubeCommentsPage() {
                                                     <button
                                                         onClick={() => runAction(c, 'like')}
                                                         disabled={!c.comment_id || actingId === c.comment_id}
-                                                        title="Curtir"
+                                                        title="Curtir" aria-label="Curtir comentário"
                                                         className="p-2 rounded-lg text-ios-green hover:bg-ios-green/10 transition-colors disabled:opacity-40"
                                                     >
                                                         {actingId === c.comment_id
@@ -492,7 +495,7 @@ export default function YoutubeCommentsPage() {
                                                     <button
                                                         onClick={() => runAction(c, 'heart')}
                                                         disabled={!c.comment_id || actingId === c.comment_id}
-                                                        title="Dar coração do autor"
+                                                        title="Dar coração do autor" aria-label="Dar coração do autor"
                                                         className="p-2 rounded-lg text-ios-red hover:bg-ios-red/10 transition-colors disabled:opacity-40"
                                                     >
                                                         <Heart size={15} />
@@ -501,7 +504,7 @@ export default function YoutubeCommentsPage() {
                                                         <button
                                                             onClick={() => runAction(c, 'pin')}
                                                             disabled={!c.comment_id || actingId === c.comment_id}
-                                                            title="Fixar comentário"
+                                                            title="Fixar comentário" aria-label="Fixar comentário"
                                                             className="p-2 rounded-lg text-ios-blue hover:bg-ios-blue/10 transition-colors disabled:opacity-40"
                                                         >
                                                             <Pin size={15} />

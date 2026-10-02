@@ -1,7 +1,7 @@
 "use client";
-import { useEffect } from "react";
 import { X, Clock, CalendarClock } from "lucide-react";
 import { Post } from "@/app/types";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 
 /**
  * Full-screen local preview for scheduled/pending posts (not yet on Instagram).
@@ -15,22 +15,18 @@ export default function LocalPreviewModal({
 	post: Post;
 	onClose: () => void;
 }) {
-	useEffect(() => {
-		const h = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-		document.addEventListener('keydown', h);
-		return () => document.removeEventListener('keydown', h);
-	}, [onClose]);
+	const dialogRef = useDialogA11y(true, onClose);
 	return (
-		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-200" role="presentation" onClick={onClose}>
-			<button
-				onClick={onClose}
-				className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors z-10"
-				title="Close preview"
-			>
-				<X size={22} />
-			</button>
-
-			<div role="dialog" aria-modal="true" aria-label="Prévia do post" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="w-full max-w-md flex flex-col items-center gap-4 p-4 max-h-[85dvh] overflow-y-auto">
+		<div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/90 backdrop-blur-md animate-in fade-in duration-200" role="presentation" onClick={onClose}>
+			<div role="dialog" aria-modal="true" aria-label="Prévia do post" tabIndex={-1} ref={dialogRef} onClick={(e)=>e.stopPropagation()} className="relative w-full max-w-md flex flex-col items-center gap-4 p-4 max-h-[85dvh] overflow-y-auto">
+				<button
+					onClick={onClose}
+					className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors z-10"
+					title="Fechar prévia"
+					aria-label="Fechar prévia"
+				>
+					<X size={22} />
+				</button>
 				{/* Media */}
 				<div className="w-full aspect-[9/16] max-h-[70vh] bg-black rounded-2xl overflow-hidden shadow-2xl flex items-center justify-center">
 					{post.video_url ? (
