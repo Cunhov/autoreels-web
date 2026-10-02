@@ -8,7 +8,6 @@ import {
     Bot,
     Clock,
     Loader2,
-    Save,
     SlidersHorizontal,
     Sparkles,
     Tags,
@@ -21,6 +20,9 @@ import IOSToast from "@/components/IOSToast";
 import KeywordChips from "./KeywordChips";
 import ActionListEditor from "./ActionListEditor";
 import SimulatorPanel from "./SimulatorPanel";
+import ProfilePostPicker from "./ProfilePostPicker";
+import MessagePreview from "./MessagePreview";
+import { actionsForTemplate, EDITOR_TEMPLATES, type EditorTemplate } from "./editor-templates";
 import type {
     AutomationPayload,
     ChannelLite,
@@ -48,6 +50,7 @@ import {
     normalizeChannel,
     normalizeSequence,
     normalizeOutboundWebhook,
+    normalizeSubstance,
     serializeActionPayload,
 } from "./types";
 
@@ -150,9 +153,14 @@ export default function AutomationEditor({
     // Form
     const [name, setName] = useState("");
     const [channelId, setChannelId] = useState("");
-    const [enabled, setEnabled] = useState(true);
+    const [channelIds, setChannelIds] = useState<string[]>([]);
+    const [mediaIdsByChannel, setMediaIdsByChannel] = useState<Record<string, string[]>>({});
+    const [postScopeByChannel, setPostScopeByChannel] = useState<Record<string, "all" | "selected">>({});
+    const [enabled, setEnabled] = useState(false);
     const [priority, setPriority] = useState("0");
     const [trigger, setTrigger] = useState<IgTrigger>(defaultTrigger);
+    const [legacyTrigger, setLegacyTrigger] = useState("");
+    const [legacyActions, setLegacyActions] = useState<Record<string, unknown>[]>([]);
     const [keywords, setKeywords] = useState<string[]>([]);
     const [matchMode, setMatchMode] = useState<IgMatchMode>("any");
     const [matchType, setMatchType] = useState<IgMatchType>("contains");
@@ -172,6 +180,16 @@ export default function AutomationEditor({
     const [actions, setActions] = useState<IgActionDraft[]>(() => [
         newActionDraft("dm_text", 0),
     ]);
+    const [step, setStep] = useState(0);
+    const [template, setTemplate] = useState<EditorTemplate | null>(null);
+    const [profileQuery, setProfileQuery] = useState("");
+    const [savedFingerprint, setSavedFingerprint] = useState<string | null>(null);
+    const [refreshBaseline, setRefreshBaseline] = useState(false);
+    const [webhookSummary, setWebhookSummary] = useState<{ loading: boolean; text: string }>({ loading: true, text: "Verificando conexão…" });
+    const [globalMode, setGlobalMode] = useState("Modo global desconhecido");
+    const [catalogCount, setCatalogCount] = useState<number|null>(null);
+    const [testChannelId, setTestChannelId] = useState("");
+    const [simulationResult, setSimulationResult] = useState<import("./types").IgSimulationResult|null>(null);
 
     const [toast, setToast] = useState<{
         msg: string;
@@ -259,8 +277,16 @@ export default function AutomationEditor({
             .then((raw) => {
                 const a = normalizeAutomation(raw);
                 if (cancelled) return;
+                const source=isRecord(raw)?raw:{};
+                const rawTrigger=asString(source.trigger);
+                setLegacyTrigger(rawTrigger && !(TRIGGERS as string[]).includes(rawTrigger) ? rawTrigger : "");
+                const rawActions=Array.isArray(source.actions)?source.actions:[];
+                setLegacyActions(rawActions.filter((item):item is Record<string,unknown>=>isRecord(item)&&!(ACTION_TYPES as string[]).includes(asString(item.type))));
                 setName(a.name);
                 setChannelId(a.channelId);
+                setChannelIds(a.channelIds.length ? a.channelIds : [a.channelId].filter(Boolean));
+                setMediaIdsByChannel(a.mediaIdsByChannel);
+                setPostScopeByChannel(Object.fromEntries(a.channelIds.map(id=>[id,(a.mediaIdsByChannel[id]??[]).length?"selected":"all"])));
                 setEnabled(a.enabled);
                 setPriority(String(a.priority));
                 setTrigger(a.trigger);
@@ -286,11 +312,9 @@ export default function AutomationEditor({
                     a.settings.substanceCatalog === true,
                 );
                 setSettingsExtra(a.settings);
-                setActions(
-                    a.actions.length > 0
-                        ? a.actions
-                        : [newActionDraft("dm_text", 0)],
-                );
+                setActions(a.actions.filter(action=>(ACTION_TYPES as string[]).includes(action.type)).length > 0
+                        ? a.actions.filter(action=>(ACTION_TYPES as string[]).includes(action.type))
+                        : rawActions.some(item=>isRecord(item)&&!(ACTION_TYPES as string[]).includes(asString(item.type))) ? [] : [newActionDraft("dm_text", 0)]);
             })
             .catch((e: unknown) => {
                 if (cancelled) return;
@@ -320,15 +344,30 @@ export default function AutomationEditor({
                 .filter(Boolean),
         [mediaIds],
     );
+    const formFingerprint = useMemo(() => JSON.stringify({name, channelId, channelIds, mediaIds, mediaIdsByChannel, postScopeByChannel, enabled, priority, trigger, legacyTrigger, keywords, matchMode, matchType, negatives, firstInteractionOnly, cooldown, dailyLimit, quietEnabled, quietStart, quietEnd, quietTz, substanceCatalog, settingsExtra, actions, legacyActions, template}), [name, channelId, channelIds, mediaIds, mediaIdsByChannel, postScopeByChannel, enabled, priority, trigger, legacyTrigger, keywords, matchMode, matchType, negatives, firstInteractionOnly, cooldown, dailyLimit, quietEnabled, quietStart, quietEnd, quietTz, substanceCatalog, settingsExtra, actions, legacyActions, template]);
+    const dirty = savedFingerprint !== null && savedFingerprint !== formFingerprint;
+
+    const visibleChannels = useMemo(() => channels.filter(c => `${channelLabel(c)} ${c.username}`.toLowerCase().includes(profileQuery.toLowerCase())), [channels, profileQuery]);
+    useEffect(() => { if (channelIds.length && !channelIds.includes(channelId)) setChannelId(channelIds[0]); }, [channelIds, channelId]);
+    useEffect(() => { if (!channelIds.includes(testChannelId)) setTestChannelId(channelIds[0] ?? ""); }, [channelIds, testChannelId]);
+    useEffect(() => { let cancelled=false; apiFetch<unknown>("/api/ig/webhook-status").then(raw=>{ if(cancelled)return; const rows=Array.isArray(raw)?raw:(isRecord(raw)&&Array.isArray(raw.channels)?raw.channels:[]); const selected=rows.filter(isRecord).filter((x:any)=>channelIds.includes(String(x.channelId??x.channel_id??""))); const connected=selected.filter((x:any)=>String(x.status??"").toLowerCase()==="ok").length; setWebhookSummary({loading:false,text:selected.length?`${connected} de ${selected.length} perfil(is) com webhook conectado`:"Status de conexão indisponível"}); }).catch(()=>{if(!cancelled)setWebhookSummary({loading:false,text:"Status de conexão indisponível"});}); return()=>{cancelled=true;}; }, [channelIds]);
+    useEffect(()=>{let cancelled=false;apiFetch<unknown>("/api/ig/settings").then(raw=>{if(cancelled)return;const o=isRecord(raw)&&isRecord(raw.settings)?raw.settings:isRecord(raw)?raw:{};setGlobalMode(o.enabled===false?"Automações pausadas no sistema":o.dryRun===true||o.dry_run===true?"Modo de teste global ativo (dry run)":o.dryRun===false||o.dry_run===false?"Modo global de envio real":"Modo global desconhecido");}).catch(()=>{if(!cancelled)setGlobalMode("Modo global desconhecido");});return()=>{cancelled=true;};},[]);
+    useEffect(()=>{if(!substanceCatalog&&template!=="catalog")return;let cancelled=false;apiFetch<unknown>("/api/ig/substances").then(raw=>{if(cancelled)return;const list=extractItems(raw,["substances","items"]).map(normalizeSubstance);setCatalogCount(list.filter(item=>item.enabled).length);}).catch(()=>{if(!cancelled)setCatalogCount(null);});return()=>{cancelled=true;};},[substanceCatalog,template]);
+    useEffect(()=>{if(savedFingerprint===null&&(!editing||!loading))setSavedFingerprint(formFingerprint);},[savedFingerprint,editing,loading,formFingerprint]);
+    useEffect(()=>{if(refreshBaseline){setSavedFingerprint(formFingerprint);setRefreshBaseline(false);}},[refreshBaseline,formFingerprint]);
+    useEffect(()=>{if(!formErrors.length)return;const frame=requestAnimationFrame(()=>{const target=document.querySelector<HTMLElement>("[aria-invalid='true']")??document.querySelector<HTMLElement>("[role='alert']");target?.scrollIntoView({behavior:"smooth",block:"center"});target?.focus({preventScroll:true});});return()=>cancelAnimationFrame(frame);},[formErrors,step]);
+    useEffect(() => { if (!dirty) return; const guard=(event:BeforeUnloadEvent)=>{ event.preventDefault(); event.returnValue=""; }; window.addEventListener("beforeunload",guard); return()=>window.removeEventListener("beforeunload",guard); }, [dirty]);
+    useEffect(()=>{if(!dirty)return;const guard=(event:MouseEvent)=>{if(event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;const target=event.target instanceof Element?event.target.closest("a[href]"):null;if(!(target instanceof HTMLAnchorElement)||target.target==="_blank"||target.hasAttribute("download"))return;const url=new URL(target.href,window.location.href);if(url.origin!==window.location.origin||url.pathname===window.location.pathname||url.hash&&url.pathname===window.location.pathname)return;if(!window.confirm("Há alterações não salvas. Sair e descartá-las?")){event.preventDefault();event.stopPropagation();return;}setSavedFingerprint(formFingerprint);};document.addEventListener("click",guard,true);return()=>document.removeEventListener("click",guard,true);},[dirty,formFingerprint]);
 
     function validate(): string[] {
         const errs: string[] = [];
-        if (!channelId) errs.push("Selecione o canal do Instagram.");
+        if (!channelIds.length) errs.push("Selecione ao menos um perfil do Instagram.");
+        channelIds.forEach(id=>{if(postScopeByChannel[id]==="selected"&&!(mediaIdsByChannel[id]??[]).length)errs.push(`${channelLabel(channels.find(c=>c.id===id)??{id,name:id,platform:"instagram",username:"",accountId:"",status:""})}: selecione ao menos um post ou escolha Todos.`);});
         if (!name.trim()) errs.push("Informe um nome para a automação.");
         if (quietEnabled && (!quietStart || !quietEnd)) {
             errs.push("Preencha o início e o fim das quiet hours.");
         }
-        if (actions.length === 0) {
+        if (actions.length === 0 && legacyActions.length === 0) {
             errs.push("Adicione pelo menos uma ação.");
         }
         actions.forEach((a, i) => {
@@ -384,15 +423,17 @@ export default function AutomationEditor({
     function buildPayload(): AutomationPayload {
         return {
             channelId,
+            channelIds,
+            mediaIdsByChannel: Object.fromEntries(channelIds.map(id => [id, mediaIdsByChannel[id] ?? []])),
             name: name.trim(),
             enabled,
             priority: Math.round(Number(priority) || 0),
-            trigger,
+            trigger: (legacyTrigger || trigger) as IgTrigger,
             keywords,
             matchMode,
             matchType,
             negativeKeywords: negatives,
-            mediaIds: mediaIdList,
+            mediaIds: mediaIdsByChannel[channelId] ?? mediaIdList,
             firstInteractionOnly,
             cooldownHours:
                 cooldown.trim() === ""
@@ -410,21 +451,22 @@ export default function AutomationEditor({
                   }
                 : null,
             settings: { ...settingsExtra, substanceCatalog },
-            actions: actions.map((a, i) =>
-                serializeActionPayload(a, i, "camel"),
-            ),
+            actions: [...actions.map((a, i) => {const serialized=serializeActionPayload(a,i,"camel");const config=isRecord(serialized.config)?serialized.config:{};return {...serialized,config:{...config,sequenceIdsByChannel:Object.fromEntries(Object.entries(a.sequenceIdsByChannel??{}).filter(([id])=>channelIds.includes(id))),webhookIdsByChannel:Object.fromEntries(Object.entries(a.webhookIdsByChannel??{}).filter(([id])=>channelIds.includes(id)))}};}), ...legacyActions],
         };
     }
 
-    async function save() {
+    async function save(statusOverride?: boolean) {
         const errs = validate();
         setFormErrors(errs);
         if (errs.length > 0) {
+            if (errs.some(e=>e.includes("perfil")||e.includes("post"))) setStep(1);
+            else if (errs.some(e=>e.includes("nome"))) setStep(0);
+            else setStep(3);
             showToast(errs[0], "error");
             return;
         }
         setSaving(true);
-        const payload = buildPayload();
+        const payload = { ...buildPayload(), ...(statusOverride === undefined ? {} : { enabled: statusOverride }) };
         try {
             if (editing && automationId) {
                 await apiFetch<unknown>(`/api/automations/${automationId}`, {
@@ -433,6 +475,8 @@ export default function AutomationEditor({
                 });
                 showToast("Automação atualizada ✓");
                 setFormErrors([]);
+                setEnabled(payload.enabled);
+                setRefreshBaseline(true);
             } else {
                 const raw = await apiFetch<unknown>("/api/automations", {
                     method: "POST",
@@ -442,6 +486,7 @@ export default function AutomationEditor({
                 const nested = isRecord(rec.automation) ? rec.automation : {};
                 const newId = asString(rec.id) || asString(nested.id);
                 showToast("Automação criada ✓");
+                setSavedFingerprint(formFingerprint);
                 if (newId) {
                     router.push(`/automations/${newId}`);
                 } else {
@@ -455,6 +500,12 @@ export default function AutomationEditor({
         } finally {
             setSaving(false);
         }
+    }
+
+    function leaveEditor() {
+        if (dirty && !window.confirm("Há alterações não salvas. Sair e descartá-las?")) return;
+        setSavedFingerprint(formFingerprint);
+        router.push("/automations");
     }
 
     if (loading) {
@@ -498,7 +549,7 @@ export default function AutomationEditor({
     }
 
     return (
-        <div className="space-y-6 pb-8">
+        <div className="space-y-6 pb-28">
             <IOSToast
                 message={toast?.msg ?? ""}
                 type={toast?.type}
@@ -522,20 +573,10 @@ export default function AutomationEditor({
                         Configure gatilhos, respostas e limites anti-bloqueio
                     </p>
                 </div>
-                <IOSButton
-                    variant="primary"
-                    className="!py-2 !px-4 flex items-center gap-1 shrink-0"
-                    onClick={save}
-                    disabled={saving}
-                >
-                    {saving ? (
-                        <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                        <Save size={16} />
-                    )}
-                    {saving ? "Salvando…" : "Salvar"}
-                </IOSButton>
+                <div className="text-right text-xs text-ios-text-secondary">{enabled ? "Ativada · envio condicionado" : "Pausada"}<br/>{webhookSummary.text}</div>
             </div>
+
+            <nav aria-label="Etapas da automação" className="sticky top-0 z-20 bg-ios-background/95 backdrop-blur border-y border-ios-separator py-2"><ol className="grid grid-cols-5 gap-1 max-w-4xl mx-auto">{["Objetivo","Perfis e posts","Quando responder","Mensagem e ações","Revisar e testar"].map((label,i)=><li key={label}><button type="button" onClick={()=>setStep(i)} aria-current={step===i?"step":undefined} className={`w-full min-h-11 px-1 rounded-lg text-[11px] sm:text-sm font-medium ${step===i?"bg-ios-blue text-white":"text-ios-text-secondary hover:bg-ios-gray-5"}`}><span className="sm:hidden">{i+1}</span><span className="hidden sm:inline">{i+1}. {label}</span></button></li>)}</ol></nav>
 
             {formErrors.length > 0 && (
                 <div
@@ -557,6 +598,8 @@ export default function AutomationEditor({
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                 <div className="lg:col-span-2 space-y-6">
                     {/* Básico */}
+                    {step===0&&<>
+                    {!editing&&<IOSCard className="p-5"><h2 className="text-[17px] font-bold text-ios-text mb-3">Como você quer começar?</h2><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{EDITOR_TEMPLATES.map(item=><button key={item.id} type="button" aria-pressed={template===item.id} onClick={()=>{setTemplate(item.id);setTrigger(item.trigger);setName(item.name);const next=actionsForTemplate(item.id);if(next)setActions(next);if(item.id==="catalog")setSubstanceCatalog(true);setEnabled(false);}} className={`min-h-24 text-left rounded-xl border p-3 transition-colors ${template===item.id?"border-ios-blue bg-ios-blue/10 ring-2 ring-ios-blue/25":"border-ios-separator hover:bg-ios-gray-5"}`}><span className="font-semibold text-sm text-ios-text block">{item.title}</span><span className="text-xs text-ios-text-secondary">{item.description}</span></button>)}</div></IOSCard>}
                     <IOSCard className="p-5 space-y-4">
                         <div className="flex items-center gap-2">
                             <div className="w-9 h-9 rounded-xl bg-ios-blue/10 flex items-center justify-center text-ios-blue">
@@ -566,33 +609,7 @@ export default function AutomationEditor({
                                 Básico
                             </h2>
                         </div>
-                        <Field
-                            label="Canal do Instagram *"
-                            hint={
-                                channelsError
-                                    ? `Aviso: ${channelsError}`
-                                    : "Somente contas profissionais do Instagram."
-                            }
-                        >
-                            <select
-                                value={channelId}
-                                onChange={(e) => setChannelId(e.target.value)}
-                                className={inputCls}
-                                aria-label="Canal do Instagram"
-                            >
-                                <option value="">
-                                    Selecione um canal…
-                                </option>
-                                {channels.map((c) => (
-                                    <option key={c.id} value={c.id}>
-                                        {channelLabel(c)}
-                                        {c.status !== "active"
-                                            ? ` (${c.status})`
-                                            : ""}
-                                    </option>
-                                ))}
-                            </select>
-                        </Field>
+                        <p className="text-xs text-ios-text-secondary">Perfis do Instagram e posts são escolhidos na próxima etapa.</p>
                         <Field label="Nome *">
                             <input
                                 value={name}
@@ -627,8 +644,18 @@ export default function AutomationEditor({
                             </div>
                         </div>
                     </IOSCard>
+                    </>}
+
+                    {step===1&&<IOSCard className="p-5 space-y-4"><div><h2 className="text-[17px] font-bold text-ios-text">Perfis e posts</h2><p className="text-xs text-ios-text-secondary">A mesma regra será aplicada aos perfis selecionados.</p></div>
+                        <Field label="Buscar perfis"><input value={profileQuery} onChange={e=>setProfileQuery(e.target.value)} placeholder="Nome ou @usuário" className={inputCls} aria-invalid={formErrors.some(error=>error.includes("perfil")||error.includes("post"))}/></Field>
+                        <div className="flex flex-wrap gap-2"><button type="button" onClick={()=>setChannelIds(channels.map(c=>c.id))} className="min-h-11 px-3 rounded-lg border border-ios-separator text-sm">Selecionar todos</button><button type="button" onClick={()=>setChannelIds([])} className="min-h-11 px-3 rounded-lg border border-ios-separator text-sm">Limpar seleção</button><span className="self-center text-xs text-ios-text-secondary">{channelIds.length} perfil(is) selecionado(s)</span></div>
+                        {channelsError&&<p className="text-sm text-ios-orange">{channelsError}</p>}{visibleChannels.length===0&&<p className="text-sm text-ios-text-secondary">Nenhum perfil do Instagram encontrado.</p>}
+                        <div className="space-y-2">{visibleChannels.map(c=><label key={c.id} className="flex items-center gap-3 min-h-12 rounded-xl border border-ios-separator p-3"><input type="checkbox" className="w-5 h-5 accent-blue-600" checked={channelIds.includes(c.id)} onChange={e=>setChannelIds(current=>e.target.checked?[...current,c.id]:current.filter(id=>id!==c.id))}/><span className="min-w-0 flex-1"><span className="block text-sm font-medium text-ios-text">{channelLabel(c)}</span><span className="text-xs text-ios-text-secondary">@{c.username} · {c.status}</span></span></label>)}</div>
+                        {trigger==="comment"?<ProfilePostPicker channels={channels} selectedIds={channelIds} mediaIdsByChannel={mediaIdsByChannel} scopeByChannel={postScopeByChannel} onChange={setMediaIdsByChannel} onScopeChange={setPostScopeByChannel}/>:<details className="rounded-xl border border-ios-separator p-3"><summary className="cursor-pointer min-h-8 text-sm font-medium text-ios-text">Restrições de posts existentes</summary><p className="text-xs text-ios-text-secondary my-2">Estas restrições foram preservadas da configuração anterior.</p><ProfilePostPicker channels={channels} selectedIds={channelIds} mediaIdsByChannel={mediaIdsByChannel} scopeByChannel={postScopeByChannel} onChange={setMediaIdsByChannel} onScopeChange={setPostScopeByChannel}/></details>}
+                    </IOSCard>}
 
                     {/* Gatilho */}
+                    {step===2&&<>
                     <IOSCard className="p-5 space-y-4">
                         <div className="flex items-center gap-2">
                             <div className="w-9 h-9 rounded-xl bg-ios-green/10 flex items-center justify-center text-ios-green">
@@ -643,9 +670,7 @@ export default function AutomationEditor({
                                 <select
                                     value={trigger}
                                     onChange={(e) =>
-                                        setTrigger(
-                                            e.target.value as IgTrigger,
-                                        )
+                                        (setLegacyTrigger(""), setTrigger(e.target.value as IgTrigger))
                                     }
                                     className={inputCls}
                                 >
@@ -717,18 +742,6 @@ export default function AutomationEditor({
                                 placeholder="Ex.: golpe, spam"
                             />
                         </Field>
-                        <Field
-                            label="Posts específicos (media_ids)"
-                            hint="Um ID por linha. Vazio = qualquer post."
-                        >
-                            <textarea
-                                rows={2}
-                                value={mediaIds}
-                                onChange={(e) => setMediaIds(e.target.value)}
-                                placeholder={"17895695668004550\n…"}
-                                className={`${inputCls} font-mono`}
-                            />
-                        </Field>
                         <SwitchRow
                             label="Somente primeira interação"
                             hint="Responde apenas se o contato nunca interagiu com o canal."
@@ -738,6 +751,7 @@ export default function AutomationEditor({
                     </IOSCard>
 
                     {/* Anti-bloqueio */}
+                    <details className="rounded-xl border border-ios-separator bg-ios-background p-4"><summary className="cursor-pointer min-h-10 text-[16px] font-semibold text-ios-text">Opções avançadas e limites</summary><div className="space-y-4 mt-4">
                     <IOSCard className="p-5 space-y-4">
                         <div className="flex items-center gap-2">
                             <div className="w-9 h-9 rounded-xl bg-ios-orange/10 flex items-center justify-center text-ios-orange">
@@ -820,8 +834,10 @@ export default function AutomationEditor({
                             </div>
                         )}
                     </IOSCard>
+                    </div></details></>}
 
                     {/* Ações */}
+                    {step===3&&<>
                     <IOSCard className="p-5 space-y-4">
                         <div className="flex items-center gap-2">
                             <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-500">
@@ -841,11 +857,14 @@ export default function AutomationEditor({
                             onChange={setActions}
                             sequences={sequences}
                             webhooks={webhooks}
+                            profileChannels={channels.filter(c=>channelIds.includes(c.id))}
                         />
                     </IOSCard>
+                    <MessagePreview result={null} actions={actions} profileLabel={channels.find(c=>c.id===channelIds[0])?.username}/>
+                    </>}
 
                     {/* Avançado */}
-                    <IOSCard className="p-5 space-y-4">
+                    {step===3&&<details className="rounded-xl border border-ios-separator bg-ios-background p-4"><summary className="cursor-pointer min-h-10 text-[16px] font-semibold text-ios-text">Configuração avançada</summary><IOSCard className="p-5 space-y-4 mt-4">
                         <div className="flex items-center gap-2">
                             <div className="w-9 h-9 rounded-xl bg-ios-teal/10 flex items-center justify-center text-ios-teal">
                                 <Sparkles size={18} />
@@ -865,19 +884,27 @@ export default function AutomationEditor({
                             contatos e visíveis na aba Contatos.
                         </p>
                     </IOSCard>
+                    </details>}
+
+                    {step===4&&<IOSCard className="p-5 space-y-4"><h2 className="text-[18px] font-bold text-ios-text">Revise sua automação</h2><dl className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm"><div><dt className="text-ios-text-secondary">Objetivo</dt><dd className="font-medium text-ios-text">{name||"Sem nome"}</dd></div><div><dt className="text-ios-text-secondary">Perfis</dt><dd className="font-medium text-ios-text">{channelIds.map(id=>channelLabel(channels.find(c=>c.id===id)??{id,name:id,platform:"instagram",username:"",accountId:"",status:""})).join(", ")||"Nenhum selecionado"}</dd></div><div><dt className="text-ios-text-secondary">Quando</dt><dd className="font-medium text-ios-text">{legacyTrigger||TRIGGER_LABELS[trigger]||String(trigger)} · {keywords.length?keywords.join(", "):"qualquer texto"}</dd></div><div><dt className="text-ios-text-secondary">Ações</dt><dd className="font-medium text-ios-text">{actions.length+legacyActions.length} ação(ões)</dd></div><div><dt className="text-ios-text-secondary">Estado ao salvar</dt><dd className="font-medium text-ios-text">{enabled?"Ativada; envio depende das configurações globais":"Pausada"}</dd></div><div><dt className="text-ios-text-secondary">Conexão</dt><dd className="font-medium text-ios-text">{webhookSummary.loading?"Verificando…":webhookSummary.text}</dd></div><div><dt className="text-ios-text-secondary">Modo global do Instagram</dt><dd className="font-medium text-ios-text">{globalMode}</dd></div></dl><div className="rounded-xl bg-ios-orange/10 p-3 text-sm text-ios-text">Uma automação ativa pode continuar sem enviar quando o modo de teste global estiver ligado ou a conexão falhar. Conexão webhook não confirma entrega.</div><div className="flex flex-col sm:flex-row gap-3"><IOSButton variant="secondary" className="!min-h-11" onClick={()=>save(false)} disabled={saving}>{saving?"Salvando…":"Salvar pausada"}</IOSButton><IOSButton variant="primary" className="!min-h-11" onClick={()=>save(true)} disabled={saving}>{saving?"Salvando…":"Salvar e ativar"}</IOSButton></div>{(template==="catalog"||substanceCatalog)&&catalogCount===0&&<p role="status" className="rounded-lg bg-ios-orange/10 p-3 text-sm text-ios-text">O catálogo está vazio. <Link href="/automations?tab=catalogo" className="text-ios-blue underline">Adicionar itens ao catálogo</Link> antes de usar dados de substâncias.</p>}</IOSCard>}
                 </div>
 
                 {/* Simulador lateral */}
-                <div className="lg:sticky lg:top-4">
+                {step===4&&<div className="lg:sticky lg:top-4 space-y-3">
+                    <Field label="Perfil para o teste"><select value={testChannelId} onChange={e=>setTestChannelId(e.target.value)} className={inputCls}>{channelIds.map(id=><option key={id} value={id}>{channelLabel(channels.find(c=>c.id===id)??{id,name:id,platform:"instagram",username:"",accountId:"",status:""})}</option>)}</select></Field>
                     <SimulatorPanel
-                        channelId={channelId}
+                        channelId={testChannelId}
+                        profileLabel={channels.find(c=>c.id===testChannelId)?.username}
                         defaultOpen={initialSimulatorOpen}
                         defaultKind={trigger}
                         onToast={showToast}
-                        draft={buildPayload()}
+                        draft={{...buildPayload(),channelId:testChannelId,mediaIds:mediaIdsByChannel[testChannelId]??[],actions:buildPayload().actions.map((action,index)=>{const original=actions[index];const config=isRecord((action as Record<string,unknown>).config)?(action as Record<string,unknown>).config as Record<string,unknown>:{};return {...action,sequenceId:original?.sequenceIdsByChannel?.[testChannelId]??original?.sequenceId,webhookId:original?.webhookIdsByChannel?.[testChannelId]??original?.webhookId,config:{...config,sequenceId:original?.sequenceIdsByChannel?.[testChannelId]??original?.sequenceId,webhookId:original?.webhookIdsByChannel?.[testChannelId]??original?.webhookId}}})}}
+                        onResultChange={setSimulationResult}
                     />
-                </div>
+                    <MessagePreview result={simulationResult} actions={actions} profileLabel={channels.find(c=>c.id===testChannelId)?.username}/>
+                </div>}
             </div>
+            <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-0 md:left-64 md:w-[calc(100%-16rem)] inset-x-0 z-30 border-t border-ios-separator bg-ios-background/95 backdrop-blur p-3 pb-[max(env(safe-area-inset-bottom),0.75rem)]"><div className="max-w-5xl mx-auto flex gap-3"><button type="button" onClick={()=>step===0?leaveEditor():setStep(s=>Math.max(0,s-1))} className="min-h-11 px-4 rounded-xl border border-ios-separator text-sm font-medium text-ios-text">{step===0?"Sair":"Voltar"}</button>{step<4?<button type="button" onClick={()=>{if(step===0&&!name.trim()){setFormErrors(["Informe um nome para a automação."]);return;}if(step===1){if(!channelIds.length){setFormErrors(["Selecione ao menos um perfil do Instagram."]);return;}const noPosts=channelIds.filter(id=>postScopeByChannel[id]==="selected"&&!(mediaIdsByChannel[id]??[]).length).map(id=>`${channelLabel(channels.find(c=>c.id===id)??{id,name:id,platform:"instagram",username:"",accountId:"",status:""})}: selecione um post ou escolha Todos.`);if(noPosts.length){setFormErrors(noPosts);return;}}setFormErrors([]);setStep(s=>Math.min(4,s+1));window.scrollTo({top:0,behavior:"smooth"});}} className="flex-1 min-h-11 rounded-xl bg-ios-blue text-white text-sm font-semibold">Próxima etapa</button>:<button type="button" onClick={()=>save(false)} disabled={saving} className="flex-1 min-h-11 rounded-xl bg-ios-blue text-white text-sm font-semibold disabled:opacity-50">{saving?"Salvando…":"Salvar pausada"}</button>}</div></div>
         </div>
     );
 }
