@@ -20,7 +20,7 @@ export async function GET(req: Request) {
     const where = { user_id: userId, channel_id: { in: channelIds }, status: "published", instagram_media_id: { not: null }, ...(query ? { caption: { contains: query } } : {}) };
     try {
         const [rows, total] = await Promise.all([
-            prisma.post.findMany({ where, orderBy: [{ published_at: "desc" }, { created_at: "desc" }], skip: offset, take: limit, select: { id: true, channel_id: true, caption: true, thumbnail_url: true, image_url: true, video_url: true, instagram_media_id: true } }),
+            prisma.post.findMany({ where, orderBy: [{ published_at: "desc" }, { created_at: "desc" }, { id: "asc" }], skip: offset, take: limit, select: { id: true, channel_id: true, caption: true, thumbnail_url: true, image_url: true, instagram_media_id: true } }),
             prisma.post.count({ where }),
         ]);
         const posts = rows.map((row) => ({
@@ -28,7 +28,7 @@ export async function GET(req: Request) {
             mediaId: row.instagram_media_id!,
             channelId: row.channel_id!,
             caption: row.caption,
-            thumbnailUrl: row.thumbnail_url ?? row.image_url ?? row.video_url,
+            thumbnailUrl: row.thumbnail_url || row.image_url || null,
             permalink: null as string | null,
         }));
         const nextOffset = offset + rows.length;

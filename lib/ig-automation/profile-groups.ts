@@ -43,7 +43,8 @@ export function serializePhysical(row: any) {
 
 export function serializeGroup(rows: any[]) {
     const groupId = profileGroupId(rows[0].settings) ?? rows[0].id;
-    const leader = rows.find((r) => r.id === groupId) ?? rows[0];
+    const ordered = [...rows].sort((a, b) => a.id === groupId ? -1 : b.id === groupId ? 1 : a.created_at.getTime() - b.created_at.getTime() || a.id.localeCompare(b.id));
+    const leader = ordered[0];
     const stats = aggregateGroupStats(rows);
     const mediaIdsByChannel: Record<string, string[]> = {};
     for (const row of rows) mediaIdsByChannel[row.channel_id] = parseStoredStringArray(row.media_ids);
@@ -52,8 +53,9 @@ export function serializeGroup(rows: any[]) {
         enabled: rows.some((r) => r.enabled),
         stats_sent: stats.stats_sent, stats_matched: stats.stats_matched, stats_failed: stats.stats_failed,
         stats_clicks: stats.stats_clicks, last_run_at: stats.last_run_at,
-        channelIds: rows.map((r) => r.channel_id), channels: rows.map((r) => r.channel),
-        memberIds: rows.map((r) => r.id), mediaIdsByChannel,
+        channelIds: ordered.map((r) => r.channel_id), channels: ordered.map((r) => r.channel),
+        memberIds: ordered.map((r) => r.id), mediaIdsByChannel,
+        enabledProfileCount: rows.filter((r) => r.enabled).length,
     };
 }
 
@@ -111,7 +113,7 @@ export function actionForChannel(action: any, channelId: string) {
             ? (typeof sequenceMap[channelId] === "string" ? sequenceMap[channelId] : null)
             : action.sequenceId,
         webhookId: hasWebhookMap
-            ? (typeof webhookMap[channelId] === "string" ? webhookMap[channelId] : null)
+            ? (typeof webhookMap[channelId] === "string" && webhookMap[channelId].trim() ? webhookMap[channelId] : action.webhookId)
             : action.webhookId,
     };
 }
