@@ -48,8 +48,30 @@ export function serializeGroup(rows: any[]) {
     const stats = aggregateGroupStats(rows);
     const mediaIdsByChannel: Record<string, string[]> = {};
     for (const row of rows) mediaIdsByChannel[row.channel_id] = parseStoredStringArray(row.media_ids);
+    // The physical rows contain channel-resolved sequence/webhook IDs. Rebuild
+    // the full logical maps from all members so a partial PATCH can round-trip
+    // common/global references even when the leader has a channel override.
+    const serialized = serializePhysical(leader);
+    const actions = serialized.actions.map((action: any) => {
+        const sequenceIdsByChannel: Record<string, string> = {};
+        const webhookIdsByChannel: Record<string, string> = {};
+        for (const row of ordered) {
+            const memberAction = row.actions.find((candidate: any) => candidate.position === action.position && candidate.type === action.type);
+            if (!memberAction) continue;
+            if (typeof memberAction.sequence_id === "string" && memberAction.sequence_id) sequenceIdsByChannel[row.channel_id] = memberAction.sequence_id;
+            if (typeof memberAction.webhook_id === "string" && memberAction.webhook_id) webhookIdsByChannel[row.channel_id] = memberAction.webhook_id;
+        }
+        return {
+            ...action,
+            config: {
+                ...(action.config ?? {}),
+                sequenceIdsByChannel,
+                webhookIdsByChannel,
+            },
+        };
+    });
     return {
-        ...serializePhysical(leader), id: groupId,
+        ...serialized, actions, id: groupId,
         enabled: rows.some((r) => r.enabled),
         stats_sent: stats.stats_sent, stats_matched: stats.stats_matched, stats_failed: stats.stats_failed,
         stats_clicks: stats.stats_clicks, last_run_at: stats.last_run_at,

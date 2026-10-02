@@ -116,7 +116,8 @@ export async function PATCH(req: Request, { params }: RouteParams) {
         if (channels.length !== desiredIds.length) return notFound("Canal não encontrado");
         if (channels.some((c) => c.platform !== "instagram")) return badRequest("Canal não é do Instagram");
         const membershipChanged = desiredIds.length !== group.rows.length || desiredIds.some((id) => !group.rows.some((row) => row.channel_id === id));
-        const effectiveActions = data.actions ?? (membershipChanged ? representative.actions.map((action: any) => pruneActionMaps(action, desiredIds)) : undefined);
+        const sharedActions = group.groupId ? serializeGroup(group.rows).actions : representative.actions;
+        const effectiveActions = data.actions ?? (membershipChanged ? sharedActions.map((action: any) => pruneActionMaps(action, desiredIds)) : undefined);
         const mapError = validateChannelMapKeys(effectiveActions, desiredIds);
         if (mapError) return badRequest(mapError);
         const mappingError = validateActionMappings(effectiveActions, desiredIds);

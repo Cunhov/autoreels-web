@@ -360,7 +360,7 @@ export default function SimulatorPanel({
                                                 )}
                                                 <span className="text-ios-text">
                                                     {GATE_LABELS[g.gate] ?? g.gate}
-                                                    {g.reason && (
+                                                    {!g.passed && g.reason && (
                                                         <span className="text-ios-text-secondary">
                                                             {" — "}
                                                             {gateReason(g.reason)}
