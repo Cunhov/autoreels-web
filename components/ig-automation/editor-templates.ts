@@ -14,4 +14,4 @@ export function actionsForTemplate(id:EditorTemplate): IgActionDraft[] | null {
  if(id==="sequence")return [draft("start_sequence",0)];
  return null;
 }
-function draft(type:IgActionDraft["type"],position:number):IgActionDraft{return {position,type,delaySeconds:0,textVariants:[""],buttons: type==="private_reply"?[{type:"web_url",title:"Ver detalhes",url:"https://"}]:[],quickReplies:[],mediaUrl:"",tag:"",sequenceId:"",webhookId:"",aiPrompt:"",trackClicks:false};}
+function draft(type:IgActionDraft["type"],position:number):IgActionDraft{return {position,type,delaySeconds:0,textVariants:[""],buttons: type==="private_reply"?[{type:"web_url",title:"Ver detalhes",url:""}]:[],quickReplies:[],mediaUrl:"",tag:"",sequenceId:"",webhookId:"",aiPrompt:"",trackClicks:false};}

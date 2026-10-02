@@ -145,7 +145,31 @@ export default function ActionListEditor({
         setTextSelection((prev) => ({ ...prev, [actionKey]: { variantIndex, start: start + token.length, end: start + token.length } }));
     };
 
-    const referenceOptions = (options: SimplestOption[], channelId: string) => options.filter((option) => !option.channelId || option.channelId === channelId);
+    const referenceOptions = (
+        options: SimplestOption[],
+        channelId: string,
+        includeGlobal = false,
+    ) => channelId
+        ? options.filter((option) => option.channelId === channelId || (includeGlobal && !option.channelId))
+        : options;
+
+    const referenceValue = (
+        action: IgActionDraft,
+        field: "sequence" | "webhook",
+        channelId: string,
+        options: SimplestOption[],
+    ) => {
+        const map = field === "sequence" ? action.sequenceIdsByChannel : action.webhookIdsByChannel;
+        if (map && Object.prototype.hasOwnProperty.call(map, channelId)) {
+            return map[channelId] ?? "";
+        }
+        const scalarId = field === "sequence" ? action.sequenceId : action.webhookId;
+        const scalarOption = options.find((option) => option.id === scalarId);
+        if (!scalarOption) return "";
+        const belongsToProfile = scalarOption.channelId === channelId;
+        const isGlobalWebhook = field === "webhook" && !scalarOption.channelId;
+        return belongsToProfile || isGlobalWebhook ? scalarId : "";
+    };
     const setProfileReference = (index: number, field: "sequence" | "webhook", channelId: string, value: string) => {
         const action = actions[index];
         if (!action) return;
@@ -674,7 +698,7 @@ export default function ActionListEditor({
                                         {profileChannels.map((channel, ci) => {
                                             const options = referenceOptions(sequences, channel.id);
                                             return <label key={channel.id} className="block text-[11px] font-medium text-ios-text-secondary">{channel.username ? `@${channel.username}` : channel.name || `Perfil ${ci + 1}`}
-                                                <select aria-label={`${itemNoun} ${index + 1}: sequência para ${channel.name || channel.id}`} value={action.sequenceIdsByChannel?.[channel.id] ?? (ci === 0 ? action.sequenceId : "")} disabled={disabled} onChange={(e) => setProfileReference(index, "sequence", channel.id, e.target.value)} className={inputCls}>
+                                                <select aria-label={`${itemNoun} ${index + 1}: sequência para ${channel.name || channel.id}`} value={referenceValue(action, "sequence", channel.id, sequences)} disabled={disabled} onChange={(e) => setProfileReference(index, "sequence", channel.id, e.target.value)} className={inputCls}>
                                                     <option value="">Selecione uma sequência…</option>
                                                     {options.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                                                 </select>
@@ -682,7 +706,7 @@ export default function ActionListEditor({
                                         })}
                                     </div>
                                 ) : (
-                                    <select aria-label={`${itemNoun} ${index + 1}: sequência a iniciar`} value={profileChannels[0] ? action.sequenceIdsByChannel?.[profileChannels[0].id] ?? action.sequenceId : action.sequenceId} disabled={disabled} onChange={(e) => update(index, { sequenceId: e.target.value, ...(profileChannels[0] ? { sequenceIdsByChannel: { ...action.sequenceIdsByChannel, [profileChannels[0].id]: e.target.value } } : {}) })} className={inputCls}>
+                                    <select aria-label={`${itemNoun} ${index + 1}: sequência a iniciar`} value={profileChannels[0] ? referenceValue(action, "sequence", profileChannels[0].id, sequences) : action.sequenceId} disabled={disabled} onChange={(e) => update(index, { sequenceId: e.target.value, ...(profileChannels[0] ? { sequenceIdsByChannel: { ...action.sequenceIdsByChannel, [profileChannels[0].id]: e.target.value } } : {}) })} className={inputCls}>
                                         <option value="">Selecione uma sequência…</option>
                                         {referenceOptions(sequences, profileChannels[0]?.id ?? "").map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                                     </select>
@@ -704,9 +728,9 @@ export default function ActionListEditor({
                                 {profileChannels.length > 1 ? (
                                     <div className="space-y-2">
                                         {profileChannels.map((channel, ci) => {
-                                            const options = referenceOptions(webhooks, channel.id);
+                                            const options = referenceOptions(webhooks, channel.id, true);
                                             return <label key={channel.id} className="block text-[11px] font-medium text-ios-text-secondary">{channel.username ? `@${channel.username}` : channel.name || `Perfil ${ci + 1}`}
-                                                <select aria-label={`${itemNoun} ${index + 1}: webhook para ${channel.name || channel.id}`} value={action.webhookIdsByChannel?.[channel.id] ?? (ci === 0 ? action.webhookId : "")} disabled={disabled} onChange={(e) => setProfileReference(index, "webhook", channel.id, e.target.value)} className={inputCls}>
+                                                <select aria-label={`${itemNoun} ${index + 1}: webhook para ${channel.name || channel.id}`} value={referenceValue(action, "webhook", channel.id, webhooks)} disabled={disabled} onChange={(e) => setProfileReference(index, "webhook", channel.id, e.target.value)} className={inputCls}>
                                                     <option value="">Selecione um webhook…</option>
                                                     {options.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                                                 </select>
@@ -714,9 +738,9 @@ export default function ActionListEditor({
                                         })}
                                     </div>
                                 ) : (
-                                    <select aria-label={`${itemNoun} ${index + 1}: webhook de saída`} value={profileChannels[0] ? action.webhookIdsByChannel?.[profileChannels[0].id] ?? action.webhookId : action.webhookId} disabled={disabled} onChange={(e) => update(index, { webhookId: e.target.value, ...(profileChannels[0] ? { webhookIdsByChannel: { ...action.webhookIdsByChannel, [profileChannels[0].id]: e.target.value } } : {}) })} className={inputCls}>
+                                    <select aria-label={`${itemNoun} ${index + 1}: webhook de saída`} value={profileChannels[0] ? referenceValue(action, "webhook", profileChannels[0].id, webhooks) : action.webhookId} disabled={disabled} onChange={(e) => update(index, { webhookId: e.target.value, ...(profileChannels[0] ? { webhookIdsByChannel: { ...action.webhookIdsByChannel, [profileChannels[0].id]: e.target.value } } : {}) })} className={inputCls}>
                                         <option value="">Selecione um webhook…</option>
-                                        {referenceOptions(webhooks, profileChannels[0]?.id ?? "").map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
+                                        {referenceOptions(webhooks, profileChannels[0]?.id ?? "", true).map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}
                                     </select>
                                 )}
                                 {webhooks.length === 0 && (

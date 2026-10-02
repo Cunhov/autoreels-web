@@ -196,11 +196,28 @@ export default function WebhookPanel({ compact = false }: WebhookPanelProps) {
     async function resubscribe(channelId: string) {
         setResubscribing(channelId);
         try {
-            await apiFetch<unknown>("/api/ig/webhook-status", {
+            const raw = await apiFetch<unknown>("/api/ig/webhook-status", {
                 method: "POST",
                 body: JSON.stringify({ channelId }),
             });
-            showToast("Conexão verificada ✓");
+            const result = isRecord(raw) ? raw : {};
+            const status = asString(result.status, "unknown");
+            if (result.ok === true && status === "ok") {
+                showToast("Conexão verificada ✓");
+            } else {
+                const statusMessage: Record<string, string> = {
+                    partial: "A assinatura do webhook está incompleta.",
+                    missing: "O webhook ainda não está assinado.",
+                    token_invalid: "O token do perfil é inválido ou expirou.",
+                    error: "A plataforma não conseguiu confirmar a assinatura do webhook.",
+                    unknown: "O endpoint não confirmou o estado da conexão.",
+                };
+                const detail = asString(result.error ?? result.lastError);
+                showToast(
+                    detail || statusMessage[status] || `Estado retornado: ${status}.`,
+                    "error",
+                );
+            }
             await loadStatuses();
         } catch (e: unknown) {
             showToast(

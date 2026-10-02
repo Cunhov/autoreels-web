@@ -236,8 +236,22 @@ export async function DELETE(_req: Request, { params }: RouteParams) {
         const group = await resolveGroup(userId, id);
         if (!group) return notFound("Automação não encontrada");
         await prisma.$transaction(async (tx) => {
-            await cancelPendingActionJobs(tx, userId, group.rows.map((r) => r.id), group.rows.flatMap((r) => r.actions.map((a: any) => a.id)));
-            await tx.igAutomation.deleteMany({ where: { user_id: userId, id: { in: group.rows.map((r) => r.id) } } });
+            const currentRows = await tx.igAutomation.findMany({ where: { user_id: userId }, include: AUTOMATION_INCLUDE });
+            const logicalId = group.groupId ?? group.rows[0].id;
+            const currentLeader = currentRows.find((row) => row.id === logicalId);
+            const currentLeaderGroupId = currentLeader ? profileGroupId(currentLeader.settings) : null;
+            const hasCurrentMarkerMembers = currentRows.some((row) => profileGroupId(row.settings) === logicalId);
+            // If the ID now belongs to another group, do not follow it into that group.
+            const stillSameLogicalGroup = currentLeaderGroupId === null || currentLeaderGroupId === logicalId;
+            const currentMembers = stillSameLogicalGroup
+                ? (group.groupId || currentLeaderGroupId === logicalId || hasCurrentMarkerMembers
+                    ? currentRows.filter((row) => row.id === logicalId || profileGroupId(row.settings) === logicalId)
+                    : currentLeader ? [currentLeader] : [])
+                : [];
+            const memberIds = currentMembers.map((row) => row.id);
+            if (!memberIds.length) return; // Already removed, or the stable ID was reassigned.
+            await cancelPendingActionJobs(tx, userId, memberIds, currentMembers.flatMap((row) => row.actions.map((a: any) => a.id)));
+            await tx.igAutomation.deleteMany({ where: { user_id: userId, id: { in: memberIds } } });
         });
         return NextResponse.json({ ok: true });
     } catch (error: unknown) {

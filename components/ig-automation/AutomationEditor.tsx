@@ -56,6 +56,37 @@ import {
 
 const inputCls =
     "w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400";
+const HTTP_URL_RE = /^https?:\/\/\S+$/i;
+
+function isValidActionUrl(value: string | undefined): boolean {
+    if (!value || !HTTP_URL_RE.test(value.trim())) return false;
+    try {
+        const parsed = new URL(value.trim());
+        return (parsed.protocol === "http:" || parsed.protocol === "https:") && Boolean(parsed.hostname);
+    } catch {
+        return false;
+    }
+}
+
+function resolveProfileReference(
+    profileId: string,
+    map: Record<string, string> | undefined,
+    legacyId: string,
+    options: SimplestOption[],
+): string {
+    const hasProfileValue = Boolean(map && Object.prototype.hasOwnProperty.call(map, profileId));
+    const referenceId = hasProfileValue ? map?.[profileId] ?? "" : legacyId;
+    if (!referenceId) return "";
+    const option = options.find((item) => item.id === referenceId);
+    if (hasProfileValue) {
+        // Keep an existing profile-keyed reference if the options request is
+        // unavailable, but reject a known reference owned by another profile.
+        return !option || !option.channelId || option.channelId === profileId ? referenceId : "";
+    }
+    // A legacy scalar reference is safe only when its owner is global or this
+    // profile. Never copy another profile's scalar value into this profile.
+    return option && (!option.channelId || option.channelId === profileId) ? referenceId : "";
+}
 
 function Field({
     label,
@@ -241,7 +272,7 @@ export default function AutomationEditor({
                     setSequences(
                         extractItems(raw, ["sequences", "items"])
                             .map(normalizeSequence)
-                            .map((s) => ({ id: s.id, name: s.name })),
+                            .map((s) => ({ id: s.id, name: s.name, channelId: s.channelId })),
                     );
                 }
             } catch {
@@ -255,7 +286,7 @@ export default function AutomationEditor({
                     setWebhooks(
                         extractItems(raw, ["webhooks", "items"])
                             .map(normalizeOutboundWebhook)
-                            .map((w) => ({ id: w.id, name: w.name })),
+                            .map((w) => ({ id: w.id, name: w.name, channelId: w.channelId ?? undefined })),
                     );
                 }
             } catch {
@@ -396,18 +427,30 @@ export default function AutomationEditor({
                 if (a.type === "assign_tag" && !a.tag.trim()) {
                     errs.push(`${label}: informe a tag.`);
                 }
-                if (a.type === "start_sequence" && !a.sequenceId) {
-                    errs.push(`${label}: selecione a sequência.`);
+                if (a.type === "start_sequence") {
+                    channelIds.forEach((profileId) => {
+                        const sequenceId = resolveProfileReference(profileId, a.sequenceIdsByChannel, a.sequenceId, sequences);
+                        if (!sequenceId) {
+                            const profile = channels.find((channel) => channel.id === profileId);
+                            errs.push(`${label}: selecione uma sequência para ${profile ? channelLabel(profile) : profileId}.`);
+                        }
+                    });
                 }
-                if (a.type === "outbound_webhook" && !a.webhookId) {
-                    errs.push(`${label}: selecione o webhook de saída.`);
+                if (a.type === "outbound_webhook") {
+                    channelIds.forEach((profileId) => {
+                        const webhookId = resolveProfileReference(profileId, a.webhookIdsByChannel, a.webhookId, webhooks);
+                        if (!webhookId) {
+                            const profile = channels.find((channel) => channel.id === profileId);
+                            errs.push(`${label}: selecione um webhook de saída para ${profile ? channelLabel(profile) : profileId}.`);
+                        }
+                    });
                 }
                 if (
                     ["private_reply", "dm_buttons"].includes(a.type) &&
                     a.buttons.some(
                         (b) =>
                             !b.title.trim() ||
-                            (b.type === "web_url" && !b.url?.trim()) ||
+                            (b.type === "web_url" && !isValidActionUrl(b.url)) ||
                             (b.type === "postback" && !b.payload?.trim()),
                     )
                 ) {
@@ -453,6 +496,38 @@ export default function AutomationEditor({
                 : null,
             settings: { ...settingsExtra, substanceCatalog },
             actions: [...actions.map((a, i) => {const serialized=serializeActionPayload(a,i,"camel");const config=isRecord(serialized.config)?serialized.config:{};return {...serialized,config:{...config,sequenceIdsByChannel:Object.fromEntries(Object.entries(a.sequenceIdsByChannel??{}).filter(([id])=>channelIds.includes(id))),webhookIdsByChannel:Object.fromEntries(Object.entries(a.webhookIdsByChannel??{}).filter(([id])=>channelIds.includes(id)))}};}), ...legacyActions],
+        };
+    }
+
+    function buildSimulationDraft(): AutomationPayload {
+        const payload = buildPayload();
+        return {
+            ...payload,
+            channelId: testChannelId,
+            mediaIds: mediaIdsByChannel[testChannelId] ?? [],
+            actions: payload.actions.map((serialized, index) => {
+                const original = actions[index];
+                if (!original) return serialized;
+                const config = isRecord(serialized.config) ? serialized.config : {};
+                const sequenceId = resolveProfileReference(
+                    testChannelId,
+                    original.sequenceIdsByChannel,
+                    original.sequenceId,
+                    sequences,
+                );
+                const webhookId = resolveProfileReference(
+                    testChannelId,
+                    original.webhookIdsByChannel,
+                    original.webhookId,
+                    webhooks,
+                );
+                return {
+                    ...serialized,
+                    sequenceId,
+                    webhookId,
+                    config: { ...config, sequenceId, webhookId },
+                };
+            }),
         };
     }
 
@@ -577,7 +652,24 @@ export default function AutomationEditor({
                 <div className="text-right text-xs text-ios-text-secondary">{enabled ? "Ativada · envio condicionado" : "Pausada"}<br/>{webhookSummary.text}</div>
             </div>
 
-            <nav aria-label="Etapas da automação" className="sticky top-0 z-20 bg-ios-background/95 backdrop-blur border-y border-ios-separator py-2"><ol className="grid grid-cols-5 gap-1 max-w-4xl mx-auto">{["Objetivo","Perfis e posts","Quando responder","Mensagem e ações","Revisar e testar"].map((label,i)=><li key={label}><button type="button" onClick={()=>setStep(i)} aria-current={step===i?"step":undefined} className={`w-full min-h-11 px-1 rounded-lg text-[11px] sm:text-sm font-medium ${step===i?"bg-ios-blue text-white":"text-ios-text-secondary hover:bg-ios-gray-5"}`}><span className="sm:hidden">{i+1}</span><span className="hidden sm:inline">{i+1}. {label}</span></button></li>)}</ol></nav>
+            <nav aria-label="Etapas da automação" className="sticky top-0 z-20 bg-ios-background/95 backdrop-blur border-y border-ios-separator py-2">
+                <ol className="grid grid-cols-5 gap-1 max-w-4xl mx-auto">
+                    {["Objetivo", "Perfis e posts", "Quando responder", "Mensagem e ações", "Revisar e testar"].map((label, i) => (
+                        <li key={label}>
+                            <button
+                                type="button"
+                                onClick={() => setStep(i)}
+                                aria-label={`Etapa ${i + 1}: ${label}`}
+                                aria-current={step === i ? "step" : undefined}
+                                className={`w-full min-h-11 px-1 rounded-lg text-[11px] sm:text-sm font-medium ${step === i ? "bg-ios-blue text-white" : "text-ios-text-secondary hover:bg-ios-gray-5"}`}
+                            >
+                                <span className="sm:hidden">{i + 1}</span>
+                                <span className="hidden sm:inline">{i + 1}. {label}</span>
+                            </button>
+                        </li>
+                    ))}
+                </ol>
+            </nav>
 
             {formErrors.length > 0 && (
                 <div
@@ -615,6 +707,7 @@ export default function AutomationEditor({
                         <Field label="Nome *">
                             <input
                                 value={name}
+                                maxLength={120}
                                 onChange={(e) => setName(e.target.value)}
                                 placeholder="Ex.: Comentário → link do produto"
                                 className={inputCls}
@@ -898,10 +991,10 @@ export default function AutomationEditor({
                     <SimulatorPanel
                         channelId={testChannelId}
                         profileLabel={channels.find(c=>c.id===testChannelId)?.username}
-                        defaultOpen={initialSimulatorOpen}
+                        defaultOpen={step === 4 || initialSimulatorOpen}
                         defaultKind={trigger}
                         onToast={showToast}
-                        draft={{...buildPayload(),channelId:testChannelId,mediaIds:mediaIdsByChannel[testChannelId]??[],actions:buildPayload().actions.map((action,index)=>{const original=actions[index];const config=isRecord((action as Record<string,unknown>).config)?(action as Record<string,unknown>).config as Record<string,unknown>:{};return {...action,sequenceId:original?.sequenceIdsByChannel?.[testChannelId]??original?.sequenceId,webhookId:original?.webhookIdsByChannel?.[testChannelId]??original?.webhookId,config:{...config,sequenceId:original?.sequenceIdsByChannel?.[testChannelId]??original?.sequenceId,webhookId:original?.webhookIdsByChannel?.[testChannelId]??original?.webhookId}}})}}
+                        draft={buildSimulationDraft()}
                         onResultChange={setSimulationResult}
                     />
                     <MessagePreview result={simulationResult} actions={actions} profileLabel={channels.find(c=>c.id===testChannelId)?.username}/>
