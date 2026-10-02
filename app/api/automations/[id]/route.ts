@@ -124,7 +124,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
         if (mappingError) return badRequest(mappingError);
         const referenceChannels = body.channelIds !== undefined ? desiredIds : (body.channelId !== undefined ? desiredIds : group.rows.map((r) => r.channel_id));
         for (const channelId of referenceChannels) {
-            const err = await validateActionReferences(userId, effectiveActions?.map((a) => actionForChannel(a, channelId)), channelId);
+            const err = await validateActionReferences(userId, effectiveActions?.map((a: any) => actionForChannel(a, channelId)), channelId);
             if (err) return err.status === 404 ? notFound(err.error) : badRequest(err.error);
         }
         const parsedMap = parseMediaMap(body.mediaIdsByChannel, desiredIds);
