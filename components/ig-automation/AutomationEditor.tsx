@@ -654,7 +654,13 @@ export default function AutomationEditor({
 
             <nav aria-label="Etapas da automação" className="sticky top-0 z-20 bg-ios-background/95 backdrop-blur border-y border-ios-separator py-2">
                 <ol className="grid grid-cols-5 gap-1 max-w-4xl mx-auto">
-                    {["Objetivo", "Perfis e posts", "Quando responder", "Mensagem e ações", "Revisar e testar"].map((label, i) => (
+                    {[
+                        { label: "Objetivo", short: "Objetivo" },
+                        { label: "Perfis e posts", short: "Perfis" },
+                        { label: "Quando responder", short: "Quando" },
+                        { label: "Mensagem e ações", short: "Mensagem" },
+                        { label: "Revisar e testar", short: "Revisão" },
+                    ].map(({ label, short }, i) => (
                         <li key={label}>
                             <button
                                 type="button"
@@ -663,7 +669,10 @@ export default function AutomationEditor({
                                 aria-current={step === i ? "step" : undefined}
                                 className={`w-full min-h-11 px-1 rounded-lg text-[11px] sm:text-sm font-medium ${step === i ? "bg-ios-blue text-white" : "text-ios-text-secondary hover:bg-ios-gray-5"}`}
                             >
-                                <span className="sm:hidden">{i + 1}</span>
+                                <span className="sm:hidden flex flex-col items-center leading-tight text-[9px]">
+                                    <span>{i + 1}</span>
+                                    <span>{short}</span>
+                                </span>
                                 <span className="hidden sm:inline">{i + 1}. {label}</span>
                             </button>
                         </li>
@@ -919,6 +928,7 @@ export default function AutomationEditor({
                                 <Field label="Fuso horário" hint="Escolha uma sugestão ou informe outro fuso.">
                                     <input
                                         value={quietTz}
+                                        aria-label="Fuso horário"
                                         onChange={(e) =>
                                             setQuietTz(e.target.value)
                                         }
@@ -990,6 +1000,7 @@ export default function AutomationEditor({
                     <Field label="Perfil para o teste"><select value={testChannelId} onChange={e=>setTestChannelId(e.target.value)} className={inputCls}>{channelIds.map(id=><option key={id} value={id}>{channelLabel(channels.find(c=>c.id===id)??{id,name:id,platform:"instagram",username:"",accountId:"",status:""})}</option>)}</select></Field>
                     <SimulatorPanel
                         channelId={testChannelId}
+                        mediaIds={mediaIdsByChannel[testChannelId] ?? []}
                         profileLabel={channels.find(c=>c.id===testChannelId)?.username}
                         defaultOpen={step === 4 || initialSimulatorOpen}
                         defaultKind={trigger}

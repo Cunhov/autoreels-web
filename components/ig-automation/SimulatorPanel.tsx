@@ -59,6 +59,7 @@ function gateReason(reason: string): string {
 
 interface SimulatorPanelProps {
     channelId: string;
+    mediaIds?: string[];
     defaultOpen?: boolean;
     defaultKind?: IgTrigger;
     onToast?: (msg: string, type: "success" | "error") => void;
@@ -77,6 +78,7 @@ interface SimulatorPanelProps {
  */
 export default function SimulatorPanel({
     channelId,
+    mediaIds = [],
     defaultOpen = false,
     defaultKind = "comment",
     onToast,
@@ -94,7 +96,8 @@ export default function SimulatorPanel({
     const [error, setError] = useState("");
     const [result, setResult] = useState<IgSimulationResult | null>(null);
     const draftKey = JSON.stringify(draft);
-    const inputKey = JSON.stringify([channelId, draftKey, kind, text, mediaId, username, igUserId]);
+    const mediaIdsKey = JSON.stringify(mediaIds);
+    const inputKey = JSON.stringify([channelId, mediaIdsKey, draftKey, kind, text, mediaId, username, igUserId]);
     const generation = useRef(0);
     const onResultChangeRef = useRef(onResultChange);
     onResultChangeRef.current = onResultChange;
@@ -102,6 +105,10 @@ export default function SimulatorPanel({
     useEffect(() => {
         setKind(defaultKind);
     }, [defaultKind]);
+
+    useEffect(() => {
+        setMediaId(mediaIds[0] ?? "");
+    }, [channelId, mediaIdsKey]);
 
     useEffect(() => {
         generation.current += 1;
@@ -234,18 +241,33 @@ export default function SimulatorPanel({
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label className="text-xs font-medium text-ios-text mb-1 block">
-                                mediaId (opcional)
+                                {mediaIds.length > 0 ? "Post para o teste" : "ID do post para o teste (opcional)"}
                             </label>
-                            <input
-                                value={mediaId}
-                                onChange={(e) => setMediaId(e.target.value)}
-                                placeholder="ID do post"
-                                className={`${inputCls} font-mono`}
-                            />
+                            {mediaIds.length > 0 ? (
+                                <select
+                                    value={mediaId}
+                                    onChange={(e) => setMediaId(e.target.value)}
+                                    className={inputCls}
+                                >
+                                    <option value="">Nenhum post</option>
+                                    {mediaIds.map((id, index) => (
+                                        <option key={id} value={id}>
+                                            Post selecionado {index + 1}… ({id.length > 18 ? `${id.slice(0, 15)}…` : id})
+                                        </option>
+                                    ))}
+                                </select>
+                            ) : (
+                                <input
+                                    value={mediaId}
+                                    onChange={(e) => setMediaId(e.target.value)}
+                                    placeholder="ID do post"
+                                    className={`${inputCls} font-mono`}
+                                />
+                            )}
                         </div>
                         <div>
                             <label className="text-xs font-medium text-ios-text mb-1 block">
-                                igUserId (opcional)
+                                ID do contato no Instagram (opcional)
                             </label>
                             <input
                                 value={igUserId}
@@ -302,8 +324,7 @@ export default function SimulatorPanel({
                             ) : (
                                 <div className="p-3 rounded-xl bg-ios-gray-5/60 border border-ios-separator">
                                     <p className="text-[12px] font-medium text-ios-text-secondary">
-                                        Nenhuma automação casou com este
-                                        evento.
+                                        Nenhuma automação corresponde a este evento.
                                     </p>
                                 </div>
                             )}
