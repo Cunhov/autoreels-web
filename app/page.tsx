@@ -57,6 +57,23 @@ function normalizeCalendarData(data: unknown): Post[] {
   return [];
 }
 
+async function fetchCalendarWindow(start: Date, end: Date): Promise<Post[]> {
+  const posts: Post[] = [];
+  const limit = 1000;
+  let offset = 0;
+  while (true) {
+    const params = new URLSearchParams({ start: toApiDate(start), end: toApiDate(end), limit: String(limit), offset: String(offset) });
+    const response = await fetch(`/api/calendar?${params.toString()}`);
+    const data = await response.json();
+    if (!response.ok) throw new Error((data as { error?: string }).error || `Falha ao carregar calendário (HTTP ${response.status})`);
+    const page = normalizeCalendarData(data);
+    posts.push(...page);
+    const hasMore = Boolean(data && !Array.isArray(data) && (data as { hasMore?: boolean }).hasMore);
+    if (!hasMore || page.length === 0) return posts;
+    offset = Number((data as { nextOffset?: number }).nextOffset) || (offset + page.length);
+  }
+}
+
 export default function CalendarPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [planners, setPlanners] = useState<Planner[]>([]);
@@ -95,26 +112,17 @@ export default function CalendarPage() {
     lastFetchRef.current = Date.now();
     const seq = ++fetchSeqRef.current;
     try {
-      // Two parallel, lean fetches: the visible month/week range and the
-      // upcoming strip (today..+30d). Dedupe by id when they overlap.
-      // limit=1000: the route's default cap is 500 — without an explicit limit,
-      // windows with >500 posts silently drop the NEWEST ones (critic finding).
+      // Two parallel, lean fetches: the visible range and upcoming strip.
+      // Each range is paged so dense days never disappear at the route cap.
       const visible = getVisibleRange(currentDate, viewMode);
       const upcoming = getUpcomingRange();
-      const visibleParams = new URLSearchParams({ start: toApiDate(visible.start), end: toApiDate(visible.end), limit: '1000' });
-      const upcomingParams = new URLSearchParams({ start: toApiDate(upcoming.start), end: toApiDate(upcoming.end), limit: '1000' });
-      const [visibleRes, upcomingRes] = await Promise.all([
-        fetch(`/api/calendar?${visibleParams.toString()}`),
-        fetch(`/api/calendar?${upcomingParams.toString()}`),
+      const [visiblePosts, upcomingPosts] = await Promise.all([
+        fetchCalendarWindow(visible.start, visible.end),
+        fetchCalendarWindow(upcoming.start, upcoming.end),
       ]);
-      const [visibleData, upcomingData] = await Promise.all([visibleRes.json(), upcomingRes.json()]);
-
-      if (!visibleRes.ok || !upcomingRes.ok) {
-        throw new Error('Failed to load calendar data');
-      }
 
       const merged = new Map<string, Post>();
-      [...normalizeCalendarData(visibleData), ...normalizeCalendarData(upcomingData)].forEach(p => {
+      [...visiblePosts, ...upcomingPosts].forEach(p => {
         if (p && p.id) merged.set(p.id, p);
       });
       const nextPosts = Array.from(merged.values());
@@ -127,7 +135,7 @@ export default function CalendarPage() {
     } catch (err) {
       if (seq !== fetchSeqRef.current) return;
       console.error('Error fetching data:', err);
-      setFetchError('Falha ao carregar os dados do calendário.');
+      setFetchError(err instanceof Error ? err.message : 'Falha ao carregar os dados do calendário.');
     } finally {
       if (seq === fetchSeqRef.current) setLoading(false);
     }
@@ -247,10 +255,10 @@ export default function CalendarPage() {
   const filterActive = filterStatus !== 'all' || filterPlannerId !== 'all';
 
   const statusOptions: { value: FilterStatus; label: string; color: string }[] = [
-    { value: 'all', label: 'All', color: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' },
-    { value: 'published', label: 'Published', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
-    { value: 'failed', label: 'Failed', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
-    { value: 'pending', label: 'Pending / Scheduled', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
+    { value: 'all', label: 'Todos', color: 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300' },
+    { value: 'published', label: 'Publicados', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' },
+    { value: 'failed', label: 'Falharam', color: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' },
+    { value: 'pending', label: 'Pendentes / Agendados', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
   ];
 
   return (
@@ -273,14 +281,14 @@ export default function CalendarPage() {
       {showFilters && (
         <div className="relative z-10 border-b border-ios-separator bg-ios-card/70 backdrop-blur-md px-6 py-4 animate-in slide-in-from-top-2 duration-200">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-ios-text">Filters</h3>
+            <h3 className="text-sm font-semibold text-ios-text">Filtros</h3>
             <div className="flex items-center gap-3">
               {filterActive && (
                 <button
                   onClick={() => { setFilterStatus('all'); setFilterPlannerId('all'); }}
                   className="text-xs text-ios-blue hover:underline"
                 >
-                  Clear all
+                  Limpar filtros
                 </button>
               )}
               <button onClick={() => setShowFilters(false)} title="Close filters" className="text-ios-secondary hover:text-ios-text transition-colors">
@@ -292,7 +300,7 @@ export default function CalendarPage() {
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
             {/* Status filter */}
             <div className="flex-1">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-ios-secondary mb-2">Status</p>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-ios-secondary mb-2">Status</p>
               <div className="flex flex-wrap gap-2">
                 {statusOptions.map(opt => (
                   <button
@@ -312,7 +320,7 @@ export default function CalendarPage() {
             {/* Planner filter */}
             {planners.length > 0 && (
               <div className="flex-1">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-ios-secondary mb-2">Planner</p>
+                <p className="text-[11px] font-bold uppercase tracking-wide text-ios-secondary mb-2">Planejador</p>
                 <div className="flex flex-wrap gap-2">
                   <button
                     onClick={() => setFilterPlannerId('all')}
@@ -321,7 +329,7 @@ export default function CalendarPage() {
                       : 'border-ios-separator text-ios-secondary hover:border-ios-blue/40'
                       }`}
                   >
-                    All planners
+                    Todos
                   </button>
                   {planners.map(pl => (
                     <button
@@ -342,7 +350,7 @@ export default function CalendarPage() {
 
           {filterActive && (
             <p className="text-[11px] text-ios-secondary mt-3">
-              Showing {filteredPosts.length} of {posts.length} posts
+              Exibindo {filteredPosts.length} de {posts.length} posts
             </p>
           )}
         </div>
@@ -362,17 +370,17 @@ export default function CalendarPage() {
         if (todayPosts.length === 0) return null;
         return (
           <div className="relative z-10 bg-ios-card/60 backdrop-blur-md border-b border-ios-separator px-5 py-2.5 flex items-center gap-6 text-[13px]">
-            <span className="text-ios-text-secondary font-semibold">Today</span>
+            <span className="text-ios-text-secondary font-semibold">Hoje</span>
             <span className="flex items-center gap-1.5 text-ios-green font-medium">
-              <CheckCircle2 size={13} />{todayPublished} published
+              <CheckCircle2 size={13} />{todayPublished} publicados
             </span>
             {todayFailed > 0 && (
               <span className="flex items-center gap-1.5 text-ios-red font-medium">
-                <XCircle size={13} />{todayFailed} failed
+                <XCircle size={13} />{todayFailed} falharam
               </span>
             )}
             <span className="flex items-center gap-1.5 text-ios-text-secondary">
-              <Clock size={13} />{todayScheduled} scheduled
+              <Clock size={13} />{todayScheduled} agendados
             </span>
           </div>
         );
@@ -389,7 +397,7 @@ export default function CalendarPage() {
           <div className="relative z-10 px-4 py-2 border-b border-ios-separator bg-ios-background/50">
             <div className="flex items-center gap-2 mb-1.5">
               <CalendarClock size={12} className="text-ios-text-secondary" />
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-ios-text-secondary">Upcoming</span>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-ios-text-secondary">Próximos</span>
             </div>
             <div className="flex gap-2 overflow-x-auto scrollbar-hide pb-1">
               {upcoming.map(p => (
@@ -399,9 +407,9 @@ export default function CalendarPage() {
                   className="flex-shrink-0 bg-ios-card border border-ios-separator rounded-xl px-3 py-2 text-left hover:bg-ios-blue/5 transition-colors"
                 >
                   <p className="text-[11px] font-semibold text-ios-blue">
-                    {new Date(p.scheduled_at!).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    {new Date(p.scheduled_at!).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}
                   </p>
-                  <p className="text-[11px] text-ios-text truncate max-w-[160px] mt-0.5">{p.caption?.slice(0, 50) || 'No caption'}</p>
+              <p className="text-[11px] text-ios-text truncate max-w-[160px] mt-0.5">{p.caption?.slice(0, 50) || 'Sem legenda'}</p>
                 </button>
               ))}
             </div>

@@ -57,6 +57,10 @@ export async function GET(req: Request) {
 	const limit = Number.isFinite(requestedLimit)
 		? Math.min(Math.max(requestedLimit, 1), 1000)
 		: 500;
+	const requestedOffset = Number(searchParams.get("offset") || "0");
+	const offset = Number.isFinite(requestedOffset) && requestedOffset >= 0
+		? Math.floor(requestedOffset)
+		: 0;
 
 	const where: Prisma.PostWhereInput = {
 		user_id: userId,
@@ -87,7 +91,8 @@ export async function GET(req: Request) {
 
 	const posts = await prisma.post.findMany({
 		where,
-		orderBy: { scheduled_at: "asc" },
+		orderBy: [{ scheduled_at: "asc" }, { id: "asc" }],
+		skip: offset,
 		take: limit,
 		select: {
 			id: true,
@@ -120,5 +125,5 @@ export async function GET(req: Request) {
 		},
 	});
 
-	return NextResponse.json({ posts });
+	return NextResponse.json({ posts, hasMore: posts.length === limit, nextOffset: offset + posts.length });
 }

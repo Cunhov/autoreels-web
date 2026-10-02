@@ -35,7 +35,7 @@ export default function CalendarHeader({
                 <div className="flex flex-wrap gap-2 sm:gap-3">
                     <button
                         aria-label="Toggle filters"
-                        title="Filter"
+                        title="Filtros"
                         onClick={onFilterToggle}
                         className={`p-2 sm:p-2.5 rounded-xl shadow-sm transition-colors ${filterActive ? 'bg-ios-blue/15 ring-1 ring-ios-blue/30 text-ios-blue' : 'bg-ios-card/80 hover:bg-ios-card text-ios-blue'}`}
                     >

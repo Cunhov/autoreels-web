@@ -81,12 +81,12 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                         <div
                             key={i}
                             onClick={() => item.date && onDayClick(item.date)}
-                            className={`min-h-[90px] md:min-h-[140px] min-w-0 p-1.5 md:p-2 flex flex-col gap-2 transition-colors relative group cursor-pointer
+                            className={`min-h-[58px] sm:min-h-[90px] md:min-h-[140px] min-w-0 p-0.5 sm:p-1.5 md:p-2 flex flex-col gap-1 sm:gap-2 transition-colors relative group cursor-pointer
                 ${item.current ? 'bg-ios-card hover:bg-ios-gray-6/50' : 'bg-ios-background/60 hover:bg-ios-background/80'}
               `}
                         >
                             <div className="flex justify-between items-start z-10">
-                                <span className={`text-[13px] font-medium w-7 h-7 flex items-center justify-center rounded-full transition-all
+                                <span className={`text-[11px] sm:text-[13px] font-medium w-5 h-5 sm:w-7 sm:h-7 flex items-center justify-center rounded-full transition-all
                   ${isToday
                                         ? 'bg-ios-blue text-white shadow-md shadow-ios-blue/30 scale-110'
                                         : item.current ? 'text-ios-text' : 'text-ios-text-secondary/40'
@@ -95,24 +95,31 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                 </span>
                                 {/* Count badge — derived from the already-fetched posts */}
                                 {dayPosts.length > 0 && (
-                                    <span className="text-[9px] font-bold text-ios-blue bg-ios-blue/10 border border-ios-blue/20 rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-tight">
+                                    <span className="text-[8px] sm:text-[9px] font-bold text-ios-blue bg-ios-blue/10 border border-ios-blue/20 rounded-full px-1 sm:px-1.5 py-0.5 min-w-[15px] text-center leading-tight">
                                         {dayPosts.length}
                                     </span>
                                 )}
                             </div>
 
-                            <div className="flex-1 space-y-1.5 overflow-hidden">
+                            <div className="flex-1 space-y-1 sm:space-y-1.5 overflow-hidden">
+                                {dayPosts.slice(0, 2).map(p => (
+                                    <button key={`compact-${p.id}`} type="button" onClick={(e) => { e.stopPropagation(); onPostClick(p); }} className="sm:hidden w-full flex items-center gap-1 text-[8px] leading-tight text-ios-text-secondary min-w-0 text-left">
+                                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${p.status === 'published' ? 'bg-ios-green' : p.status === 'failed' ? 'bg-red-500' : 'bg-ios-blue'}`} />
+                                        <span className="truncate">{new Date(p.scheduled_at ?? '').toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+                                    </button>
+                                ))}
                                 {dayPosts.slice(0, 3).map(p => (
                                     <div
                                         key={p.id}
                                         onClick={(e) => { e.stopPropagation(); onPostClick(p); }}
-                                        className={`group/item relative aspect-square rounded-lg overflow-hidden border shadow-sm cursor-pointer hover:scale-[1.02] hover:z-20 bg-black/5 transition-all min-w-0
+                                        className={`hidden sm:block group/item relative aspect-square rounded-lg overflow-hidden border shadow-sm cursor-pointer hover:scale-[1.02] hover:z-20 bg-black/5 transition-all min-w-0
                                             ${getBorderClass(p.status)}
                                         `}
                                     >
                                         {p.image_url || p.thumbnail_url ? (
                                             <img
                                                 src={p.image_url || p.thumbnail_url}
+                                                onError={(event) => { event.currentTarget.style.display = 'none'; }}
                                                 className="w-full h-full object-cover opacity-90 group-hover/item:opacity-100 transition-opacity"
                                                 alt="Post preview"
                                                 loading="lazy"
@@ -120,7 +127,7 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                             />
                                         ) : (
                                             <div className="w-full h-full aspect-square bg-ios-gray-5 flex items-center justify-center text-[10px] text-ios-secondary">
-                                                {p.video_url ? 'Video' : 'No Media'}
+                                                {p.video_url ? 'Vídeo' : 'Sem mídia'}
                                             </div>
                                         )}
 
@@ -129,20 +136,20 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                         </div>
                                         <div className="absolute bottom-0 inset-x-0 p-1 bg-black/30 backdrop-blur-md">
                                             <p className="text-[9px] text-white font-medium truncate text-center">
-                                                {new Date(p.scheduled_at ?? '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {new Date(p.scheduled_at ?? '').toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false })}
                                             </p>
                                         </div>
                                     </div>
                                 ))}
-                                {dayPosts.length > 3 && (
+                                {dayPosts.length > 2 && (
                                     <div
                                         onClick={(e) => {
                                             e.stopPropagation();
                                             if (item.date) onDayClick(item.date);
                                         }}
-                                        className="text-[10px] text-center font-bold text-ios-blue bg-ios-blue/10 rounded-full py-0.5 mt-1 hover:bg-ios-blue/20 transition-colors"
+                                        className="text-[8px] sm:text-[10px] text-center font-bold text-ios-blue bg-ios-blue/10 rounded-full py-0.5 mt-0.5 hover:bg-ios-blue/20 transition-colors"
                                     >
-                                        +{dayPosts.length - 3} more
+                                        <span className="sm:hidden">+{dayPosts.length - 2}</span><span className="hidden sm:inline">{dayPosts.length > 3 ? `+${dayPosts.length - 3} mais` : ''}</span>
                                     </div>
                                 )}
                             </div>

@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import {
     Plus, Search, Instagram, Pencil, Trash2,
     CheckCircle2, XCircle, AlertTriangle, RefreshCw, Wifi, WifiOff, Copy, KeyRound, Youtube
@@ -26,11 +26,7 @@ interface Channel {
     created_at?: string;
 }
 
-interface PostData {
-    id: string;
-    status: string;
-    channel_id?: string;
-}
+interface ChannelPostStats { published: number; failed: number; total: number }
 
 /**
  * Estimate token health. Thresholds são por plataforma:
@@ -75,7 +71,9 @@ const ytSessionConfig: Record<YtSessionStatus, { label: string; color: string; b
 
 export default function ChannelsPage() {
     const [channels, setChannels] = useState<Channel[]>([]);
-    const [posts, setPosts] = useState<PostData[]>([]);
+    const [channelPostStats, setChannelPostStats] = useState<Record<string, ChannelPostStats>>({});
+    const [loadError, setLoadError] = useState<string | null>(null);
+    const [brokenAvatars, setBrokenAvatars] = useState<Record<string, boolean>>({});
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -137,26 +135,25 @@ export default function ChannelsPage() {
 
     async function fetchData() {
         setLoading(true);
+        setLoadError(null);
         try {
-            const [cR, pR] = await Promise.all([fetch('/api/channels'), fetch('/api/posts')]);
-            if (cR.ok) setChannels(await cR.json());
-            if (pR.ok) setPosts(await pR.json());
+            const [cR, statsR] = await Promise.all([fetch('/api/channels'), fetch('/api/post-stats?all=1')]);
+            if (!cR.ok) throw new Error(`Falha ao carregar canais (HTTP ${cR.status})`);
+            const channelData = await cR.json();
+            setChannels(Array.isArray(channelData) ? channelData : []);
+            if (!statsR.ok) throw new Error(`Falha ao carregar totais dos canais (HTTP ${statsR.status})`);
+            const statsData = await statsR.json();
+            const nextStats: Record<string, ChannelPostStats> = {};
+            for (const [channelId, counts] of Object.entries(statsData.channels || {}) as [string, Record<string, number>][]) {
+                const published = counts.published || 0;
+                const failed = counts.failed || 0;
+                nextStats[channelId] = { published, failed, total: Object.values(counts).reduce((sum, value) => sum + value, 0) };
+            }
+            setChannelPostStats(nextStats);
+        } catch (err) {
+            setLoadError(err instanceof Error ? err.message : 'Falha ao carregar os canais.');
         } finally { setLoading(false); }
     }
-
-    // Post counts per channel
-    const channelPostStats = useMemo(() => {
-        const map: Record<string, { published: number; failed: number; total: number }> = {};
-        posts.forEach(p => {
-            const cid = p.channel_id ?? '';
-            if (!cid) return;
-            if (!map[cid]) map[cid] = { published: 0, failed: 0, total: 0 };
-            map[cid].total++;
-            if (p.status === 'published') map[cid].published++;
-            if (p.status === 'failed') map[cid].failed++;
-        });
-        return map;
-    }, [posts]);
 
     async function testConnection(channel: Channel) {
         setTestingId(channel.id);
@@ -252,7 +249,7 @@ export default function ChannelsPage() {
             <div className="flex items-start justify-between">
                 <div>
                     <h1 className="text-[34px] font-bold text-ios-text">Canais</h1>
-                    <p className="text-ios-text-secondary text-sm">{channels.length} canal{channels.length !== 1 ? 'is' : ''} conectado{channels.length !== 1 ? 's' : ''}</p>
+                    <p className="text-ios-text-secondary text-sm">{channels.length} {channels.length === 1 ? 'canal conectado' : 'canais conectados'}</p>
                 </div>
                 <IOSButton variant="primary" className="!py-2 !px-4 flex items-center gap-1" onClick={() => { setEditingChannel(undefined); setIsModalOpen(true); }}>
                     <Plus size={18} />
@@ -277,6 +274,12 @@ export default function ChannelsPage() {
                 <div className="flex justify-center p-12">
                     <div className="w-8 h-8 border-2 border-ios-blue border-t-transparent rounded-full animate-spin" />
                 </div>
+            ) : loadError ? (
+                <IOSCard className="p-8 text-center">
+                    <p className="text-ios-red font-semibold mb-2">Não foi possível carregar os canais</p>
+                    <p className="text-sm text-ios-text-secondary mb-4">{loadError}</p>
+                    <IOSButton variant="secondary" onClick={fetchData}>Tentar novamente</IOSButton>
+                </IOSCard>
             ) : filtered.length === 0 ? (
                 <IOSCard className="p-12 text-center text-ios-text-secondary">
                     <Instagram size={48} className="mx-auto mb-4 opacity-30" strokeWidth={1} />
@@ -301,9 +304,9 @@ export default function ChannelsPage() {
                             return (
                                 <IOSCard key={channel.id} className="p-4 group">
                                     <div className="flex items-center gap-4">
-                                        {channel.profile_picture_url ? (
+                                        {channel.profile_picture_url && !brokenAvatars[channel.id] ? (
                                             // eslint-disable-next-line @next/next/no-img-element -- mesmo padrão do card Instagram (URL externa)
-                                            <img src={channel.profile_picture_url} alt={channel.name} className="w-12 h-12 rounded-full object-cover border border-ios-separator flex-shrink-0" />
+                                            <img src={channel.profile_picture_url} onError={() => setBrokenAvatars(prev => ({ ...prev, [channel.id]: true }))} alt={channel.name} className="w-12 h-12 rounded-full object-cover border border-ios-separator flex-shrink-0" />
                                         ) : (
                                             <div className="w-12 h-12 rounded-full bg-ios-red/10 flex items-center justify-center flex-shrink-0">
                                                 <Youtube size={24} className="text-ios-red" />
@@ -354,8 +357,8 @@ export default function ChannelsPage() {
                             <IOSCard key={channel.id} className="p-4 group">
                                 <div className="flex items-center gap-4">
                                     {/* Avatar */}
-                                    {channel.profile_picture_url ? (
-                                        <img src={channel.profile_picture_url} alt={channel.name} className="w-12 h-12 rounded-full object-cover border border-ios-separator flex-shrink-0" />
+                                    {channel.profile_picture_url && !brokenAvatars[channel.id] ? (
+                                        <img src={channel.profile_picture_url} onError={() => setBrokenAvatars(prev => ({ ...prev, [channel.id]: true }))} alt={channel.name} className="w-12 h-12 rounded-full object-cover border border-ios-separator flex-shrink-0" />
                                     ) : (
                                         <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 p-[2px] flex-shrink-0">
                                             <div className="w-full h-full rounded-full bg-white flex items-center justify-center">

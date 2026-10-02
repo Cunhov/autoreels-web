@@ -62,6 +62,7 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
                     ${isToday ? 'bg-ios-blue text-white shadow-lg shadow-ios-blue/30 scale-110' : 'text-ios-text group-hover:bg-ios-gray-5'}`}>
                                 {d.getDate()}
                             </span>
+                            <span className="text-[9px] leading-none text-ios-text-secondary">{getPostsForDay(d).length || ''}</span>
                         </div>
                     )
                 })}
@@ -85,7 +86,7 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
                                     <div
                                         key={p.id}
                                         onClick={(e) => { e.stopPropagation(); onPostClick(p); }}
-                                        className={`group relative aspect-square w-full rounded-xl overflow-hidden border shadow-sm cursor-pointer hover:scale-[1.02] hover:shadow-md bg-black/5 transition-all min-w-0
+                                        className={`group relative sm:aspect-square w-full min-h-[22px] sm:min-h-0 rounded-md sm:rounded-xl overflow-hidden border shadow-sm cursor-pointer hover:scale-[1.02] hover:shadow-md bg-black/5 transition-all min-w-0
                                              ${getBorderClass(p.status)}
                                         `}
                                     >
@@ -95,24 +96,29 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
                                         {p.image_url || p.thumbnail_url ? (
                                             <img
                                                 src={p.image_url || p.thumbnail_url}
-                                                className="w-full h-full object-cover opacity-90"
+                                                onError={(event) => { event.currentTarget.style.display = 'none'; }}
+                                                className="hidden sm:block w-full h-full object-cover opacity-90"
                                                 alt="Post preview"
                                                 loading="lazy"
                                                 decoding="async"
                                             />
                                         ) : (
-                                            <div className="w-full h-full aspect-square bg-gray-900 flex items-center justify-center">
+                                            <div className="hidden sm:flex w-full h-full aspect-square bg-gray-900 items-center justify-center">
                                                 <div className="text-[9px] text-white/40 font-medium text-center">
-                                                    {p.video_url ? 'Video' : 'No Media'}
+                                                    {p.video_url ? 'Vídeo' : 'Sem mídia'}
                                                 </div>
                                             </div>
                                         )}
-                                        <div className="absolute top-2 right-2">
+                                        <div className="hidden sm:block absolute top-2 right-2">
                                             <div className={`w-2.5 h-2.5 rounded-full border border-white/20 shadow-sm ${p.status === 'published' ? 'bg-ios-green' : p.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'}`} />
                                         </div>
-                                        <div className="absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 via-black/40 to-transparent backdrop-blur-[2px]">
+                                        <div className="sm:hidden text-[9px] leading-tight text-ios-text-secondary truncate px-0.5 flex items-center gap-1">
+                                            <span className={`w-1 h-1 rounded-full shrink-0 ${p.status === 'published' ? 'bg-ios-green' : p.status === 'failed' ? 'bg-red-500' : 'bg-ios-blue'}`} />
+                                            {new Date(p.scheduled_at ?? '').toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false })}
+                                        </div>
+                                        <div className="hidden sm:block absolute bottom-0 inset-x-0 p-2 bg-gradient-to-t from-black/80 via-black/40 to-transparent backdrop-blur-[2px]">
                                             <p className="text-[10px] text-white/90 font-medium truncate text-center">
-                                                {new Date(p.scheduled_at ?? '').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                {new Date(p.scheduled_at ?? '').toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false })}
                                             </p>
                                         </div>
                                     </div>

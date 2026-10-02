@@ -28,6 +28,16 @@ interface PostData {
     failed_reason?: string;
 }
 
+interface LocalPostStats {
+    total: number;
+    statuses: Record<string, number>;
+    channels: Record<string, Record<string, number>>;
+    dailyPublished: Record<string, number>;
+    heatmap: number[][];
+    openStatuses: string[];
+    recentFailures: PostData[];
+}
+
 interface ChannelData {
     id: string;
     name: string;
@@ -229,7 +239,7 @@ function DonutChart({ published, failed, pending }: { published: number; failed:
 }
 
 // ── Heatmap (7 days × 24 hours) ──────────────────────────────────────────────
-function PostingHeatmap({ posts }: { posts: PostData[] }) {
+function PostingHeatmap({ posts, aggregated }: { posts: PostData[]; aggregated?: number[][] }) {
     // Build 7×24 grid
     const grid = Array.from({ length: 7 }, () => Array(24).fill(0)) as number[][];
     posts.filter(p => p.status === 'published').forEach(p => {
@@ -237,7 +247,8 @@ function PostingHeatmap({ posts }: { posts: PostData[] }) {
         if (!d) return;
         grid[d.getDay()][d.getHours()]++;
     });
-    const cellMax = Math.max(...grid.flat(), 1);
+    const displayGrid = aggregated || grid;
+    const cellMax = Math.max(...displayGrid.flat(), 1);
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
     return (
@@ -259,7 +270,7 @@ function PostingHeatmap({ posts }: { posts: PostData[] }) {
                             </div>
                         ))}
                     </div>
-                    {grid.map((row, di) => (
+                    {displayGrid.map((row, di) => (
                         <div key={di} className="flex gap-1 mb-1">
                             {row.map((count, hi) => {
                                 const opacity = count === 0 ? 0.08 : 0.15 + (count / cellMax) * 0.85;
@@ -290,6 +301,7 @@ interface LocalDashboardProps {
 
 function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardProps) {
     const [posts, setPosts] = useState<PostData[]>([]);
+    const [stats, setStats] = useState<LocalPostStats | null>(null);
     const [planners, setPlanners] = useState<PlannerData[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -300,12 +312,11 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
         setLoading(true);
         setError(null);
         try {
-            const start = new Date();
-            start.setDate(start.getDate() - range);
-            const params = new URLSearchParams({ start: start.toISOString(), limit: '2000' });
-            const pR = await fetch(`/api/posts?${params.toString()}`);
+            const pR = await fetch(`/api/post-stats?days=${range}`);
             if (pR.ok) {
-                setPosts(await pR.json());
+                const result = await pR.json() as LocalPostStats;
+                setStats(result);
+                setPosts(result.recentFailures || []);
             } else {
                 setError(`Falha ao carregar posts (HTTP ${pR.status})`);
             }
@@ -348,9 +359,11 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
     }, [posts, statusFilter]);
 
     // KPIs
-    const published = useMemo(() => filteredPosts.filter(p => p.status === 'published').length, [filteredPosts]);
-    const failed = useMemo(() => filteredPosts.filter(p => p.status === 'failed').length, [filteredPosts]);
-    const pending = useMemo(() => filteredPosts.filter(p => OPEN_STATUSES.includes(p.status)).length, [filteredPosts]);
+    const allStatusCounts = stats?.statuses || {};
+    const published = statusFilter === 'all' || statusFilter === 'published' ? (allStatusCounts.published || 0) : 0;
+    const failed = statusFilter === 'all' || statusFilter === 'failed' ? (allStatusCounts.failed || 0) : 0;
+    const pending = statusFilter === 'all' || statusFilter === 'pending' ? OPEN_STATUSES.reduce((sum, status) => sum + (allStatusCounts[status] || 0), 0) : 0;
+    const filteredTotal = statusFilter === 'all' ? (stats?.total || 0) : statusFilter === 'published' ? published : statusFilter === 'failed' ? failed : pending;
     const successRate = useMemo(() => {
         const denom = published + failed;
         return denom > 0 ? `${Math.round((published / denom) * 100)}%` : 'n/d';
@@ -367,28 +380,27 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
             counts[key] = 0;
             labels.push(key);
         }
-        filteredPosts.filter(p => p.status === 'published').forEach(p => {
-            const d = getPostDate(p);
-            if (!d) return;
-            const key = d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
-            if (key in counts) counts[key]++;
-        });
+        for (const [key, value] of Object.entries(stats?.dailyPublished || {})) {
+            const [year, month, day] = key.split('-').map(Number);
+            const label = new Date(year, month - 1, day).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+            if (label in counts) counts[label] = value;
+        }
         return { daily: labels.map(l => counts[l]), dailyLabels: labels };
-    }, [filteredPosts, rangeDays]);
+    }, [stats, rangeDays]);
 
     // Per-channel stats
     const channelStats = useMemo(() => {
         return channels.map(ch => {
-            const chPosts = filteredPosts.filter(p => p.channel_id === ch.id || p.channel?.name === ch.name);
+            const counts = stats?.channels?.[ch.id] || {};
             return {
                 id: ch.id,
                 name: ch.name,
-                published: chPosts.filter(p => p.status === 'published').length,
-                failed: chPosts.filter(p => p.status === 'failed').length,
-                pending: chPosts.filter(p => OPEN_STATUSES.includes(p.status)).length,
+                published: statusFilter === 'failed' || statusFilter === 'pending' ? 0 : counts.published || 0,
+                failed: statusFilter === 'published' || statusFilter === 'pending' ? 0 : counts.failed || 0,
+                pending: statusFilter === 'published' || statusFilter === 'failed' ? 0 : OPEN_STATUSES.reduce((sum, status) => sum + (counts[status] || 0), 0),
             };
         });
-    }, [filteredPosts, channels]);
+    }, [stats, channels, statusFilter]);
 
     // Recent failures — posts arrive ordered by created_at desc, so the most
     // recent failures are at the START of the filtered list.
@@ -397,7 +409,7 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
         [filteredPosts]);
 
     const kpis = [
-        { label: 'Total Posts', value: filteredPosts.length, icon: Video, color: 'text-ios-blue', bg: 'bg-ios-blue/10' },
+        { label: 'Total Posts', value: filteredTotal, icon: Video, color: 'text-ios-blue', bg: 'bg-ios-blue/10' },
         { label: 'Published', value: published, icon: CheckCircle2, color: 'text-ios-green', bg: 'bg-ios-green/10' },
         { label: 'Failed', value: failed, icon: XCircle, color: 'text-ios-red', bg: 'bg-ios-red/10' },
         { label: 'Pending', value: pending, icon: Clock, color: 'text-ios-text-secondary', bg: 'bg-ios-gray-5/50' },
@@ -406,7 +418,7 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
         { label: 'Active Planners', value: planners.filter(p => p.status === 'active').length, icon: Sliders, color: 'text-purple-500', bg: 'bg-purple-100 dark:bg-purple-900/30' },
     ];
 
-    if (loading && posts.length === 0) return (
+    if (loading && !stats) return (
         <div className="flex justify-center p-20">
             <div className="w-8 h-8 border-2 border-ios-blue border-t-transparent rounded-full animate-spin" />
         </div>
@@ -472,9 +484,9 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
                         <h3 className="text-[17px] font-bold">Posts Per Day</h3>
                         <span className="text-[12px] text-ios-text-secondary">Last {rangeDays} days</span>
                     </div>
-                    {filteredPosts.length === 0 ? (
+                    {published === 0 ? (
                         <div className="h-32 flex items-center justify-center text-ios-text-secondary text-sm">
-                            No published posts yet
+                            Nenhuma publicação neste período
                         </div>
                     ) : (
                         <BarChart data={daily} label={dailyLabels} />
@@ -503,7 +515,7 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
             {/* Heatmap */}
             <IOSCard className="p-5">
                 <h3 className="text-[17px] font-bold mb-4">Posting Heatmap</h3>
-                <PostingHeatmap posts={filteredPosts} />
+                <PostingHeatmap posts={filteredPosts} aggregated={stats?.heatmap} />
             </IOSCard>
 
             {/* Per-channel stats */}
