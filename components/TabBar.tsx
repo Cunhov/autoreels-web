@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { Calendar, Folder, Plus, X, MoreHorizontal, Search, LogOut, BarChart2, Radio, Youtube, Bot, Sliders, CloudUpload, Settings } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
 import { signOut } from 'next-auth/react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 interface TabBarProps { onSearchOpen?: () => void; }
 
@@ -13,6 +13,8 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [failedCount, setFailedCount] = useState(0);
     const [activePlanners, setActivePlanners] = useState(0);
+    const menuRef = useRef<HTMLElement>(null);
+    const menuButtonRef = useRef<HTMLButtonElement>(null);
     const isActive = (path: string) => pathname === path;
 
     useEffect(() => {
@@ -25,6 +27,29 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
             } catch { }
         })();
     }, []);
+
+    useEffect(() => {
+        if (!menuOpen) return;
+        const focusTimer = window.setTimeout(() => {
+            menuRef.current?.querySelector<HTMLElement>('a[href], button')?.focus();
+        }, 0);
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            setMenuOpen(false);
+            window.setTimeout(() => menuButtonRef.current?.focus(), 0);
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => {
+            window.clearTimeout(focusTimer);
+            document.removeEventListener('keydown', handleKeyDown);
+        };
+    }, [menuOpen]);
+
+    const closeMenu = () => {
+        setMenuOpen(false);
+        window.setTimeout(() => menuButtonRef.current?.focus(), 0);
+    };
 
     const destinations = [
         { name: 'Calendário', path: '/', icon: Calendar, badge: failedCount },
@@ -41,8 +66,8 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
 
     return (
         <>
-            {menuOpen && <button aria-label="Fechar menu" className="md:hidden fixed inset-0 z-40 bg-black/40" onClick={() => setMenuOpen(false)} />}
-            {menuOpen && <nav aria-label="Todas as páginas" className="md:hidden fixed bottom-[calc(72px+env(safe-area-inset-bottom))] right-3 z-[45] w-[min(22rem,calc(100vw-1.5rem))] max-h-[70dvh] overflow-y-auto rounded-2xl border border-ios-separator bg-ios-card p-2 shadow-2xl">
+            {menuOpen && <button aria-label="Fechar menu" className="md:hidden fixed inset-0 z-40 bg-black/40" onClick={closeMenu} />}
+            {menuOpen && <nav ref={menuRef} aria-label="Todas as páginas" className="md:hidden fixed bottom-[calc(72px+env(safe-area-inset-bottom))] right-3 z-[45] w-[min(22rem,calc(100vw-1.5rem))] max-h-[70dvh] overflow-y-auto rounded-2xl border border-ios-separator bg-ios-card p-2 shadow-2xl">
                 <button onClick={() => { setMenuOpen(false); onSearchOpen?.(); }} className="w-full flex items-center gap-3 rounded-xl px-3 py-3 text-left text-ios-text hover:bg-ios-gray-6"><Search size={18} /> Buscar páginas e conteúdo</button>
                 <div className="my-1 border-t border-ios-separator" />
                 <button onClick={() => closeAndGo('/planners?new=1')} className="w-full rounded-xl px-3 py-3 text-left text-sm text-ios-text hover:bg-ios-gray-6">Novo planner</button>
@@ -55,7 +80,7 @@ export default function TabBar({ onSearchOpen }: TabBarProps) {
                     <Link href="/" aria-current={isActive('/') ? 'page' : undefined} className={`flex flex-1 flex-col items-center justify-center gap-1 ${isActive('/') ? 'text-ios-blue' : 'text-ios-text-secondary'}`}><Calendar size={20} /><span className="text-[10px]">Calendário</span>{failedCount > 0 && <span className="absolute top-1 ml-5 rounded-full bg-ios-red px-1 text-[9px] text-white">{failedCount > 9 ? '9+' : failedCount}</span>}</Link>
                     <Link href="/content" aria-current={isActive('/content') ? 'page' : undefined} className={`flex flex-1 flex-col items-center justify-center gap-1 ${isActive('/content') ? 'text-ios-blue' : 'text-ios-text-secondary'}`}><Folder size={20} /><span className="text-[10px]">Biblioteca</span></Link>
                     <button onClick={() => router.push('/new')} aria-label="Criar novo post" className="-mt-5 mx-3 flex h-12 w-12 items-center justify-center rounded-full bg-ios-blue text-white shadow-lg"><Plus size={24} /></button>
-                    <button onClick={() => setMenuOpen(value => !value)} aria-expanded={menuOpen} aria-label={menuOpen ? 'Fechar menu' : 'Mais páginas e ações'} className={`flex flex-1 flex-col items-center justify-center gap-1 ${menuOpen ? 'text-ios-blue' : 'text-ios-text-secondary'}`}>{menuOpen ? <X size={20} /> : <MoreHorizontal size={20} />}<span className="text-[10px]">Mais</span></button>
+                    <button ref={menuButtonRef} onClick={() => setMenuOpen(value => !value)} aria-expanded={menuOpen} aria-label={menuOpen ? 'Fechar menu' : 'Mais páginas e ações'} className={`flex flex-1 flex-col items-center justify-center gap-1 ${menuOpen ? 'text-ios-blue' : 'text-ios-text-secondary'}`}>{menuOpen ? <X size={20} /> : <MoreHorizontal size={20} />}<span className="text-[10px]">Mais</span></button>
                 </div>
             </nav>
         </>

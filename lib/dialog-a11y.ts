@@ -40,15 +40,24 @@ export function useDialogA11y<T extends HTMLElement = HTMLDivElement>(isOpen: bo
     dialogStack.push(entry);
     lockBodyScroll();
 
+    const isFocusable = (el: HTMLElement) =>
+      !el.hasAttribute('disabled') &&
+      el.tabIndex >= 0 &&
+      el.getClientRects().length > 0 &&
+      getComputedStyle(el).visibility !== 'hidden' &&
+      !el.closest('[aria-hidden="true"], [inert]');
     const getFocusable = () => Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])
-      .filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-hidden') !== 'true' && el.getClientRects().length > 0);
+      .filter(isFocusable);
     const focusInitial = () => {
       const dialog = dialogRef.current;
-      const target = dialog?.querySelector<HTMLElement>('[data-autofocus]') ?? getFocusable()[0] ?? dialog;
+      const autofocus = Array.from(dialog?.querySelectorAll<HTMLElement>('[data-autofocus]') ?? []).find(isFocusable);
+      const target = autofocus ?? getFocusable()[0] ?? dialog;
       target?.focus();
     };
-    const focusTimer = window.setTimeout(focusInitial, 0);
     const isTop = () => dialogStack[dialogStack.length - 1]?.id === id;
+    const focusTimer = window.setTimeout(() => {
+      if (isTop()) focusInitial();
+    }, 0);
     const handleKeyDown = (event: KeyboardEvent) => {
       if (!isTop()) return;
       if (event.key === 'Escape') {
