@@ -53,6 +53,9 @@ export async function POST(req: Request) {
             if (ids.length !== raw.channelIds.length) return badRequest("Perfis duplicados");
         } else if (typeof raw.channelId === "string" && raw.channelId.trim()) ids = [raw.channelId.trim()];
         else return badRequest("Canal é obrigatório");
+        if (raw.channelId !== undefined && (typeof raw.channelId !== "string" || !ids.includes(raw.channelId.trim()))) {
+            return badRequest("Canal incompatível com os perfis selecionados");
+        }
         const channels = await prisma.channel.findMany({ where: { id: { in: ids }, user_id: userId }, select: { id: true, platform: true } });
         if (channels.length !== ids.length) return notFound("Canal não encontrado");
         if (channels.some((c) => c.platform !== "instagram")) return badRequest("Canal não é do Instagram");

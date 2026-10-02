@@ -7,6 +7,11 @@ import { actionForChannel, AUTOMATION_INCLUDE, normalizeMediaIds, profileGroupId
 import { actionToDb, automationToDb, badRequest, notFound, readJsonBody, requireUserId, unauthorized } from "../../ig/shared";
 
 type RouteParams = { params: Promise<{ id: string }> };
+class ConcurrentGroupEdit extends Error {}
+
+function configurationFingerprint(rows: Prisma.IgAutomationGetPayload<{ include: typeof AUTOMATION_INCLUDE }>[]) {
+    return JSON.stringify([...rows].sort((a, b) => a.id.localeCompare(b.id)).map(({ stats_sent, stats_matched, stats_failed, stats_clicks, last_run_at, updated_at, channel, ...configuration }) => configuration));
+}
 async function cancelPendingActionJobs(tx: Prisma.TransactionClient, userId: string, automationIds: string[], actionIds: string[]) {
     if (!automationIds.length && !actionIds.length) return;
     const jobs = await tx.igJob.findMany({ where: { user_id: userId, type: "action", status: "pending" }, select: { id: true, payload: true } });
@@ -123,6 +128,12 @@ export async function PATCH(req: Request, { params }: RouteParams) {
         }
         const parsedMap = parseMediaMap(body.mediaIdsByChannel, desiredIds);
         if (!parsedMap.ok) return badRequest("Mapeamento de posts inválido ou contém perfil fora da automação");
+        if (isGroup && membershipChanged) {
+            const addedProfiles = desiredIds.filter((channelId) => !group.rows.some((row) => row.channel_id === channelId));
+            if (addedProfiles.some((channelId) => !parsedMap.map || !Object.prototype.hasOwnProperty.call(parsedMap.map, channelId))) {
+                return badRequest("Defina os posts de cada novo perfil. Use uma lista vazia para escolher explicitamente todos os posts.");
+            }
+        }
         const dbData = automationToDb(data);
         // Strip the reserved marker on all client-provided settings; restore the marker below.
         if (data.settings !== undefined) {
@@ -135,6 +146,13 @@ export async function PATCH(req: Request, { params }: RouteParams) {
         const currentByChannel = new Map(group.rows.map((r) => [r.channel_id, r]));
         const movingSingle = !isGroup && desiredIds.length === 1 && (body.channelId !== undefined || (body.channelIds !== undefined && desiredIds[0] !== group.rows[0].channel_id));
         const next = await prisma.$transaction(async (tx) => {
+            const currentRows = await tx.igAutomation.findMany({ where: { user_id: userId }, include: AUTOMATION_INCLUDE });
+            const actual = group.groupId
+                ? currentRows.filter((row) => row.id === group.groupId || profileGroupId(row.settings) === group.groupId)
+                : currentRows.filter((row) => row.id === representative.id);
+            if (configurationFingerprint(actual) !== configurationFingerprint(group.rows)) {
+                throw new ConcurrentGroupEdit("Esta automação foi alterada em outra janela. Recarregue os dados antes de salvar.");
+            }
             // Existing rows keep their IDs, stats, and logs. New profiles inherit the complete shared config.
             const toRemove = movingSingle ? [] : group.rows.filter((r) => !desiredIds.includes(r.channel_id));
             await cancelPendingActionJobs(tx, userId, toRemove.map((r) => r.id), toRemove.flatMap((r) => r.actions.map((a: any) => a.id)));
@@ -205,6 +223,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
         return NextResponse.json(fresh ? serializePhysical(fresh) : serializePhysical(rows[0]));
     } catch (error: unknown) {
         console.error("Update automation error:", error);
+        if (error instanceof ConcurrentGroupEdit) return NextResponse.json({ error: error.message }, { status: 409 });
         return badRequest(getErrorMessage(error));
     }
 }
