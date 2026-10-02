@@ -142,11 +142,17 @@ export interface IgActionDraft {
     webhookId: string;
     aiPrompt: string;
     trackClicks: boolean;
+    sequenceIdsByChannel?: Record<string, string>;
+    webhookIdsByChannel?: Record<string, string>;
 }
 
 export interface IgAutomation {
     id: string;
     channelId: string;
+    channelIds: string[];
+    channels: ChannelLite[];
+    memberIds: string[];
+    mediaIdsByChannel: Record<string, string[]>;
     name: string;
     enabled: boolean;
     priority: number;
@@ -174,6 +180,7 @@ export interface IgAutomation {
 export interface SimplestOption {
     id: string;
     name: string;
+    channelId?: string | null;
 }
 
 export interface IgContact {
@@ -429,6 +436,9 @@ export function normalizeAction(raw: unknown, index: number): IgActionDraft {
         firstDefined(o, ["quickReplies", "quick_replies"]),
     );
     const config = asObject(o.config);
+    const referenceMap = (value: unknown): Record<string, string> => Object.fromEntries(
+        Object.entries(asObject(value)).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+    );
     return {
         id: asString(o.id) || undefined,
         position: asNumber(firstDefined(o, ["position"]), index),
@@ -452,6 +462,8 @@ export function normalizeAction(raw: unknown, index: number): IgActionDraft {
         webhookId: asString(firstDefined(o, ["webhookId", "webhook_id"])),
         aiPrompt: asString(firstDefined(o, ["aiPrompt", "ai_prompt"])),
         trackClicks: asBool(firstDefined(config, ["trackClicks"]), true),
+        sequenceIdsByChannel: referenceMap(config.sequenceIdsByChannel),
+        webhookIdsByChannel: referenceMap(config.webhookIdsByChannel),
     };
 }
 
@@ -526,9 +538,17 @@ export function normalizeAutomation(
     const settings = asObject(o.settings);
     const cooldown = firstDefined(o, ["cooldownHours", "cooldown_hours"]);
     const daily = firstDefined(o, ["dailyLimit", "daily_limit"]);
+    const primaryChannelId = asString(firstDefined(o, ["channelId", "channel_id"]));
+    const channelIds = asStringArray(o.channelIds);
+    const mediaIds = asStringArray(firstDefined(o, ["mediaIds", "media_ids"]));
+    const mediaIdsByChannel = Object.fromEntries(Object.entries(asObject(o.mediaIdsByChannel)).map(([id, values]) => [id, asStringArray(values)]));
     return {
         id: asString(o.id, String(fallbackIndex)),
-        channelId: asString(firstDefined(o, ["channelId", "channel_id"])),
+        channelId: primaryChannelId,
+        channelIds: channelIds.length ? channelIds : [primaryChannelId].filter(Boolean),
+        channels: Array.isArray(o.channels) ? o.channels.map(normalizeChannel) : isRecord(channelRaw) ? [normalizeChannel(channelRaw)] : [],
+        memberIds: asStringArray(o.memberIds).length ? asStringArray(o.memberIds) : [asString(o.id)].filter(Boolean),
+        mediaIdsByChannel: Object.keys(mediaIdsByChannel).length ? mediaIdsByChannel : primaryChannelId ? { [primaryChannelId]: mediaIds } : {},
         name: asString(o.name, "Automação"),
         enabled: asBool(o.enabled, true),
         priority: asNumber(o.priority, 0),
@@ -541,7 +561,7 @@ export function normalizeAutomation(
         negativeKeywords: asStringArray(
             firstDefined(o, ["negativeKeywords", "negative_keywords"]),
         ),
-        mediaIds: asStringArray(firstDefined(o, ["mediaIds", "media_ids"])),
+        mediaIds,
         firstInteractionOnly: asBool(
             firstDefined(o, ["firstInteractionOnly", "first_interaction_only"]),
         ),
@@ -568,6 +588,8 @@ export function normalizeAutomation(
 
 export interface AutomationPayload {
     channelId: string;
+    channelIds?: string[];
+    mediaIdsByChannel?: Record<string, string[]>;
     name: string;
     enabled: boolean;
     priority: number;
@@ -603,7 +625,7 @@ export function serializeActionPayload(
             sequence_id: a.sequenceId || null,
             webhook_id: a.webhookId || null,
             ai_prompt: a.aiPrompt.trim() || null,
-            config: { trackClicks: a.trackClicks },
+            config: { trackClicks: a.trackClicks, sequenceIdsByChannel: a.sequenceIdsByChannel, webhookIdsByChannel: a.webhookIdsByChannel },
         };
     }
     return {
@@ -618,13 +640,15 @@ export function serializeActionPayload(
         sequenceId: a.sequenceId || null,
         webhookId: a.webhookId || null,
         aiPrompt: a.aiPrompt.trim() || null,
-        config: { trackClicks: a.trackClicks },
+        config: { trackClicks: a.trackClicks, sequenceIdsByChannel: a.sequenceIdsByChannel, webhookIdsByChannel: a.webhookIdsByChannel },
     };
 }
 
 export function automationToPayload(a: IgAutomation): AutomationPayload {
     return {
         channelId: a.channelId,
+        channelIds: a.channelIds,
+        mediaIdsByChannel: a.mediaIdsByChannel,
         name: a.name,
         enabled: a.enabled,
         priority: a.priority,
