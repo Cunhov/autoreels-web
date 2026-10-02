@@ -245,7 +245,7 @@ const GridCellInner = ({
 				onDragLeave={handleDragLeave}
 				onDrop={(e) => item.type === "carousel_folder" && handleDrop(e, item.id)}
 				className={`
-                    w-full h-full group relative aspect-square rounded-2xl border overflow-hidden cursor-pointer transition-all duration-200
+                    w-full h-full group relative flex flex-col rounded-2xl border overflow-hidden transition-all duration-200
                     ${
 																					selectedIds.includes(item.id)
 																						? "ring-2 ring-ios-blue border-transparent shadow-lg scale-[1.02]"
@@ -253,9 +253,10 @@ const GridCellInner = ({
 																				}
                     ${dropTargetId === item.id ? "ring-2 ring-green-500 scale-105 bg-green-50 dark:bg-green-900/20" : ""}
                     ${draggedItems.includes(item.id) ? "opacity-50" : ""}
-				    bg-ios-card
+					bg-ios-card
                 `}
 			>
+				<div className="relative w-full aspect-square flex-shrink-0 overflow-hidden">
 				<button
 					type="button"
 					onClick={() => {
@@ -369,84 +370,76 @@ const GridCellInner = ({
 					</div>
 				)}
 
-				{/* Bottom Left: Enter Folder Button */}
-				{item.type === "carousel_folder" && (
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							openFolder(item.id);
-						}}
-						className="absolute bottom-2 left-2 min-h-11 min-w-11 p-2 bg-black/60 hover:bg-black/80 backdrop-blur text-white rounded-full shadow-sm transition-all z-20"
-						title="Abrir pasta"
-					>
-						<CornerDownRight size={14} />
-					</button>
-				)}
+				</div>
 
-				{/* Bottom Right: Preview Button */}
-				{item.type !== "carousel_folder" && <button
-					onClick={(e) => {
-						e.stopPropagation();
-						const mediaUrl = item.url || item.path;
-						if (mediaUrl) window.open(mediaUrl, "_blank", "noopener,noreferrer");
-					}}
-					className="absolute bottom-2 right-2 min-h-11 min-w-11 p-2 bg-black/60 hover:bg-black/80 backdrop-blur text-white rounded-full shadow-sm transition-all z-20"
-					title="Visualizar mídia"
-					aria-label={`Visualizar ${item.name}`}
-				>
-					<Eye size={14} />
-				</button>}
-
-				{/* Hover Actions (Context Menu triggers) */}
-				{mode === "manage" && <div className="absolute top-2 left-2 flex flex-col gap-1 opacity-100 transition-opacity z-20">
-					<button
-						onClick={(e) => {
-							e.stopPropagation();
-							openEditModal([item]);
-						}}
-						className="min-h-11 min-w-11 p-2 bg-white/95 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-						title="Editar detalhes"
-						aria-label={`Editar detalhes de ${item.name}`}
-					>
-						<Edit2 size={12} />
-					</button>
-					{(item.type === "image" || item.type === "carousel_item") && (
-						<button
-							onClick={(e) => {
-								e.stopPropagation();
-								openImageEditor(item);
-							}}
-							className="min-h-11 min-w-11 p-2 bg-white/95 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-purple-500 transition-colors"
-							title="Editar imagem"
-							aria-label={`Editar imagem ${item.name}`}
-						>
-							<Palette size={12} />
-						</button>
-					)}
-					{mode === "manage" && (
-						<>
+				{/* Management actions live below the preview instead of covering it. */}
+				{mode === "manage" && (
+					<div className="grid grid-cols-3 md:grid-cols-4 gap-1 p-1.5 flex-1 content-start">
+						{item.type === "carousel_folder" ? (
 							<button
+								type="button"
+								onClick={(e) => { e.stopPropagation(); openFolder(item.id); }}
+								className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 p-2 md:p-1 bg-ios-background hover:bg-ios-blue/10 text-ios-secondary hover:text-ios-blue rounded-lg transition-colors flex items-center justify-center"
+								title="Abrir pasta"
+								aria-label={`Abrir pasta ${item.name}`}
+							>
+								<CornerDownRight size={14} />
+							</button>
+						) : (
+							<button
+								type="button"
 								onClick={(e) => {
 									e.stopPropagation();
-									openMoveModal([item]);
+									const mediaUrl = item.url || item.path;
+									if (mediaUrl) window.open(mediaUrl, "_blank", "noopener,noreferrer");
 								}}
-								className="min-h-11 min-w-11 p-2 bg-white/95 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-blue-500 transition-colors"
-								title="Mover"
-								aria-label={`Mover ${item.name}`}
+								className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 p-2 md:p-1 bg-ios-background hover:bg-ios-blue/10 text-ios-secondary hover:text-ios-blue rounded-lg transition-colors flex items-center justify-center"
+								title="Visualizar mídia"
+								aria-label={`Visualizar ${item.name}`}
 							>
-								<Move size={12} />
+								<Eye size={14} />
 							</button>
+						)}
+						<button
+							type="button"
+							onClick={(e) => { e.stopPropagation(); openEditModal([item]); }}
+							className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 p-2 md:p-1 bg-ios-background hover:bg-ios-blue/10 text-ios-secondary hover:text-blue-500 rounded-lg transition-colors flex items-center justify-center"
+							title="Editar detalhes"
+							aria-label={`Editar detalhes de ${item.name}`}
+						>
+							<Edit2 size={14} />
+						</button>
+						{(item.type === "image" || item.type === "carousel_item") && (
 							<button
-								onClick={(e) => deleteItem(e, item)}
-								className="min-h-11 min-w-11 p-2 bg-white/95 dark:bg-black/90 backdrop-blur text-ios-text rounded-full shadow-sm hover:text-red-500 transition-colors"
-								title="Excluir"
-								aria-label={`Excluir ${item.name}`}
+								type="button"
+								onClick={(e) => { e.stopPropagation(); openImageEditor(item); }}
+								className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 p-2 md:p-1 bg-ios-background hover:bg-ios-blue/10 text-ios-secondary hover:text-purple-500 rounded-lg transition-colors flex items-center justify-center"
+								title="Editar imagem"
+								aria-label={`Editar imagem ${item.name}`}
 							>
-								<Trash2 size={12} />
+								<Palette size={14} />
 							</button>
-						</>
-					)}
-				</div>}
+						)}
+						<button
+							type="button"
+							onClick={(e) => { e.stopPropagation(); openMoveModal([item]); }}
+							className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 p-2 md:p-1 bg-ios-background hover:bg-ios-blue/10 text-ios-secondary hover:text-ios-blue rounded-lg transition-colors flex items-center justify-center"
+							title="Mover"
+							aria-label={`Mover ${item.name}`}
+						>
+							<Move size={14} />
+						</button>
+						<button
+							type="button"
+							onClick={(e) => deleteItem(e, item)}
+							className="min-h-11 min-w-11 md:min-h-8 md:min-w-8 p-2 md:p-1 bg-ios-background hover:bg-red-500/10 text-ios-secondary hover:text-red-500 rounded-lg transition-colors flex items-center justify-center"
+							title="Excluir"
+							aria-label={`Excluir ${item.name}`}
+						>
+							<Trash2 size={14} />
+						</button>
+					</div>
+				)}
 			</div>
 		</div>
 	);
@@ -550,7 +543,7 @@ const GridArea = memo(function GridArea(props: GridAreaProps) {
 	const columnCount = Math.max(2, Math.floor(width / MIN_ITEM_WIDTH));
 	const rowCount = Math.ceil(sortedItems.length / columnCount);
 	const columnWidth = width / columnCount;
-	const rowHeight = columnWidth; // aspect-square
+	const rowHeight = columnWidth + (mode === "manage" ? 120 : 0); // preview + separate mobile action rows
 	const footerHeight = hasMore || loadingMore ? 56 : 0;
 
 	const itemData = useMemo(
