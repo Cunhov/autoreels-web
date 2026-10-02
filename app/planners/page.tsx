@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, type ReactNode } from "react";
 import {
 	Sliders,
 	Plus,
@@ -26,6 +26,7 @@ import IOSCard from "@/components/IOSComponents";
 import PlannerWizard from "@/components/PlannerWizard";
 import type { PlannerStatus } from "@/lib/planner-status";
 import { formatDateTime, formatRelativeTime } from "@/lib/format";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 
 interface Planner {
 	id: string;
@@ -281,18 +282,6 @@ function frequencyText(config: unknown): string {
 	return `A cada ${v} ${String(u)}`;
 }
 
-function relativeTime(dateStr?: string): string {
-	if (!dateStr) return "Never";
-	const diff = Date.now() - new Date(dateStr).getTime();
-	const s = Math.floor(diff / 1000);
-	if (s < 60) return `${s}s ago`;
-	const m = Math.floor(s / 60);
-	if (m < 60) return `${m}m ago`;
-	const h = Math.floor(m / 60);
-	if (h < 24) return `${h}h ago`;
-	return `${Math.floor(h / 24)}d ago`;
-}
-
 /**
  * Format a PlannerLog `details` column for display.
  * The cron stores it as a JSON string; older versions may have stored objects.
@@ -361,6 +350,7 @@ function formatNextRun(d: Date): string {
 		month: "2-digit",
 		hour: "2-digit",
 		minute: "2-digit",
+		hourCycle: "h23",
 	});
 }
 
@@ -424,10 +414,20 @@ export default function PlannersPage() {
 	const [runningId, setRunningId] = useState<string | null>(null);
 	const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
 	const [deletingId, setDeletingId] = useState<string | null>(null);
+	const closeDeleteDialog = useCallback(() => setDeletingId(null), []);
+	const closeLogsDialog = useCallback(() => setViewingLogs(null), []);
+	const closePreviewDialog = useCallback(() => setViewingPreview(null), []);
+	const deleteDialogRef = useDialogA11y(Boolean(deletingId), closeDeleteDialog);
+	const logsDialogRef = useDialogA11y(Boolean(viewingLogs), closeLogsDialog);
+	const previewDialogRef = useDialogA11y(Boolean(viewingPreview), closePreviewDialog);
 	useEffect(() => {
-		const h = (e: KeyboardEvent) => { if (e.key === 'Escape') { setDeletingId(null); setViewingLogs(null); setViewingPreview(null); } };
-		document.addEventListener('keydown', h);
-		return () => document.removeEventListener('keydown', h);
+		const params = new URLSearchParams(window.location.search);
+		if (params.get("new") !== "1") return;
+		setEditingPlanner(null);
+		setIsWizardOpen(true);
+		params.delete("new");
+		const query = params.toString();
+		window.history.replaceState(window.history.state, "", `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`);
 	}, []);
 	const [toast, setToast] = useState<{
 		msg: string;
@@ -725,33 +725,31 @@ export default function PlannersPage() {
 						const isDuplicating = duplicatingId === planner.id;
 						const nextRun = computeNextRun(planner);
 						return (
-							<IOSCard key={planner.id} className="p-5">
-								<div className="flex items-center gap-3">
+							<IOSCard key={planner.id} className="p-3 sm:p-5">
+								<div className="flex flex-col sm:flex-row sm:items-center gap-3">
+								<div className="flex items-start gap-3 w-full sm:flex-1 min-w-0">
 									{/* Status toggle (one-tap pause/resume) */}
 									<button
-										onClick={() => toggleStatus(planner)}
-										title={
-											planner.status === "active"
-												? "Pause planner"
-												: "Activate planner"
-										}
-										className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 transition-all hover:opacity-80 ${
+											onClick={() => toggleStatus(planner)}
+											title={planner.status === "active" ? "Pausar planner" : "Ativar planner"}
+										aria-label={planner.status === "active" ? "Pausar planner" : "Ativar planner"}
+										className={`w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0 transition-all hover:opacity-80 ${
 											planner.status === "active"
 												? "bg-ios-green/15 text-ios-green"
 												: "bg-ios-gray-5 text-ios-text-secondary"
 										}`}
 									>
 										{planner.status === "active" ? (
-											<Play size={22} fill="currentColor" />
-										) : (
 											<Pause size={22} fill="currentColor" />
+										) : (
+											<Play size={22} fill="currentColor" />
 										)}
 									</button>
 
 									{/* Info */}
 									<div className="flex-1 min-w-0">
 										<div className="flex items-center gap-2 flex-wrap">
-											<h4 className="font-bold text-[16px] text-ios-text">
+											<h4 className="font-bold text-[16px] text-ios-text break-words min-w-0">
 												{planner.name}
 											</h4>
 											<span
@@ -761,7 +759,7 @@ export default function PlannersPage() {
 														: "bg-ios-gray-5 text-ios-text-secondary"
 												}`}
 											>
-												{planner.status}
+											{planner.status === "active" ? "Ativo" : planner.status === "paused" ? "Pausado" : planner.status}
 											</span>
 											{(() => {
 												const chans = planner.channels || [];
@@ -785,7 +783,7 @@ export default function PlannersPage() {
 											</span>
 											<span className="flex items-center gap-1">
 												<Clock size={11} />
-												Last: {relativeTime(planner.last_run)}
+												Última execução: {formatRelativeTime(planner.last_run)}
 											</span>
 											<span className="flex items-center gap-1">
 												{(() => {
@@ -807,13 +805,13 @@ export default function PlannersPage() {
 												className={`flex items-center gap-1 ${nextRun.due ? "text-ios-green font-semibold" : ""}`}
 											>
 												<Zap size={11} />
-												Next: {nextRun.label}
+												Próxima: {nextRun.label}
 											</span>
 										</div>
 
 										{/* Post counts */}
 										{stats.total > 0 && (
-											<div className="flex gap-3 mt-2 text-[11px]">
+											<div className="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-[12px]">
 												<span className="text-ios-green font-semibold">
 													✓ {stats.published} publicados
 												</span>
@@ -828,14 +826,15 @@ export default function PlannersPage() {
 											</div>
 										)}
 									</div>
-
-									{/* Actions — always visible (touch-friendly) */}
-									<div className="flex gap-1 shrink-0">
+								</div>
+									{/* Actions — separate row on small screens; every control has a 44px target. */}
+									<div className="flex flex-wrap gap-2 w-full sm:w-auto sm:justify-end shrink-0">
 										<button
 											onClick={() => runNow(planner)}
 											disabled={isRunning}
-											title="Run now"
-											className="p-1.5 rounded-lg text-ios-blue bg-ios-blue/5 hover:bg-ios-blue/10 transition-colors disabled:opacity-50"
+											title="Executar agora"
+											aria-label="Executar agora"
+											className="min-w-11 min-h-11 p-2 rounded-lg text-ios-blue bg-ios-blue/5 hover:bg-ios-blue/10 transition-colors disabled:opacity-50"
 										>
 											{isRunning ? (
 												<RefreshCw size={16} className="animate-spin" />
@@ -846,8 +845,9 @@ export default function PlannersPage() {
 										<button
 											onClick={() => duplicatePlanner(planner)}
 											disabled={isDuplicating}
-											title="Duplicate planner"
-											className="p-1.5 rounded-lg text-ios-text-secondary bg-ios-gray-5/40 hover:bg-ios-gray-5 transition-colors disabled:opacity-50"
+											title="Duplicar planner"
+											aria-label="Duplicar planner"
+											className="min-w-11 min-h-11 p-2 rounded-lg text-ios-text-secondary bg-ios-gray-5/40 hover:bg-ios-gray-5 transition-colors disabled:opacity-50"
 										>
 											{isDuplicating ? (
 												<RefreshCw size={16} className="animate-spin" />
@@ -857,15 +857,17 @@ export default function PlannersPage() {
 										</button>
 										<button
 											onClick={() => setViewingLogs(planner)}
-											title="View logs"
-											className="p-1.5 rounded-lg text-ios-text-secondary bg-ios-gray-5/40 hover:bg-ios-gray-5 transition-colors"
+											title="Ver logs"
+											aria-label="Ver logs"
+											className="min-w-11 min-h-11 p-2 rounded-lg text-ios-text-secondary bg-ios-gray-5/40 hover:bg-ios-gray-5 transition-colors"
 										>
 											<Terminal size={16} />
 										</button>
 										<button
 											onClick={() => setViewingPreview(planner)}
-											title="Preview next run"
-											className="p-1.5 rounded-lg text-ios-text-secondary bg-ios-gray-5/40 hover:bg-ios-gray-5 transition-colors"
+											title="Prévia da próxima execução"
+											aria-label="Prévia da próxima execução"
+											className="min-w-11 min-h-11 p-2 rounded-lg text-ios-text-secondary bg-ios-gray-5/40 hover:bg-ios-gray-5 transition-colors"
 										>
 											<Eye size={16} />
 										</button>
@@ -874,15 +876,17 @@ export default function PlannersPage() {
 												setEditingPlanner(planner);
 												setIsWizardOpen(true);
 											}}
-											title="Edit planner"
-											className="p-1.5 rounded-lg text-ios-blue bg-ios-blue/5 hover:bg-ios-blue/10 transition-colors"
+											title="Editar planner"
+											aria-label="Editar planner"
+											className="min-w-11 min-h-11 p-2 rounded-lg text-ios-blue bg-ios-blue/5 hover:bg-ios-blue/10 transition-colors"
 										>
 											<Sliders size={16} />
 										</button>
 										<button
 											onClick={() => setDeletingId(planner.id)}
-											title="Delete planner"
-											className="p-1.5 rounded-lg text-ios-red bg-ios-red/5 hover:bg-ios-red/10 transition-colors"
+											title="Excluir planner"
+											aria-label="Excluir planner"
+											className="min-w-11 min-h-11 p-2 rounded-lg text-ios-red bg-ios-red/5 hover:bg-ios-red/10 transition-colors"
 										>
 											<Trash2 size={16} />
 										</button>
@@ -908,7 +912,7 @@ export default function PlannersPage() {
 			{/* Delete Confirmation Modal */}
 			{deletingId && (
 				<div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm fade-in" role="presentation" onClick={()=>setDeletingId(null)}>
-					<div role="dialog" aria-modal="true" aria-labelledby="delete-planner-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-80 rounded-2xl shadow-2xl overflow-hidden zoom-in-95">
+					<div ref={deleteDialogRef} role="dialog" aria-modal="true" aria-labelledby="delete-planner-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-80 rounded-2xl shadow-2xl overflow-hidden zoom-in-95">
 						<div className="p-6 text-center">
 							<div className="w-12 h-12 rounded-full bg-ios-red/15 flex items-center justify-center mx-auto mb-4">
 								<Trash2 size={22} className="text-ios-red" />
@@ -922,14 +926,14 @@ export default function PlannersPage() {
 						</div>
 						<div className="border-t border-ios-separator flex">
 							<button
-								onClick={() => setDeletingId(null)}
-								className="flex-1 py-3.5 text-[17px] text-ios-blue font-medium border-r border-ios-separator hover:bg-ios-gray-6 transition-colors"
+								onClick={closeDeleteDialog}
+								className="flex-1 min-h-11 py-3.5 text-[17px] text-ios-blue font-medium border-r border-ios-separator hover:bg-ios-gray-6 transition-colors"
 							>
 								Cancelar
 							</button>
 							<button
 								onClick={confirmDelete}
-								className="flex-1 py-3.5 text-[17px] text-ios-red font-semibold hover:bg-ios-red/10 transition-colors"
+								className="flex-1 min-h-11 py-3.5 text-[17px] text-ios-red font-semibold hover:bg-ios-red/10 transition-colors"
 							>
 								Excluir
 							</button>
@@ -941,35 +945,35 @@ export default function PlannersPage() {
 			{/* Logs Modal */}
 			{viewingLogs && (
 				<div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm fade-in" role="presentation" onClick={()=>setViewingLogs(null)}>
-					<div role="dialog" aria-modal="true" aria-labelledby="logs-modal-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-2xl max-h-[85dvh] rounded-3xl shadow-2xl flex flex-col overflow-hidden zoom-in-95">
-						<div className="p-5 border-b border-ios-separator flex items-center justify-between">
+					<div ref={logsDialogRef} role="dialog" aria-modal="true" aria-labelledby="logs-modal-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-2xl max-h-[85dvh] rounded-3xl shadow-2xl flex flex-col overflow-hidden zoom-in-95">
+							<div className="p-3 sm:p-5 border-b border-ios-separator flex flex-wrap items-center justify-between gap-2">
 							<div>
 								<h2 id="logs-modal-title" className="text-[17px] font-bold text-ios-text">
-									Logs: {viewingLogs.name}
+									Registros: {viewingLogs.name}
 								</h2>
 								<p className="text-[12px] text-ios-text-secondary">
 									{logTotal !== null
-										? `${logTotal} logs · auto-refresh 15s`
-										: "Execution history"}
+										? `${logTotal} registros · atualização automática a cada 15 s`
+										: "Histórico de execuções"}
 								</p>
 							</div>
-							<div className="flex items-center gap-2">
+							<div className="flex flex-wrap items-center justify-end gap-1">
 								{/* Level filter */}
-								<div className="flex rounded-lg border border-ios-separator overflow-hidden">
+										<div className="flex rounded-lg border border-ios-separator overflow-hidden">
 									{(["all", "info", "error"] as const).map((lv) => (
 										<button
 											key={lv}
 											onClick={() => setLogFilter(lv)}
-											className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition-colors ${logFilter === lv ? "bg-ios-blue text-white" : "text-ios-text-secondary hover:bg-ios-gray-5"}`}
+											className={`min-h-11 min-w-11 px-2 py-1 text-[10px] font-bold uppercase tracking-wide transition-colors ${logFilter === lv ? "bg-ios-blue text-white" : "text-ios-text-secondary hover:bg-ios-gray-5"}`}
 										>
-											{lv}
+											{lv === "all" ? "Todos" : lv === "info" ? "Info" : "Erro"}
 										</button>
 									))}
 								</div>
 								<button
 									onClick={() => clearLogs(viewingLogs.id)}
-									title="Clear logs (tap twice to confirm)"
-									className={`px-2 py-1.5 text-[11px] font-bold rounded-lg transition-colors ${clearingLogs ? "bg-ios-red text-white" : "text-ios-red bg-ios-red/5 hover:bg-ios-red/10"}`}
+									title="Limpar logs (toque duas vezes para confirmar)"
+										className={`min-h-11 px-2 py-1.5 text-[11px] font-bold rounded-lg transition-colors ${clearingLogs ? "bg-ios-red text-white" : "text-ios-red bg-ios-red/5 hover:bg-ios-red/10"}`}
 								>
 									{clearingLogs ? "Confirmar?" : "Limpar"}
 								</button>
@@ -977,9 +981,9 @@ export default function PlannersPage() {
 									onClick={() =>
 										fetchLogs(viewingLogs.id, "refresh", logFilter)
 									}
-									className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors"
+									className="min-w-11 min-h-11 p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors"
 									disabled={loadingLogs}
-									title="Refresh logs"
+									title="Atualizar logs" aria-label="Atualizar logs"
 								>
 									<RefreshCw
 										size={18}
@@ -987,8 +991,9 @@ export default function PlannersPage() {
 									/>
 								</button>
 								<button
-									onClick={() => setViewingLogs(null)}
-									className="p-2 text-ios-text-secondary hover:bg-ios-gray-5 rounded-full transition-colors"
+									onClick={closeLogsDialog}
+									aria-label="Fechar logs"
+									className="min-w-11 min-h-11 p-2 text-ios-text-secondary hover:bg-ios-gray-5 rounded-full transition-colors"
 								>
 									<X size={20} />
 								</button>
@@ -1017,7 +1022,7 @@ export default function PlannersPage() {
 												{log.level}
 											</span>
 											<span className="text-[10px] text-ios-text-secondary">
-												{new Date(log.created_at).toLocaleString()}
+											{formatDateTime(log.created_at, { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
 											</span>
 										</div>
 										<p className="text-ios-text font-medium break-words">
@@ -1044,7 +1049,7 @@ export default function PlannersPage() {
 							<button
 								onClick={() => fetchLogs(viewingLogs.id, "more", logFilter)}
 								disabled={!hasMoreLogs || loadingLogs}
-								className="px-3 py-1.5 text-[12px] font-semibold rounded-lg text-ios-blue bg-ios-blue/5 hover:bg-ios-blue/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+								className="min-h-11 px-3 py-1.5 text-[12px] font-semibold rounded-lg text-ios-blue bg-ios-blue/5 hover:bg-ios-blue/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
 							>
 								{loadingLogs ? "Carregando..." : "Mais antigos"}
 							</button>
@@ -1056,11 +1061,11 @@ export default function PlannersPage() {
 			{/* Preview Modal */}
 			{viewingPreview && (
 				<div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm fade-in" role="presentation" onClick={()=>setViewingPreview(null)}>
-					<div role="dialog" aria-modal="true" aria-labelledby="preview-modal-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-2xl max-h-[85dvh] rounded-3xl shadow-2xl flex flex-col overflow-hidden zoom-in-95">
-						<div className="p-5 border-b border-ios-separator flex items-center justify-between">
+					<div ref={previewDialogRef} role="dialog" aria-modal="true" aria-labelledby="preview-modal-title" tabIndex={-1} onClick={(e)=>e.stopPropagation()} className="bg-ios-card w-full max-w-2xl max-h-[85dvh] rounded-3xl shadow-2xl flex flex-col overflow-hidden zoom-in-95">
+						<div className="p-3 sm:p-5 border-b border-ios-separator flex flex-wrap items-center justify-between gap-2">
 							<div>
 								<h2 id="preview-modal-title" className="text-[17px] font-bold text-ios-text">
-									Preview: {viewingPreview.name}
+									Prévia: {viewingPreview.name}
 								</h2>
 								<p className="text-[12px] text-ios-text-secondary">
 									Próxima execução sem criar posts
@@ -1069,8 +1074,9 @@ export default function PlannersPage() {
 							<div className="flex items-center gap-2">
 								<button
 									onClick={() => fetchPreview(viewingPreview.id)}
-									className="p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors"
+									className="min-w-11 min-h-11 p-2 text-ios-blue hover:bg-ios-blue/10 rounded-full transition-colors"
 									disabled={loadingPreview}
+									aria-label="Atualizar prévia"
 								>
 									<RefreshCw
 										size={18}
@@ -1078,8 +1084,9 @@ export default function PlannersPage() {
 									/>
 								</button>
 								<button
-									onClick={() => setViewingPreview(null)}
-									className="p-2 text-ios-text-secondary hover:bg-ios-gray-5 rounded-full transition-colors"
+									onClick={closePreviewDialog}
+									aria-label="Fechar prévia"
+									className="min-w-11 min-h-11 p-2 text-ios-text-secondary hover:bg-ios-gray-5 rounded-full transition-colors"
 								>
 									<X size={20} />
 								</button>
@@ -1121,8 +1128,8 @@ export default function PlannersPage() {
 												</div>
 											</div>
 											{previewData?.gating?.gated && (
-												<span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-amber-100 text-amber-800">
-													Gated
+											<span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-full uppercase bg-amber-100 text-amber-800">
+												Bloqueado
 												</span>
 											)}
 										</div>

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import {
 	X,
@@ -16,6 +16,7 @@ import IOSButton from "@/components/IOSButton";
 import MediaUploader from "./MediaUploader";
 import ContentLibrary from "./ContentLibrary";
 import { useUploadActions } from "@/contexts/UploadContext";
+import { useDialogA11y } from "@/lib/dialog-a11y";
 import {
 	normalizeYoutubeProductsList,
 	resolveCaptionTextForWizard,
@@ -186,11 +187,11 @@ interface PlannerWizardProps {
 }
 
 const STEPS = [
-	{ id: "basics", title: "Basics" },
-	{ id: "accounts", title: "Accounts" },
-	{ id: "content", title: "Content" },
-	{ id: "schedule", title: "Schedule" },
-	{ id: "sorting", title: "Sorting" },
+	{ id: "basics", title: "Nome" },
+	{ id: "accounts", title: "Canais" },
+	{ id: "content", title: "Conteúdo" },
+	{ id: "schedule", title: "Agenda" },
+	{ id: "sorting", title: "Ordem" },
 ];
 
 /** Convert an ISO timestamp to a local 'YYYY-MM-DDTHH:mm' value for <input type="datetime-local">. */
@@ -234,6 +235,10 @@ export default function PlannerWizard({
 	initialData,
 }: PlannerWizardProps) {
 	const { uploadAndWait } = useUploadActions();
+	const onCloseRef = useRef(onClose);
+	onCloseRef.current = onClose;
+	const stableOnClose = useCallback(() => onCloseRef.current(), []);
+	const dialogRef = useDialogA11y(isOpen, stableOnClose);
 
 	const [step, setStep] = useState(0);
 	const [loading, setLoading] = useState(false);
@@ -371,7 +376,7 @@ export default function PlannerWizard({
 	}, [channels, selectedChannels]);
 
 	// TODOS os canais selecionados são YouTube? Oculta campos exclusivos do
-	// Instagram (Location/Collabs/Tags/Audio/Share to Feed) e restringe o tipo
+	// Instagram (Location/Collabs/Tags/Audio/Compartilhar no feed) e restringe o tipo
 	// de mídia (vídeo → Short, imagem/carrossel → Comunidade).
 	const onlyYoutubeSelected = useMemo(() => {
 		return (
@@ -947,7 +952,7 @@ export default function PlannerWizard({
 	async function fetchChannels() {
 		try {
 			const res = await fetch("/api/channels");
-			if (!res.ok) throw new Error("Failed to load channels");
+			if (!res.ok) throw new Error("Falha ao carregar os canais");
 			const data = await res.json();
 			setChannels(
 				Array.isArray(data)
@@ -1599,7 +1604,7 @@ export default function PlannerWizard({
 		setLoading(true);
 		setUploading(true);
 		try {
-			if (!session?.user) throw new Error("Not authenticated");
+			if (!session?.user) throw new Error("Sessão não autenticada");
 
 			// 1. Upload New Files
 			const uploadedItems = await uploadFiles();
@@ -1884,7 +1889,7 @@ export default function PlannerWizard({
 			);
 
 			if (!res.ok) {
-				let message = "Failed to save planner";
+				let message = "Falha ao salvar o planner";
 				try {
 					const errBody = await res.json();
 					if (errBody?.error) message = errBody.error;
@@ -1900,22 +1905,13 @@ export default function PlannerWizard({
 		} catch (error) {
 			console.error(error);
 			setFormError(
-				error instanceof Error ? error.message : "Failed to save planner",
+				error instanceof Error ? error.message : "Falha ao salvar o planner",
 			);
 		} finally {
 			setLoading(false);
 			setUploading(false);
 		}
 	};
-
-	useEffect(() => {
-		if (!isOpen) return;
-		const h = (e: KeyboardEvent) => {
-			if (e.key === "Escape") onClose();
-		};
-		document.addEventListener("keydown", h);
-		return () => document.removeEventListener("keydown", h);
-	}, [isOpen, onClose]);
 
 	if (!isOpen) return null;
 
@@ -1926,22 +1922,23 @@ export default function PlannerWizard({
 			onClick={onClose}
 		>
 			<div
+				ref={dialogRef}
 				role="dialog"
 				aria-modal="true"
 				aria-labelledby="planner-wizard-title"
 				tabIndex={-1}
 				onClick={(e) => e.stopPropagation()}
-				className="bg-ios-card w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[85dvh]"
+				className="bg-ios-card w-full max-w-2xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90dvh] sm:max-h-[85dvh]"
 			>
 				{/* Header */}
-				<div className="px-6 py-4 border-b border-ios-separator flex items-center justify-between bg-ios-background">
-					<div>
+				<div className="px-3 sm:px-6 py-3 sm:py-4 border-b border-ios-separator flex items-start justify-between gap-2 bg-ios-background min-w-0">
+					<div className="min-w-0 flex-1">
 						<div className="flex items-center gap-2">
 							<h2
 								id="planner-wizard-title"
 								className="text-[17px] font-semibold text-ios-text"
 							>
-								{initialData?.id ? "Editar Planner" : "Novo Planner"}
+								{initialData?.id ? "Editar planner" : "Novo planner"}
 							</h2>
 							{selectedPlatformType === "youtube" && (
 								<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-500 text-white text-[10px] font-bold uppercase tracking-wide">
@@ -1959,11 +1956,11 @@ export default function PlannerWizard({
 								</span>
 							)}
 						</div>
-						<div className="flex items-center gap-2 text-xs text-ios-secondary mt-1">
+						<div className="flex items-center gap-2 text-[10px] sm:text-xs text-ios-secondary mt-2 overflow-x-auto whitespace-nowrap pb-1">
 							{STEPS.map((s, idx) => (
 								<div
 									key={s.id}
-									className={`flex items-center gap-1 ${step === idx ? "text-ios-blue font-bold" : ""}`}
+									className={`flex items-center gap-1 shrink-0 ${step === idx ? "text-ios-blue font-bold" : ""}`}
 								>
 									<span
 										className={`w-4 h-4 rounded-full flex items-center justify-center ${step === idx ? "bg-ios-blue text-white" : step > idx ? "bg-green-500 text-white" : "bg-gray-200 text-gray-500"}`}
@@ -1977,7 +1974,8 @@ export default function PlannerWizard({
 					</div>
 					<button
 						onClick={onClose}
-						className="p-1 rounded-full hover:bg-black/5 text-ios-secondary transition-colors"
+						aria-label="Fechar"
+						className="min-w-11 min-h-11 p-2 shrink-0 flex items-center justify-center rounded-full hover:bg-black/5 text-ios-secondary transition-colors"
 					>
 						<X size={20} />
 					</button>
@@ -1996,18 +1994,18 @@ export default function PlannerWizard({
 					{step === 0 && (
 						<div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
 							<label className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide">
-								Planner Name
+								Nome do planner
 							</label>
 							<input
 								type="text"
-								autoFocus
 								value={name}
 								onChange={(e) => setName(e.target.value)}
-								placeholder="My Awesome Scheduler"
+								placeholder="Ex.: Publicações diárias"
+								data-autofocus
 								className="w-full bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue"
 							/>
 							<label className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide mt-4">
-								Start When?
+								Quando começar?
 							</label>
 							<input
 								type="datetime-local"
@@ -2093,7 +2091,7 @@ export default function PlannerWizard({
 								})}
 								{channels.length === 0 && (
 									<div className="text-center py-10 text-ios-secondary">
-										Nenhum canal conectado — adicione uma conta do Instagram ou YouTube em
+									Nenhum canal conectado — adicione uma conta do Instagram, YouTube ou TikTok em
 										Canais.
 									</div>
 								)}
@@ -2132,7 +2130,7 @@ export default function PlannerWizard({
 											: "text-ios-secondary hover:text-ios-text"
 									}`}
 								>
-									Upload New
+									Enviar arquivos
 								</button>
 								<button
 									onClick={() => setContentTab("library")}
@@ -2142,7 +2140,7 @@ export default function PlannerWizard({
 											: "text-ios-secondary hover:text-ios-text"
 									}`}
 								>
-									From Library
+									Biblioteca
 								</button>
 							</div>
 
@@ -2183,12 +2181,12 @@ export default function PlannerWizard({
 
 							<p className="text-xs text-ios-secondary">
 								{isCarousel
-									? `${selectedContentIds.length} folder(s) selected for carousel.`
-									: `${files.length} new files, ${selectedContentIds.length} library items selected.`}
+									? `${selectedContentIds.length} pasta(s) selecionada(s) para o carrossel.`
+									: `${files.length} arquivo(s) novo(s), ${selectedContentIds.length} item(ns) da biblioteca selecionado(s).`}
 								{preservedCount > 0 && (
 									<span className="text-amber-600 dark:text-amber-400">
 										{" "}
-										· {preservedCount} legacy upload item(s) will be preserved on save.
+										· {preservedCount} upload(s) legado(s) será(ão) preservado(s) ao salvar.
 									</span>
 								)}
 							</p>
@@ -2197,7 +2195,7 @@ export default function PlannerWizard({
 							<div className="bg-ios-card border border-ios-separator rounded-xl p-4 space-y-4 shadow-sm">
 								<div className="flex items-center justify-between">
 									<h3 className="text-[13px] font-bold text-ios-secondary uppercase tracking-wide">
-										Post Configuration
+										Configuração da publicação
 									</h3>
 									{files.length + selectedContentIds.length > 1 &&
 										!onlyTiktokSelected && (
@@ -2218,7 +2216,7 @@ export default function PlannerWizard({
 													/>
 												</div>
 												<span className="text-xs text-ios-text font-medium">
-													Group as Carousel
+														Agrupar como carrossel
 												</span>
 											</div>
 										)}
@@ -2227,7 +2225,7 @@ export default function PlannerWizard({
 								<div className="grid grid-cols-2 gap-4">
 									<div className={mediaType === "REELS" ? "" : "col-span-2"}>
 										<label className="text-xs font-medium text-ios-text mb-1.5 block">
-											Media Type
+												Tipo de mídia
 										</label>
 										<select
 											value={mediaType}
@@ -2251,12 +2249,12 @@ export default function PlannerWizard({
 														{onlyYoutubeSelected ? "Short do YouTube" : "Reels"}
 													</option>
 													<option value="IMAGE">
-														{onlyYoutubeSelected ? "Post na Comunidade" : "Post / Image"}
+														{onlyYoutubeSelected ? "Post na Comunidade" : "Publicação / Imagem"}
 													</option>
 													<option value="CAROUSEL">
 														{onlyYoutubeSelected
 															? "Carrossel · Post na Comunidade"
-															: "Carousel"}
+															: "Carrossel"}
 													</option>
 													{!youtubeSelected && <option value="STORIES">Story</option>}
 												</>
@@ -2269,7 +2267,7 @@ export default function PlannerWizard({
 										!onlyTiktokSelected && (
 											<div className="flex flex-col justify-center">
 												<label className="text-xs font-medium text-ios-text mb-1.5 block">
-													Options
+													Opções
 												</label>
 												<div
 													onClick={() => {
@@ -2283,7 +2281,7 @@ export default function PlannerWizard({
 													>
 														{shareToFeed && <Check size={10} className="text-white" />}
 													</div>
-													<span className="text-sm text-ios-text">Share to Feed</span>
+													<span className="text-sm text-ios-text">Compartilhar no feed</span>
 												</div>
 											</div>
 										)}
@@ -2375,7 +2373,7 @@ export default function PlannerWizard({
 											{[
 												{
 													key: "duet",
-													label: "Desativar Duet",
+													label: "Desativar dueto",
 													state: tiktokDisableDuet,
 													set: setTiktokDisableDuet,
 												},
@@ -2387,7 +2385,7 @@ export default function PlannerWizard({
 												},
 												{
 													key: "comment",
-													label: "Desativar Comentários",
+													label: "Desativar comentários",
 													state: tiktokDisableComment,
 													set: setTiktokDisableComment,
 												},
@@ -2414,7 +2412,7 @@ export default function PlannerWizard({
 										{mediaType !== "IMAGE" && !isCarousel && (
 											<div>
 												<label className="text-xs font-medium text-ios-text mb-1.5 block">
-													Cover Timestamp (ms)
+													Posição da capa (ms)
 												</label>
 												<input
 													type="number"
@@ -2466,7 +2464,7 @@ export default function PlannerWizard({
 												className="flex items-center justify-between cursor-pointer"
 											>
 												<span className="text-sm text-ios-text">
-													Conteúdo de marca (Brand Content)
+													Conteúdo de marca (parceria paga)
 												</span>
 												<div
 													className={`w-10 h-6 rounded-full relative transition-colors ${tiktokBrandContentToggle ? "bg-ios-blue" : "bg-gray-300"}`}
@@ -2483,7 +2481,7 @@ export default function PlannerWizard({
 												}}
 												className="flex items-center justify-between cursor-pointer"
 											>
-												<span className="text-sm text-ios-text">Brand Organic</span>
+												<span className="text-sm text-ios-text">Conteúdo orgânico de marca</span>
 												<div
 													className={`w-10 h-6 rounded-full relative transition-colors ${tiktokBrandOrganicToggle ? "bg-ios-blue" : "bg-gray-300"}`}
 												>
@@ -2504,7 +2502,7 @@ export default function PlannerWizard({
 									<div>
 										<div className="flex justify-between items-center mb-1.5">
 											<label className="text-xs font-medium text-ios-text block">
-												Caption
+												Legenda
 											</label>
 											<div className="flex gap-2">
 												<button
@@ -2517,7 +2515,7 @@ export default function PlannerWizard({
 													onClick={() => setCaption((prev) => prev + " {post_caption}")}
 													className="text-[10px] bg-ios-blue/10 text-ios-blue px-2 py-0.5 rounded-full hover:bg-ios-blue/20 transition-colors"
 												>
-													+ Caption
+													+ Legenda
 												</button>
 											</div>
 										</div>
@@ -2528,7 +2526,7 @@ export default function PlannerWizard({
 												setSettingsTouched(true);
 											}}
 											className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-24 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400 font-mono"
-											placeholder="Write a caption... Use tags for dynamic content."
+											placeholder="Escreva uma legenda. Use tags para conteúdo dinâmico."
 										/>
 									</div>
 								)}
@@ -2537,7 +2535,7 @@ export default function PlannerWizard({
 									<div className="space-y-3 pt-4 border-t border-ios-separator">
 										<div className="flex items-center justify-between">
 											<label className="text-xs font-medium text-ios-text block">
-												Caption Templates
+												Modelos de legenda
 											</label>
 											<select
 												value={captionRotation}
@@ -2548,9 +2546,9 @@ export default function PlannerWizard({
 												}
 												className="bg-ios-background border border-ios-separator rounded-lg px-2 py-1 text-xs focus:border-ios-blue outline-none"
 											>
-												<option value="off">Rotation: Off</option>
-												<option value="sequential">Rotation: Sequential</option>
-												<option value="random">Rotation: Random</option>
+												<option value="off">Rotação: desativada</option>
+												<option value="sequential">Rotação: sequencial</option>
+												<option value="random">Rotação: aleatória</option>
 											</select>
 										</div>
 										<textarea
@@ -2571,7 +2569,7 @@ export default function PlannerWizard({
 										/>
 										<div>
 											<p className="text-[11px] text-gray-400 mb-1">
-												Available variables:
+												Variáveis disponíveis:
 											</p>
 											<div className="flex flex-wrap gap-1">
 												{[
@@ -2607,7 +2605,7 @@ export default function PlannerWizard({
 									<div className="space-y-4 pt-4 border-t border-ios-separator">
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
-												Fallback Title
+												Título alternativo
 											</label>
 											<p className="text-[11px] text-gray-400 mb-2">
 												Used if the selected content has an empty title and {"{post_title}"}{" "}
@@ -2620,12 +2618,12 @@ export default function PlannerWizard({
 													setSettingsTouched(true);
 												}}
 												className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
-												placeholder="Example: AutoReels Magic"
+												placeholder="Ex.: AutoReels"
 											/>
 										</div>
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
-												Fallback Caption
+												Legenda alternativa
 											</label>
 											<p className="text-[11px] text-gray-400 mb-2">
 												Used if the selected content has an empty caption and{" "}
@@ -2638,7 +2636,7 @@ export default function PlannerWizard({
 													setSettingsTouched(true);
 												}}
 												className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm h-16 resize-none focus:border-ios-blue outline-none placeholder:text-gray-400"
-												placeholder="Example: Check out this amazing content!"
+												placeholder="Ex.: Confira esta publicação"
 											/>
 										</div>
 									</div>
@@ -2648,7 +2646,7 @@ export default function PlannerWizard({
 									{!onlyYoutubeSelected && !onlyTiktokSelected && (
 										<div>
 											<label className="text-xs font-medium text-ios-text mb-1.5 block">
-												Location ID (Optional)
+												ID do local (opcional)
 											</label>
 											<input
 												value={location}
@@ -2657,7 +2655,7 @@ export default function PlannerWizard({
 													setSettingsTouched(true);
 												}}
 												className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
-												placeholder="Instagram Location ID"
+												placeholder="ID do local no Instagram"
 											/>
 										</div>
 									)}
@@ -2667,7 +2665,7 @@ export default function PlannerWizard({
 										!onlyTiktokSelected && (
 											<div>
 												<label className="text-xs font-medium text-ios-text mb-1.5 block">
-													Collaborators (Optional)
+													Colaboradores (opcional)
 												</label>
 												<input
 													value={collaborators}
@@ -2676,10 +2674,10 @@ export default function PlannerWizard({
 														setSettingsTouched(true);
 													}}
 													className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
-													placeholder="e.g. user1, user2"
+													placeholder="Ex.: usuário1, usuário2"
 												/>
 												<p className="text-[10px] text-gray-400 mt-1">
-													Comma-separated Instagram usernames to invite as collaborators.
+													Nomes do Instagram separados por vírgula para convidar como colaboradores.
 												</p>
 											</div>
 										)}
@@ -2689,7 +2687,7 @@ export default function PlannerWizard({
 										!onlyTiktokSelected && (
 											<div>
 												<label className="text-xs font-medium text-ios-text mb-1.5 block">
-													User Tags (Optional)
+													Marcar usuários (opcional)
 												</label>
 												<input
 													value={userTags}
@@ -2698,10 +2696,10 @@ export default function PlannerWizard({
 														setSettingsTouched(true);
 													}}
 													className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400"
-													placeholder="e.g. user1, user2"
+													placeholder="Ex.: usuário1, usuário2"
 												/>
 												<p className="text-[10px] text-gray-400 mt-1">
-													Comma-separated Instagram usernames to tag on the image.
+													Nomes do Instagram separados por vírgula para marcar na imagem.
 												</p>
 											</div>
 										)}
@@ -2896,8 +2894,9 @@ export default function PlannerWizard({
 																<button
 																	type="button"
 																	onClick={() => removeYoutubeProduct(draft.key)}
-																	className="p-1.5 text-gray-400 hover:text-ios-red"
-																	title="Remover produto"
+													title="Remover produto"
+													aria-label="Remover produto"
+													className="min-w-11 min-h-11 flex items-center justify-center text-gray-400 hover:text-ios-red"
 																>
 																	<X size={16} />
 																</button>
@@ -3008,8 +3007,8 @@ export default function PlannerWizard({
 													</select>
 												</div>
 												<div>
-													<label className="text-xs font-medium text-ios-text mb-1.5 block">
-														Categoria ID
+											<label className="text-xs font-medium text-ios-text mb-1.5 block">
+														ID da categoria
 													</label>
 													<input
 														value={youtubeCategoryId}
@@ -3062,11 +3061,11 @@ export default function PlannerWizard({
 										!onlyTiktokSelected && (
 											<div className="space-y-3 p-3 bg-ios-gray-6 rounded-xl border border-ios-separator">
 												<span className="text-xs font-semibold text-ios-text block">
-													Meta Audio Settings (Optional)
+													Configurações de áudio Meta (opcional)
 												</span>
 												<div>
 													<label className="text-[11px] font-medium text-ios-text mb-1 block">
-														Audio ID
+														ID do áudio
 													</label>
 													<input
 														value={audioId}
@@ -3075,14 +3074,14 @@ export default function PlannerWizard({
 															setSettingsTouched(true);
 														}}
 														className="w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-xs focus:border-ios-blue outline-none placeholder:text-gray-400"
-														placeholder="Meta Audio Track ID"
+														placeholder="ID da faixa de áudio Meta"
 													/>
 												</div>
 												{audioId && (
 													<div className="grid grid-cols-2 gap-3">
 														<div>
 															<label className="text-[10px] font-medium text-ios-text mb-1 block">
-																Music Volume ({audioVolume}%)
+																Volume da música ({audioVolume}%)
 															</label>
 															<input
 																type="range"
@@ -3098,7 +3097,7 @@ export default function PlannerWizard({
 														</div>
 														<div>
 															<label className="text-[10px] font-medium text-ios-text mb-1 block">
-																Video Volume ({videoVolume}%)
+																Volume do vídeo ({videoVolume}%)
 															</label>
 															<input
 																type="range"
@@ -3127,7 +3126,7 @@ export default function PlannerWizard({
 							{/* ... Configs ... */}
 							<div>
 								<label className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide mb-2">
-									Posting Interval
+									Intervalo entre publicações
 								</label>
 								<div className="flex gap-4">
 									<input
@@ -3146,17 +3145,17 @@ export default function PlannerWizard({
 										onChange={(e) => setFrequencyUnit(e.target.value)}
 										className="flex-1 bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue"
 									>
-										<option value="minutes">Minutes</option>
-										<option value="hours">Hours</option>
-										<option value="days">Days</option>
-										<option value="weeks">Weeks</option>
+										<option value="minutes">Minutos</option>
+										<option value="hours">Horas</option>
+										<option value="days">Dias</option>
+										<option value="weeks">Semanas</option>
 									</select>
 								</div>
 							</div>
 
 							<div>
 								<label className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide mb-2">
-									Timezone
+									Fuso horário
 								</label>
 								<select
 									value={timezone}
@@ -3175,7 +3174,7 @@ export default function PlannerWizard({
 								<div className="flex items-center justify-between mb-4">
 									<label className="text-[17px] font-medium text-ios-text flex items-center gap-2">
 										<Clock size={18} className="text-ios-blue" />
-										Sleep Timer
+										Pausa noturna
 									</label>
 									<div
 										onClick={() => setSleepEnabled(!sleepEnabled)}
@@ -3190,7 +3189,7 @@ export default function PlannerWizard({
 								{sleepEnabled && (
 									<div className="grid grid-cols-2 gap-4 animate-in slide-in-from-top-2">
 										<div>
-											<span className="text-xs text-ios-secondary mb-1 block">From</span>
+											<span className="text-xs text-ios-secondary mb-1 block">Início</span>
 											<input
 												type="time"
 												value={sleepStart}
@@ -3202,7 +3201,7 @@ export default function PlannerWizard({
 											/>
 										</div>
 										<div>
-											<span className="text-xs text-ios-secondary mb-1 block">To</span>
+											<span className="text-xs text-ios-secondary mb-1 block">Fim</span>
 											<input
 												type="time"
 												value={sleepEnd}
@@ -3228,27 +3227,27 @@ export default function PlannerWizard({
 					{step === 4 && (
 						<div className="animate-in fade-in slide-in-from-right-4 duration-300">
 							<label className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide mb-3">
-								Sort Order
+								Ordem das publicações
 							</label>
 							<div className="grid grid-cols-1 gap-2">
 								{[
 									{
 										id: "random_loop",
-										label: "Infinite Random",
+										label: "Aleatória, em ciclo",
 										desc:
-											"Posts randomly without duplicates. Repeats automatically once all items are posted.",
+											"Publica itens em ordem aleatória, sem duplicar. Reinicia o ciclo após publicar todos os itens.",
 									},
 									{
 										id: "old_to_new",
-										label: "Oldest to Newest",
+										label: "Do mais antigo ao mais recente",
 										desc:
-											"Posts items in chronological order. Repeats once the end is reached.",
+											"Publica em ordem cronológica e reinicia ao chegar ao fim.",
 									},
 									{
 										id: "new_to_old",
-										label: "Newest to Oldest",
+										label: "Do mais recente ao mais antigo",
 										desc:
-											"Posts items in reverse chronological order. Repeats once the end is reached.",
+											"Publica em ordem cronológica inversa e reinicia ao chegar ao fim.",
 									},
 								].map((option) => (
 									<div
@@ -3273,49 +3272,49 @@ export default function PlannerWizard({
 
 							<div className="mt-6 bg-ios-card border border-ios-separator rounded-xl p-4 space-y-3">
 								<h3 className="text-[13px] font-bold text-ios-secondary uppercase tracking-wide">
-									Preview
+									Prévia
 								</h3>
 								<div className="grid gap-2 text-sm text-ios-text">
 									<div className="flex items-center justify-between gap-4">
-										<span className="text-ios-secondary">Name</span>
+										<span className="text-ios-secondary">Nome</span>
 										<span className="font-medium truncate text-right">
-											{name || "Untitled planner"}
+											{name || "Planner sem nome"}
 										</span>
 									</div>
 									<div className="flex items-center justify-between gap-4">
-										<span className="text-ios-secondary">Channels</span>
+										<span className="text-ios-secondary">Canais</span>
 										<span className="font-medium text-right">
 											{selectedChannelNames.length > 0
 												? selectedChannelNames.join(", ")
-												: `${scheduleSummary.channels} selected`}
+												: `${scheduleSummary.channels} selecionados`}
 										</span>
 									</div>
 									<div className="flex items-center justify-between gap-4">
-										<span className="text-ios-secondary">Content</span>
+										<span className="text-ios-secondary">Conteúdo</span>
 										<span className="font-medium text-right">
-											{scheduleSummary.contentCount} item(s)
+											{scheduleSummary.contentCount} item(ns)
 										</span>
 									</div>
 									<div className="flex items-center justify-between gap-4">
-										<span className="text-ios-secondary">Frequency</span>
+										<span className="text-ios-secondary">Frequência</span>
 										<span className="font-medium text-right">
 											Every {scheduleSummary.frequency}
 										</span>
 									</div>
 									<div className="flex items-center justify-between gap-4">
-										<span className="text-ios-secondary">Start</span>
+										<span className="text-ios-secondary">Início</span>
 										<span className="font-medium text-right">
 											{scheduleSummary.start}
 										</span>
 									</div>
 									<div className="flex items-center justify-between gap-4">
-										<span className="text-ios-secondary">Sleep</span>
+										<span className="text-ios-secondary">Pausa</span>
 										<span className="font-medium text-right">
 											{scheduleSummary.sleep}
 										</span>
 									</div>
 									<div className="flex items-center justify-between gap-4">
-										<span className="text-ios-secondary">Media</span>
+										<span className="text-ios-secondary">Mídia</span>
 										<span className="font-medium text-right">
 											{plannerMediaLabel(
 												mediaType,
@@ -3334,7 +3333,7 @@ export default function PlannerWizard({
 								</div>
 								{location ? (
 									<p className="text-[11px] text-ios-secondary">
-										Location ID configured.
+										ID do local configurado.
 									</p>
 								) : null}
 							</div>
@@ -3350,7 +3349,7 @@ export default function PlannerWizard({
 						disabled={step === 0 || loading}
 						className={step === 0 ? "invisible" : ""}
 					>
-						<ChevronLeft size={18} className="mr-1" /> Back
+						<ChevronLeft size={18} className="mr-1" /> Voltar
 					</IOSButton>
 
 					{step === STEPS.length - 1 ? (
@@ -3360,7 +3359,7 @@ export default function PlannerWizard({
 							disabled={loading}
 							className="bg-green-600 hover:bg-green-700 min-w-[120px] justify-center"
 						>
-							{loading ? (uploading ? "Uploading..." : "Creating...") : "Finish"}
+							{loading ? (uploading ? "Enviando arquivos..." : "Criando...") : "Concluir"}
 						</IOSButton>
 					) : (
 						<IOSButton
@@ -3377,7 +3376,7 @@ export default function PlannerWizard({
 								(step === 3 && sleepEnabled && sleepStart === sleepEnd)
 							}
 						>
-							Next <ChevronRight size={18} className="ml-1" />
+							Avançar <ChevronRight size={18} className="ml-1" />
 						</IOSButton>
 					)}
 				</div>
