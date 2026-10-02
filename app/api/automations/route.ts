@@ -2,193 +2,102 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage } from "@/lib/api";
 import { Prisma } from "@prisma/client";
+import { validateAutomationInput } from "@/lib/ig-automation/validate";
+import { AUTOMATION_INCLUDE, actionForChannel, normalizeMediaIds, profileGroupId, serializeGroup, serializePhysical, validateActionMappings, validateActionReferences, validateChannelMapKeys, withProfileGroup } from "@/lib/ig-automation/profile-groups";
 import {
-    validateAutomationInput,
-    type ValidatedActionInput,
-} from "@/lib/ig-automation/validate";
-import {
-    CHANNEL_SUMMARY_SELECT,
-    actionToDb,
-    automationToDb,
-    badRequest,
-    findOwnedChannel,
-    notFound,
-    readJsonBody,
-    requireUserId,
-    serializeAction,
-    serializeAutomation,
-    unauthorized,
+    actionToDb, automationToDb, badRequest, notFound, readJsonBody, requireUserId, unauthorized,
 } from "../ig/shared";
 
-const AUTOMATION_INCLUDE = {
-    actions: { orderBy: { position: "asc" as const } },
-    channel: { select: CHANNEL_SUMMARY_SELECT },
-} satisfies Prisma.IgAutomationInclude;
-
-/**
- * FIX-M9: valida ownership das referências das ações — `sequenceId` pertence ao
- * user (e ao mesmo canal da automação) e `webhookId` pertence ao user (global
- * ou do mesmo canal). Devolve o erro HTTP pronto ou null quando tudo ok.
- */
-async function validateActionReferences(
-    userId: string,
-    actions: ValidatedActionInput[] | undefined,
-    channelId: string,
-): Promise<{ status: 400 | 404; error: string } | null> {
-    if (!actions || actions.length === 0) return null;
-
-    const sequenceIds = Array.from(
-        new Set(
-            actions
-                .map((action) => action.sequenceId)
-                .filter((id): id is string => typeof id === "string" && id !== "")
-        )
-    );
-    if (sequenceIds.length > 0) {
-        const sequences = await prisma.igSequence.findMany({
-            where: { id: { in: sequenceIds }, user_id: userId },
-            select: { id: true, channel_id: true },
-        });
-        const byId = new Map(sequences.map((s) => [s.id, s.channel_id]));
-        for (const id of sequenceIds) {
-            if (!byId.has(id)) {
-                return { status: 404, error: "Sequência não encontrada" };
-            }
-            if (byId.get(id) !== channelId) {
-                return { status: 400, error: "Sequência pertence a outro canal" };
-            }
-        }
-    }
-
-    const webhookIds = Array.from(
-        new Set(
-            actions
-                .map((action) => action.webhookId)
-                .filter((id): id is string => typeof id === "string" && id !== "")
-        )
-    );
-    if (webhookIds.length > 0) {
-        const webhooks = await prisma.igOutboundWebhook.findMany({
-            where: { id: { in: webhookIds }, user_id: userId },
-            select: { id: true, channel_id: true },
-        });
-        const byId = new Map(webhooks.map((w) => [w.id, w.channel_id]));
-        for (const id of webhookIds) {
-            if (!byId.has(id)) {
-                return { status: 404, error: "Webhook de saída não encontrado" };
-            }
-            const webhookChannel = byId.get(id);
-            if (webhookChannel !== null && webhookChannel !== channelId) {
-                return {
-                    status: 400,
-                    error: "Webhook de saída pertence a outro canal",
-                };
-            }
-        }
-    }
-
-    return null;
-}
-
-/**
- * GET /api/automations?channelId=
- *   → { automations: [Automation & { actions, channel }] }
- */
 export async function GET(req: Request) {
     const userId = await requireUserId();
     if (!userId) return unauthorized();
-
     try {
         const { searchParams } = new URL(req.url);
         const channelId = searchParams.get("channelId") ?? searchParams.get("channel_id");
-
-        const automations = await prisma.igAutomation.findMany({
-            where: {
-                user_id: userId,
-                ...(channelId ? { channel_id: channelId } : {}),
-            },
+        const grouped = searchParams.get("grouped") === "1";
+        const rows = await prisma.igAutomation.findMany({
+            where: { user_id: userId, ...(grouped ? {} : channelId ? { channel_id: channelId } : {}) },
             include: AUTOMATION_INCLUDE,
             orderBy: [{ priority: "desc" }, { created_at: "asc" }],
         });
-
-        return NextResponse.json({
-            automations: automations.map((automation) => ({
-                ...serializeAutomation(automation),
-                actions: automation.actions.map(serializeAction),
-                channel: automation.channel,
-            })),
-        });
+        if (!grouped) return NextResponse.json({ automations: rows.map(serializePhysical) });
+        const buckets = new Map<string, any[]>();
+        for (const row of rows) {
+            const key = profileGroupId(row.settings) ?? row.id;
+            const group = buckets.get(key) ?? []; group.push(row); buckets.set(key, group);
+        }
+        const automations = [...buckets.values()]
+            .filter((group) => !channelId || group.some((row) => row.channel_id === channelId))
+            .map(serializeGroup);
+        return NextResponse.json({ automations });
     } catch (error: unknown) {
         console.error("List automations error:", error);
         return badRequest(getErrorMessage(error));
     }
 }
 
-/**
- * POST /api/automations — cria a automação + ações em transação.
- */
 export async function POST(req: Request) {
     const userId = await requireUserId();
     if (!userId) return unauthorized();
-
     try {
         const body = await readJsonBody(req);
+        if (!body || typeof body !== "object" || Array.isArray(body)) return badRequest("Corpo da requisição inválido");
+        const raw = body as Record<string, unknown>;
         const result = validateAutomationInput(body, { partial: false });
         if (!result.ok) return badRequest(result.error);
         const data = result.data;
-
-        if (!body || typeof body !== "object" || Array.isArray(body)) {
-            return badRequest("Corpo da requisição inválido");
+        let ids: string[];
+        if (raw.channelIds !== undefined) {
+            if (!Array.isArray(raw.channelIds) || raw.channelIds.length < 1 || raw.channelIds.some((x) => typeof x !== "string" || !x.trim())) return badRequest("Perfis inválidos");
+            ids = [...new Set((raw.channelIds as string[]).map((x) => x.trim()))];
+            if (ids.length !== raw.channelIds.length) return badRequest("Perfis duplicados");
+        } else if (typeof raw.channelId === "string" && raw.channelId.trim()) ids = [raw.channelId.trim()];
+        else return badRequest("Canal é obrigatório");
+        const channels = await prisma.channel.findMany({ where: { id: { in: ids }, user_id: userId }, select: { id: true, platform: true } });
+        if (channels.length !== ids.length) return notFound("Canal não encontrado");
+        if (channels.some((c) => c.platform !== "instagram")) return badRequest("Canal não é do Instagram");
+        const mediaMap = raw.mediaIdsByChannel;
+        if (mediaMap !== undefined && (!mediaMap || typeof mediaMap !== "object" || Array.isArray(mediaMap))) return badRequest("Mapeamento de posts inválido");
+        if (mediaMap && Object.keys(mediaMap as object).some((id) => !ids.includes(id))) return badRequest("Mapeamento contém perfil fora da automação");
+        const mediaByChannel = new Map<string, string[] | null>();
+        for (const id of ids) {
+            const values = mediaMap ? (mediaMap as Record<string, unknown>)[id] ?? [] : data.mediaIds === undefined ? [] : data.mediaIds;
+            if (values === null) { mediaByChannel.set(id, null); continue; }
+            const normalized = normalizeMediaIds(values);
+            if (!normalized) return badRequest("Lista de posts inválida");
+            mediaByChannel.set(id, normalized);
         }
-        const rawChannelId = (body as Record<string, unknown>).channelId;
-        if (typeof rawChannelId !== "string" || !rawChannelId.trim()) {
-            return badRequest("Canal é obrigatório");
+        const mapError = validateChannelMapKeys(data.actions, ids);
+        if (mapError) return badRequest(mapError);
+        const mappingError = validateActionMappings(data.actions, ids);
+        if (mappingError) return badRequest(mappingError);
+        for (const channelId of ids) {
+            const err = await validateActionReferences(userId, data.actions?.map((a) => actionForChannel(a, channelId)), channelId);
+            if (err) return err.status === 404 ? notFound(err.error) : badRequest(err.error);
         }
-        const channel = await findOwnedChannel(userId, rawChannelId.trim());
-        if (!channel) return notFound("Canal não encontrado");
-        if (channel.platform !== "instagram") {
-            return badRequest("Canal não é do Instagram");
-        }
-
-        // FIX-M9: sequência/webhook referenciados precisam ser do user/canal.
-        const referenceError = await validateActionReferences(
-            userId,
-            data.actions,
-            channel.id,
-        );
-        if (referenceError) {
-            return referenceError.status === 404
-                ? notFound(referenceError.error)
-                : badRequest(referenceError.error);
-        }
-
-        const automation = await prisma.$transaction(async (tx) => {
-            const created = await tx.igAutomation.create({
-                data: {
-                    ...automationToDb(data),
-                    user_id: userId,
-                    channel_id: channel.id,
-                } as Prisma.IgAutomationUncheckedCreateInput,
-            });
-            if (data.actions && data.actions.length > 0) {
-                await tx.igAutomationAction.createMany({
-                    data: data.actions.map((action) => actionToDb(action, created.id)),
-                });
+        const createdRows = await prisma.$transaction(async (tx) => {
+            const made: string[] = [];
+            for (const channelId of ids) {
+                const settings = { ...(data.settings ?? {}) };
+                delete settings._profileGroupId;
+                const created = await tx.igAutomation.create({ data: {
+                    ...automationToDb({ ...data, mediaIds: mediaByChannel.get(channelId), settings }),
+                    ...(ids.length > 1 ? { settings: withProfileGroup(settings, "pending") } : {}),
+                    user_id: userId, channel_id: channelId,
+                    ...(data.enabled === undefined ? { enabled: false } : {}),
+                } as Prisma.IgAutomationUncheckedCreateInput });
+                if (data.actions?.length) await tx.igAutomationAction.createMany({ data: data.actions.map((a) => actionToDb(actionForChannel(a, channelId), created.id)) });
+                made.push(created.id);
+                if (ids.length > 1 && made.length === 1) {
+                    // Initial leader ID is the stable logical ID for the group.
+                    await tx.igAutomation.update({ where: { id: created.id }, data: { settings: withProfileGroup(settings, created.id) } });
+                } else if (ids.length > 1) {
+                    await tx.igAutomation.update({ where: { id: created.id }, data: { settings: withProfileGroup(settings, made[0]) } });
+                }
             }
-            return tx.igAutomation.findUniqueOrThrow({
-                where: { id: created.id },
-                include: AUTOMATION_INCLUDE,
-            });
+            return tx.igAutomation.findMany({ where: { id: { in: made } }, include: AUTOMATION_INCLUDE, orderBy: { created_at: "asc" } });
         });
-
-        return NextResponse.json(
-            {
-                ...serializeAutomation(automation),
-                actions: automation.actions.map(serializeAction),
-                channel: automation.channel,
-            },
-            { status: 201 }
-        );
+        return NextResponse.json(ids.length > 1 ? serializeGroup(createdRows) : serializePhysical(createdRows[0]), { status: 201 });
     } catch (error: unknown) {
         console.error("Create automation error:", error);
         return badRequest(getErrorMessage(error));
