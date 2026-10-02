@@ -334,9 +334,9 @@ export default function SubstanceManager() {
                         </button>
                     </div>
                     <p className="text-[11px] text-ios-text-secondary">
-                        Cole o JSON exportado do n8n (array direto ou{" "}
+                        Cole o arquivo de catálogo em formato JSON (lista direta ou{" "}
                         <code>{'{"substances":[...]}'}</code>). Itens com a mesma
-                        palavra-chave são atualizados (upsert).
+                        palavra-chave são atualizados. Os demais itens são mantidos.
                     </p>
                     <textarea
                         rows={6}
@@ -395,7 +395,7 @@ export default function SubstanceManager() {
                     </h3>
                     <p className="text-[13px] max-w-sm mx-auto">
                         {items.length === 0
-                            ? "Cadastre substâncias ou importe o JSON do n8n para usar nos placeholders {substancia.*}."
+                            ? "Cadastre um item com nome, descrição e link. No editor de automações, escolha uma resposta do catálogo para preencher essas informações na mensagem."
                             : "Ajuste a busca para encontrar a substância."}
                     </p>
                 </IOSCard>

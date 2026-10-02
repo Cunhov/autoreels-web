@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage } from "@/lib/api";
+import { profileGroupId } from "@/lib/ig-automation/profile-groups";
 import {
     badRequest,
     firstParam,
@@ -91,6 +92,7 @@ export async function GET(req: Request) {
                 select: {
                     id: true,
                     name: true,
+                    settings: true,
                     stats_matched: true,
                     stats_sent: true,
                     stats_failed: true,
@@ -123,9 +125,20 @@ export async function GET(req: Request) {
         }
 
         const byId = new Map<string, AutomationStats>();
+        const memberToGroup = new Map<string, string>();
         for (const automation of automations) {
-            byId.set(automation.id, {
-                id: automation.id,
+            const id = profileGroupId(automation.settings) ?? automation.id;
+            memberToGroup.set(automation.id, id);
+            const existing = byId.get(id);
+            if (existing) {
+                existing.stats_matched += automation.stats_matched;
+                existing.stats_sent += automation.stats_sent;
+                existing.stats_failed += automation.stats_failed;
+                existing.stats_clicks += automation.stats_clicks;
+                continue;
+            }
+            byId.set(id, {
+                id,
                 name: automation.name,
                 matched: 0,
                 sent: 0,
@@ -139,19 +152,19 @@ export async function GET(req: Request) {
         }
         for (const event of events) {
             if (!event.automation_id) continue;
-            const stats = byId.get(event.automation_id);
+            const stats = byId.get(memberToGroup.get(event.automation_id) ?? event.automation_id);
             if (stats) stats.matched += 1;
         }
         for (const log of logs) {
             if (!log.automation_id) continue;
-            const stats = byId.get(log.automation_id);
+            const stats = byId.get(memberToGroup.get(log.automation_id) ?? log.automation_id);
             if (!stats) continue;
             if (log.status === "sent") stats.sent += 1;
             else if (log.status === "failed") stats.failed += 1;
         }
         for (const click of clicks) {
             if (!click.automation_id) continue;
-            const stats = byId.get(click.automation_id);
+            const stats = byId.get(memberToGroup.get(click.automation_id) ?? click.automation_id);
             if (stats) stats.clicks += click.clicks;
         }
 

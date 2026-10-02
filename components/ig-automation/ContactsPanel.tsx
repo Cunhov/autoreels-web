@@ -313,7 +313,8 @@ export default function ContactsPanel() {
                     </h3>
                     <p className="text-[13px] max-w-sm mx-auto">
                         Os contatos aparecem aqui quando alguém interage com
-                        seu Instagram.
+                        um perfil conectado. Confira a conexão dos perfis em
+                        Configurações das automações se ainda não chegaram interações.
                     </p>
                 </IOSCard>
             ) : (

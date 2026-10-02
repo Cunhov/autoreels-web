@@ -62,7 +62,7 @@ export const TRIGGER_LABELS: Record<IgTrigger, string> = {
     dm: "Mensagem direta (DM)",
     story_reply: "Resposta do story",
     story_mention: "Menção no story",
-    postback: "Clique em botão (postback)",
+    postback: "Clique em botão de resposta",
 };
 
 export const MATCH_TYPE_LABELS: Record<IgMatchType, string> = {
@@ -73,21 +73,21 @@ export const MATCH_TYPE_LABELS: Record<IgMatchType, string> = {
 };
 
 export const MATCH_MODE_LABELS: Record<IgMatchMode, string> = {
-    any: "Qualquer keyword",
-    all: "Todas as keywords",
+    any: "Pelo menos uma palavra",
+    all: "Todas as palavras",
 };
 
 export const ACTION_TYPE_LABELS: Record<IgActionType, string> = {
     public_comment_reply: "Resposta pública no comentário",
-    private_reply: "Private reply (DM do comentário)",
-    dm_text: "DM de texto",
-    dm_buttons: "DM com botões",
-    dm_quick_replies: "DM com respostas rápidas",
-    dm_media: "DM com mídia",
+    private_reply: "Enviar no privado após comentário",
+    dm_text: "Mensagem privada de texto",
+    dm_buttons: "Mensagem privada com botões",
+    dm_quick_replies: "Mensagem com respostas rápidas",
+    dm_media: "Mensagem privada com imagem",
     ai_reply: "Resposta com IA",
     assign_tag: "Adicionar tag ao contato",
     start_sequence: "Iniciar sequência",
-    outbound_webhook: "Disparar webhook de saída",
+    outbound_webhook: "Notificar uma integração",
 };
 
 /** Tipos que aceitam editor de variações de texto. */
@@ -144,6 +144,7 @@ export interface IgActionDraft {
     trackClicks: boolean;
     sequenceIdsByChannel?: Record<string, string>;
     webhookIdsByChannel?: Record<string, string>;
+    config?: Record<string, unknown>;
 }
 
 export interface IgAutomation {
@@ -464,6 +465,7 @@ export function normalizeAction(raw: unknown, index: number): IgActionDraft {
         trackClicks: asBool(firstDefined(config, ["trackClicks"]), true),
         sequenceIdsByChannel: referenceMap(config.sequenceIdsByChannel),
         webhookIdsByChannel: referenceMap(config.webhookIdsByChannel),
+        config,
     };
 }
 
@@ -565,8 +567,8 @@ export function normalizeAutomation(
         firstInteractionOnly: asBool(
             firstDefined(o, ["firstInteractionOnly", "first_interaction_only"]),
         ),
-        cooldownHours: cooldown === undefined ? null : asNumber(cooldown, 0),
-        dailyLimit: daily === undefined ? null : asNumber(daily, 0),
+        cooldownHours: cooldown == null ? null : asNumber(cooldown, 0),
+        dailyLimit: daily == null ? null : asNumber(daily, 0),
         quietHours: normalizeQuietHours(
             firstDefined(o, ["quietHours", "quiet_hours"]),
         ),
@@ -625,7 +627,7 @@ export function serializeActionPayload(
             sequence_id: a.sequenceId || null,
             webhook_id: a.webhookId || null,
             ai_prompt: a.aiPrompt.trim() || null,
-            config: { trackClicks: a.trackClicks, sequenceIdsByChannel: a.sequenceIdsByChannel, webhookIdsByChannel: a.webhookIdsByChannel },
+            config: { ...a.config, trackClicks: a.trackClicks, sequenceIdsByChannel: a.sequenceIdsByChannel, webhookIdsByChannel: a.webhookIdsByChannel },
         };
     }
     return {
@@ -640,7 +642,7 @@ export function serializeActionPayload(
         sequenceId: a.sequenceId || null,
         webhookId: a.webhookId || null,
         aiPrompt: a.aiPrompt.trim() || null,
-        config: { trackClicks: a.trackClicks, sequenceIdsByChannel: a.sequenceIdsByChannel, webhookIdsByChannel: a.webhookIdsByChannel },
+        config: { ...a.config, trackClicks: a.trackClicks, sequenceIdsByChannel: a.sequenceIdsByChannel, webhookIdsByChannel: a.webhookIdsByChannel },
     };
 }
 

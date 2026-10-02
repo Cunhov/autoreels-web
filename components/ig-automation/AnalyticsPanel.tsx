@@ -111,7 +111,7 @@ export default function AnalyticsPanel() {
 
     const totalCards = [
         {
-            label: "Matches",
+            label: "Interações reconhecidas",
             value: totals.matched,
             icon: Zap,
             color: "text-ios-blue bg-ios-blue/10",
@@ -244,7 +244,7 @@ export default function AnalyticsPanel() {
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-ios-text-secondary">
                                 <span className="flex items-center gap-1">
                                     <span className="w-2.5 h-2.5 rounded-sm bg-ios-blue/60" />{" "}
-                                    matches
+                                    reconhecidas
                                 </span>
                                 <span className="flex items-center gap-1">
                                     <span className="w-2.5 h-2.5 rounded-sm bg-ios-green/70" />{" "}
@@ -275,7 +275,7 @@ export default function AnalyticsPanel() {
                                         <div
                                             key={`${p.label}-${i}`}
                                             className="flex flex-col items-center gap-0.5 w-10 shrink-0 group relative"
-                                            title={`${p.label}: ${p.matched} matches, ${p.sent} enviadas, ${p.failed} falhas, ${p.clicks} cliques`}
+                                            title={`${p.label}: ${p.matched} interações reconhecidas, ${p.sent} enviadas, ${p.failed} falhas, ${p.clicks} cliques`}
                                         >
                                             <div className="flex items-end gap-0.5 h-28 w-full justify-center">
                                                 {barDefs.map((b) => (
@@ -324,7 +324,7 @@ export default function AnalyticsPanel() {
                                                 Automação
                                             </th>
                                             <th className="px-3 py-2 font-semibold text-right">
-                                                Matches
+                                                Reconhecidas
                                             </th>
                                             <th className="px-3 py-2 font-semibold text-right">
                                                 Enviadas

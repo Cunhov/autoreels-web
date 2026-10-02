@@ -224,8 +224,8 @@ export default function SequenceEditor() {
 
             <div className="flex items-center justify-between gap-3">
                 <p className="text-[13px] text-ios-text-secondary">
-                    {sequences.length} sequência(s) — follow-ups com delay
-                    entre passos.
+                    {sequences.length} sequência(s) — mensagens de acompanhamento
+                    enviadas na ordem e nos intervalos definidos.
                 </p>
                 <IOSButton
                     variant="primary"
@@ -268,6 +268,10 @@ export default function SequenceEditor() {
                                 />
                                 <p className="text-[13px]">
                                     Nenhuma sequência ainda.
+                                </p>
+                                <p className="text-[12px] mt-2">
+                                    Crie uma sequência, escolha o perfil e escreva as mensagens.
+                                    Depois, selecione “Iniciar sequência” em uma automação para usá-la.
                                 </p>
                             </IOSCard>
                         )}
@@ -386,6 +390,7 @@ export default function SequenceEditor() {
                                             setForm({ ...form, steps })
                                         }
                                         allowedTypes={SEQUENCE_ACTION_TYPES}
+                                        profileChannels={channels.filter((channel) => channel.id === form.channelId)}
                                     />
                                 </div>
 

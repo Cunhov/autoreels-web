@@ -378,11 +378,12 @@ export default function InboxPanel() {
                         strokeWidth={1}
                     />
                     <h3 className="text-lg font-semibold mb-1 text-ios-text">
-                        Timeline vazia
+                        Nenhuma interação registrada
                     </h3>
                     <p className="text-[13px] max-w-sm mx-auto">
-                        Eventos recebidos e ações executadas aparecem aqui
-                        conforme as automações rodam.
+                        Aqui você acompanha mensagens recebidas, respostas e
+                        motivos de bloqueio. Confira a conexão dos perfis em
+                        Configurações das automações para começar a receber eventos.
                     </p>
                 </IOSCard>
             ) : (
