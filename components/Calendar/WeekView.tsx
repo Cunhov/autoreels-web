@@ -1,3 +1,4 @@
+import MediaThumbnail from '@/components/MediaThumbnail';
 import React from 'react';
 import { Post } from '@/app/types';
 
@@ -93,22 +94,7 @@ export default function WeekView({ currentDate, posts, onPostClick, onDayClick }
                                         {/* Static preview — no <video> to save RAM/CPU.
                                             Mirrors the MonthView fallback: show the
                                             image/thumbnail when available, else a label. */}
-                                        {p.image_url || p.thumbnail_url ? (
-                                            <img
-                                                src={p.image_url || p.thumbnail_url}
-                                                onError={(event) => { event.currentTarget.style.display = 'none'; }}
-                                                className="hidden sm:block w-full h-full object-cover opacity-90"
-                                                alt="Post preview"
-                                                loading="lazy"
-                                                decoding="async"
-                                            />
-                                        ) : (
-                                            <div className="hidden sm:flex w-full h-full aspect-square bg-gray-900 items-center justify-center">
-                                                <div className="text-[9px] text-white/40 font-medium text-center">
-                                                    {p.video_url ? 'Vídeo' : 'Sem mídia'}
-                                                </div>
-                                            </div>
-                                        )}
+                                        <MediaThumbnail src={p.image_url || p.thumbnail_url} alt="Prévia do post" video={Boolean(p.video_url)} className="hidden sm:block opacity-90" />
                                         <div className="hidden sm:block absolute top-2 right-2">
                                             <div className={`w-2.5 h-2.5 rounded-full border border-white/20 shadow-sm ${p.status === 'published' ? 'bg-ios-green' : p.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'}`} />
                                         </div>

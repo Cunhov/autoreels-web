@@ -117,7 +117,7 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                             ${getBorderClass(p.status)}
                                         `}
                                     >
-<MediaThumbnail src={p.image_url || p.thumbnail_url} alt="Prévia do post" video={Boolean(p.video_url)} className="opacity-90 group-hover/item:opacity-100 transition-opacity" />
+                                        <MediaThumbnail src={p.image_url || p.thumbnail_url} alt="Prévia do post" video={Boolean(p.video_url)} className="opacity-90 group-hover/item:opacity-100 transition-opacity" />
 
                                         <div className="absolute top-1 right-1">
                                             <div className={`w-2 h-2 rounded-full border border-white/20 shadow-sm ${p.status === 'published' ? 'bg-ios-green' : p.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'}`} />
