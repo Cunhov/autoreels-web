@@ -57,13 +57,15 @@ function normalizeCalendarData(data: unknown): Post[] {
   return [];
 }
 
-async function fetchCalendarWindow(start: Date, end: Date): Promise<Post[]> {
+async function fetchCalendarWindow(start: Date, end: Date, signal?: AbortSignal): Promise<Post[]> {
   const posts: Post[] = [];
   const limit = 1000;
   let offset = 0;
+  let cursor: string | null = null;
   while (true) {
     const params = new URLSearchParams({ start: toApiDate(start), end: toApiDate(end), limit: String(limit), offset: String(offset) });
-    const response = await fetch(`/api/calendar?${params.toString()}`);
+    if (cursor) params.set('cursor', cursor);
+    const response = await fetch(`/api/calendar?${params.toString()}`, { signal });
     const data = await response.json();
     if (!response.ok) throw new Error((data as { error?: string }).error || `Falha ao carregar calendário (HTTP ${response.status})`);
     const page = normalizeCalendarData(data);
@@ -71,6 +73,7 @@ async function fetchCalendarWindow(start: Date, end: Date): Promise<Post[]> {
     const hasMore = Boolean(data && !Array.isArray(data) && (data as { hasMore?: boolean }).hasMore);
     if (!hasMore || page.length === 0) return posts;
     offset = Number((data as { nextOffset?: number }).nextOffset) || (offset + page.length);
+    cursor = (data as { nextCursor?: string }).nextCursor || null;
   }
 }
 
@@ -96,6 +99,7 @@ export default function CalendarPage() {
   // month navigation overwriting a newer window's data (critic finding: rapid
   // ArrowLeft/Right could apply an older window's response last).
   const fetchSeqRef = useRef(0);
+  const calendarRequestRef = useRef<AbortController | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   // `today` is computed after mount so the Today bar / Upcoming strip never
   // render during SSR (avoids hydration mismatches from wall-clock reads).
@@ -111,14 +115,17 @@ export default function CalendarPage() {
     setLoading(!hasData);
     lastFetchRef.current = Date.now();
     const seq = ++fetchSeqRef.current;
+    calendarRequestRef.current?.abort();
+    const controller = new AbortController();
+    calendarRequestRef.current = controller;
     try {
       // Two parallel, lean fetches: the visible range and upcoming strip.
       // Each range is paged so dense days never disappear at the route cap.
       const visible = getVisibleRange(currentDate, viewMode);
       const upcoming = getUpcomingRange();
       const [visiblePosts, upcomingPosts] = await Promise.all([
-        fetchCalendarWindow(visible.start, visible.end),
-        fetchCalendarWindow(upcoming.start, upcoming.end),
+        fetchCalendarWindow(visible.start, visible.end, controller.signal),
+        fetchCalendarWindow(upcoming.start, upcoming.end, controller.signal),
       ]);
 
       const merged = new Map<string, Post>();
@@ -133,6 +140,7 @@ export default function CalendarPage() {
       setPosts(nextPosts);
       setFetchError(null);
     } catch (err) {
+      if (controller.signal.aborted) return;
       if (seq !== fetchSeqRef.current) return;
       console.error('Error fetching data:', err);
       setFetchError(err instanceof Error ? err.message : 'Falha ao carregar os dados do calendário.');
@@ -143,6 +151,7 @@ export default function CalendarPage() {
 
   useEffect(() => {
     fetchPosts();
+    return () => { calendarRequestRef.current?.abort(); ++fetchSeqRef.current; };
   }, [fetchPosts]);
 
   // Refetch when the tab regains focus / visibility — posts published by the
@@ -201,6 +210,7 @@ export default function CalendarPage() {
   // Ignored while typing in inputs/textarea/selects or contentEditable.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
         return;

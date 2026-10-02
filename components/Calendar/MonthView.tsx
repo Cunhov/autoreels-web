@@ -1,3 +1,4 @@
+import MediaThumbnail from '@/components/MediaThumbnail';
 import React from 'react';
 import { Post } from '@/app/types';
 
@@ -116,20 +117,7 @@ export default function MonthView({ currentDate, posts, onPostClick, onDayClick 
                                             ${getBorderClass(p.status)}
                                         `}
                                     >
-                                        {p.image_url || p.thumbnail_url ? (
-                                            <img
-                                                src={p.image_url || p.thumbnail_url}
-                                                onError={(event) => { event.currentTarget.style.display = 'none'; }}
-                                                className="w-full h-full object-cover opacity-90 group-hover/item:opacity-100 transition-opacity"
-                                                alt="Post preview"
-                                                loading="lazy"
-                                                decoding="async"
-                                            />
-                                        ) : (
-                                            <div className="w-full h-full aspect-square bg-ios-gray-5 flex items-center justify-center text-[10px] text-ios-secondary">
-                                                {p.video_url ? 'Vídeo' : 'Sem mídia'}
-                                            </div>
-                                        )}
+<MediaThumbnail src={p.image_url || p.thumbnail_url} alt="Prévia do post" video={Boolean(p.video_url)} className="opacity-90 group-hover/item:opacity-100 transition-opacity" />
 
                                         <div className="absolute top-1 right-1">
                                             <div className={`w-2 h-2 rounded-full border border-white/20 shadow-sm ${p.status === 'published' ? 'bg-ios-green' : p.status === 'failed' ? 'bg-red-500' : 'bg-gray-400'}`} />

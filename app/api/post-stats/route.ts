@@ -54,15 +54,18 @@ export async function GET(req: Request) {
             }
             return NextResponse.json({ total, channels });
         }
+        // Match the same effective timestamp used by the charts. Posts created
+        // today for a future schedule must not inflate this period's KPIs.
+        const period: Prisma.PostWhereInput = { OR: [
+            { published_at: { gte: start, lte: end } },
+            { published_at: null, scheduled_at: { gte: start, lte: end } },
+            { published_at: null, scheduled_at: null, created_at: { gte: start, lte: end } },
+        ] };
         // Fetch only fields needed for aggregation; media, captions and post payloads stay in the DB.
         const rows = await prisma.post.findMany({
             where: {
                 user_id: userId,
-                OR: [
-                    { published_at: { gte: start, lte: end } },
-                    { scheduled_at: { gte: start, lte: end } },
-                    { created_at: { gte: start, lte: end } },
-                ],
+                ...period,
             },
             select: { status: true, channel_id: true, published_at: true, scheduled_at: true, created_at: true },
         });
@@ -94,7 +97,7 @@ export async function GET(req: Request) {
             }
         }
         const recentFailures = await prisma.post.findMany({
-            where: { user_id: userId, status: "failed", OR: [{ published_at: { gte: start, lte: end } }, { scheduled_at: { gte: start, lte: end } }, { created_at: { gte: start, lte: end } }] },
+            where: { user_id: userId, status: "failed", ...period },
             orderBy: { created_at: "desc" },
             take: 5,
             select: { id: true, status: true, scheduled_at: true, published_at: true, channel_id: true, caption: true, error_message: true, failed_reason: true, video_url: true, image_url: true, thumbnail_url: true, media_type: true },

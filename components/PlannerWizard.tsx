@@ -1993,10 +1993,11 @@ export default function PlannerWizard({
 					{/* Step 0: Basics */}
 					{step === 0 && (
 						<div className="space-y-4 animate-in fade-in slide-in-from-right-4 duration-300">
-							<label className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide">
+							<label htmlFor="planner-name" className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide">
 								Nome do planner
 							</label>
 							<input
+								id="planner-name"
 								type="text"
 								value={name}
 								onChange={(e) => setName(e.target.value)}
@@ -2004,10 +2005,11 @@ export default function PlannerWizard({
 								data-autofocus
 								className="w-full bg-ios-card border border-ios-separator rounded-xl px-4 py-3 text-[17px] focus:outline-none focus:border-ios-blue focus:ring-1 focus:ring-ios-blue"
 							/>
-							<label className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide mt-4">
+							<label htmlFor="planner-start" className="block text-[13px] font-medium text-ios-secondary uppercase tracking-wide mt-4">
 								Quando começar?
 							</label>
 							<input
+								id="planner-start"
 								type="datetime-local"
 								value={startTime}
 								onChange={(e) => setStartTime(e.target.value)}
@@ -2025,6 +2027,15 @@ export default function PlannerWizard({
 									return (
 										<div
 											key={channel.id}
+											role="button"
+											tabIndex={disabled ? -1 : 0}
+											aria-pressed={selectedChannels.includes(channel.id)}
+											onKeyDown={(event) => {
+												if (!disabled && (event.key === "Enter" || event.key === " ")) {
+													event.preventDefault();
+													toggleChannel(channel.id);
+												}
+											}}
 											onClick={() => {
 												if (disabled) return;
 												toggleChannel(channel.id);

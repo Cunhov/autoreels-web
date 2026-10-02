@@ -88,12 +88,27 @@ export async function GET(req: Request) {
 			.filter(Boolean);
 		if (types.length > 0) where.media_type = { in: types };
 	}
+	const cursor = searchParams.get("cursor");
+	if (cursor) {
+		try {
+			if (cursor.length > 512) throw new Error("Invalid cursor");
+			const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+			const date = new Date(value.scheduled_at);
+			if (Number.isNaN(date.getTime()) || typeof value.id !== "string" || !value.id || value.id.length > 100) throw new Error("Invalid cursor");
+			where.AND = [{ OR: [
+				{ scheduled_at: { gt: date } },
+				{ scheduled_at: date, id: { gt: value.id } },
+			] }];
+		} catch {
+			return NextResponse.json({ error: "Cursor de calendário inválido." }, { status: 400 });
+		}
+	}
 
-	const posts = await prisma.post.findMany({
+	const rows = await prisma.post.findMany({
 		where,
 		orderBy: [{ scheduled_at: "asc" }, { id: "asc" }],
-		skip: offset,
-		take: limit,
+		skip: cursor ? undefined : offset,
+		take: limit + 1,
 		select: {
 			id: true,
 			status: true,
@@ -125,5 +140,8 @@ export async function GET(req: Request) {
 		},
 	});
 
-	return NextResponse.json({ posts, hasMore: posts.length === limit, nextOffset: offset + posts.length });
+	const posts = rows.slice(0, limit);
+	const last = posts[posts.length - 1];
+	const nextCursor = last ? Buffer.from(JSON.stringify({ scheduled_at: last.scheduled_at, id: last.id })).toString("base64url") : null;
+	return NextResponse.json({ posts, hasMore: rows.length > limit, nextOffset: offset + posts.length, nextCursor });
 }

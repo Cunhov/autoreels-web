@@ -91,12 +91,12 @@ function MediaLibraryPicker({ images, onClose, onChoose }: {
 
 	return (
 		<div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-3 sm:p-4" onClick={onClose} role="presentation">
-			<div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="media-library-title" tabIndex={-1} onClick={e => e.stopPropagation()} className="bg-ios-card w-full max-w-4xl max-h-[85dvh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+			<div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="media-library-title" tabIndex={-1} onClick={e => e.stopPropagation()} className="bg-ios-card w-full max-w-4xl h-[85dvh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
 				<div className="p-4 border-b border-ios-separator flex items-start justify-between gap-3 shrink-0">
 					<div className="min-w-0"><h2 id="media-library-title" className="font-semibold text-lg">Escolher da Biblioteca</h2><p className="text-sm text-ios-text-secondary">{images ? "Selecione até 10 imagens." : "Selecione um vídeo."}</p></div>
 					<button type="button" onClick={onClose} aria-label="Fechar seleção de mídia" className="p-3 -m-2 rounded-lg shrink-0"><X size={20} /></button>
 				</div>
-				<div className="flex-1 min-h-0 overflow-y-auto"><ContentLibrary mode="select" disableUrlNavigation allowedTypes={images ? ["image", "carousel_item"] : ["video"]} onSelectionChange={setIds} /></div>
+				<div className="flex-1 min-h-0 overflow-hidden"><ContentLibrary mode="select" disableUrlNavigation foldersSelectable={false} allowedTypes={images ? ["image", "carousel_item"] : ["video"]} onSelectionChange={setIds} /></div>
 				<div className="p-4 border-t border-ios-separator shrink-0 space-y-2">
 					{error && <p role="alert" className="text-sm text-ios-red">{error}</p>}
 					{ids.length > (images ? MAX_COMMUNITY_IMAGES : 1) && <p role="alert" className="text-sm text-ios-orange">{images ? "Selecione no máximo 10 imagens." : "Selecione apenas um vídeo."}</p>}
@@ -898,6 +898,7 @@ export default function NewPost() {
 						<div className="relative">
 							<textarea
 								id="caption"
+								aria-label={isYoutubeChannel && youtubeType === "community" ? "Texto do post na Comunidade" : "Legenda do post"}
 								rows={4}
 								maxLength={CAPTION_LIMIT}
 								className="block w-full bg-transparent p-4 text-[17px] text-ios-text placeholder:text-ios-text-secondary focus:outline-none resize-none"
