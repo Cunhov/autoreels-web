@@ -276,11 +276,11 @@ const GridCellInner = ({
 							: `Abrir pasta ${item.name}`
 						: `${selectedIds.includes(item.id) ? "Desmarcar" : "Selecionar"} ${item.type === "video" ? "vídeo" : "imagem"} ${item.name}`}
 					aria-pressed={item.type !== "carousel_folder" || (mode === "select" && disableUrlNavigation && foldersSelectable) ? selectedIds.includes(item.id) : undefined}
-					className="absolute inset-0 z-10 rounded-2xl bg-transparent focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ios-blue"
+					className="absolute inset-0 z-20 rounded-2xl bg-transparent focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ios-blue"
 				/>
 				{/* Thumbnail Content */}
 				{item.type === "carousel_folder" ? (
-					<div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors relative overflow-hidden">
+					<div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors relative overflow-hidden pointer-events-none">
 						{item.thumbnail_url && failedImageSrc !== item.thumbnail_url ? (
 							<>
 								<img
@@ -315,7 +315,7 @@ const GridCellInner = ({
 						</span>
 					</div>
 				) : (
-					<div className="w-full h-full relative">
+					<div className="w-full h-full relative pointer-events-none">
 						{item.type === "video" ? (
 							item.thumbnail_url && failedImageSrc !== item.thumbnail_url ? (
 								<img
@@ -365,7 +365,7 @@ const GridCellInner = ({
 
 				{/* Selection Checkbox */}
 				{selectedIds.includes(item.id) && (
-					<div className="absolute top-2 right-2 bg-ios-blue text-white rounded-full p-1 shadow-sm z-20 animate-in zoom-in duration-200">
+					<div className="absolute top-2 right-2 bg-ios-blue text-white rounded-full p-1 shadow-sm z-30 pointer-events-none animate-in zoom-in duration-200">
 						<Check size={12} strokeWidth={3} />
 					</div>
 				)}
