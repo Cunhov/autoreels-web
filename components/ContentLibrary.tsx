@@ -149,6 +149,7 @@ interface ContentLibraryProps {
 	initialSelection?: string[];
 	allowedTypes?: string[]; // 'video', 'image', 'carousel'
 	disableUrlNavigation?: boolean;
+	foldersSelectable?: boolean;
 }
 
 interface GridCellData {
@@ -165,9 +166,9 @@ interface GridCellData {
 	handleDrop: (e: React.DragEvent, targetId: string | null) => void;
 	mode: "manage" | "select";
 	disableUrlNavigation: boolean;
+	foldersSelectable: boolean;
+	openFolder: (folderId: string) => void;
 	toggleSelection: (id: string) => void;
-	setInternalFolderId: (id: string | null) => void;
-	router: ReturnType<typeof useRouter>;
 	selectedIds: string[];
 	dropTargetId: string | null;
 	draggedItems: string[];
@@ -202,9 +203,9 @@ const GridCellInner = ({
 		handleDrop,
 		mode,
 		disableUrlNavigation,
+		foldersSelectable,
 		toggleSelection,
-		setInternalFolderId,
-		router,
+		openFolder,
 		selectedIds,
 		dropTargetId,
 		draggedItems,
@@ -259,23 +260,21 @@ const GridCellInner = ({
 					type="button"
 					onClick={() => {
 						if (item.type === "carousel_folder") {
-							if (mode === "select" && disableUrlNavigation) {
+							if (mode === "select" && disableUrlNavigation && foldersSelectable) {
 								toggleSelection(item.id);
 							} else {
-								disableUrlNavigation
-									? setInternalFolderId(item.id)
-									: router.push(`/content?folderId=${item.id}`);
+								openFolder(item.id);
 							}
 						} else {
 							toggleSelection(item.id);
 						}
 					}}
 					aria-label={item.type === "carousel_folder"
-						? mode === "select" && disableUrlNavigation
+						? mode === "select" && disableUrlNavigation && foldersSelectable
 							? `${selectedIds.includes(item.id) ? "Desmarcar" : "Selecionar"} pasta ${item.name}`
 							: `Abrir pasta ${item.name}`
 						: `${selectedIds.includes(item.id) ? "Desmarcar" : "Selecionar"} ${item.type === "video" ? "vídeo" : "imagem"} ${item.name}`}
-					aria-pressed={item.type !== "carousel_folder" || (mode === "select" && disableUrlNavigation) ? selectedIds.includes(item.id) : undefined}
+					aria-pressed={item.type !== "carousel_folder" || (mode === "select" && disableUrlNavigation && foldersSelectable) ? selectedIds.includes(item.id) : undefined}
 					className="absolute inset-0 z-10 rounded-2xl bg-transparent focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ios-blue"
 				/>
 				{/* Thumbnail Content */}
@@ -375,9 +374,7 @@ const GridCellInner = ({
 					<button
 						onClick={(e) => {
 							e.stopPropagation();
-							disableUrlNavigation
-								? setInternalFolderId(item.id)
-								: router.push(`/content?folderId=${item.id}`);
+							openFolder(item.id);
 						}}
 						className="absolute bottom-2 left-2 min-h-11 min-w-11 p-2 bg-black/60 hover:bg-black/80 backdrop-blur text-white rounded-full shadow-sm transition-all z-20"
 						title="Abrir pasta"
@@ -488,6 +485,8 @@ interface GridAreaProps {
 	draggedItems: string[];
 	mode: "manage" | "select";
 	disableUrlNavigation: boolean;
+	foldersSelectable: boolean;
+	openFolder: (folderId: string) => void;
 	hasMore: boolean;
 	loadingMore: boolean;
 	itemsCount: number;
@@ -504,8 +503,6 @@ interface GridAreaProps {
 	) => void;
 	handleDragLeave: (e: React.DragEvent) => void;
 	handleDrop: (e: React.DragEvent, targetId: string | null) => void;
-	setInternalFolderId: (id: string | null) => void;
-	router: ReturnType<typeof useRouter>;
 	openEditModal: (items: ContentItem[]) => void;
 	openImageEditor: (item: ContentItem) => void;
 	deleteItem: (e: React.MouseEvent, item: ContentItem) => void;
@@ -528,6 +525,8 @@ const GridArea = memo(function GridArea(props: GridAreaProps) {
 		draggedItems,
 		mode,
 		disableUrlNavigation,
+		foldersSelectable,
+		openFolder,
 		hasMore,
 		loadingMore,
 		itemsCount,
@@ -540,8 +539,6 @@ const GridArea = memo(function GridArea(props: GridAreaProps) {
 		handleDragOver,
 		handleDragLeave,
 		handleDrop,
-		setInternalFolderId,
-		router,
 		openEditModal,
 		openImageEditor,
 		deleteItem,
@@ -567,9 +564,9 @@ const GridArea = memo(function GridArea(props: GridAreaProps) {
 			handleDrop,
 			mode,
 			disableUrlNavigation,
+			foldersSelectable,
+			openFolder,
 			toggleSelection,
-			setInternalFolderId,
-			router,
 			selectedIds,
 			dropTargetId,
 			draggedItems,
@@ -586,16 +583,16 @@ const GridArea = memo(function GridArea(props: GridAreaProps) {
 			selectedIds,
 			dropTargetId,
 			draggedItems,
-			mode,
-			disableUrlNavigation,
+		mode,
+		disableUrlNavigation,
+		foldersSelectable,
+		openFolder,
 			handleDragStart,
 			handleDragEnd,
 			handleDragOver,
 			handleDragLeave,
 			handleDrop,
 			toggleSelection,
-			setInternalFolderId,
-			router,
 			openEditModal,
 			openImageEditor,
 			deleteItem,
@@ -641,6 +638,7 @@ export default function ContentLibrary({
 	initialSelection = [],
 	allowedTypes = ["video", "image", "carousel_folder", "carousel_item"],
 	disableUrlNavigation = false,
+	foldersSelectable = true,
 }: ContentLibraryProps) {
 	const router = useRouter();
 	const searchParams = useSearchParams();
@@ -710,11 +708,20 @@ export default function ContentLibrary({
 	const [fetchError, setFetchError] = useState<string | null>(null);
 	const PAGE_SIZE = 100;
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
+	const libraryRootRef = useRef<HTMLDivElement>(null);
 	// Abort in-flight content fetches when a newer one starts (prevents stale overwrites)
 	const contentFetchAbortRef = useRef<AbortController | null>(null);
 	const loadMoreAbortRef = useRef<AbortController | null>(null);
 	const contentRequestVersionRef = useRef(0);
 	const activeContentQueryRef = useRef("");
+	useEffect(() => () => {
+		const contentController = contentFetchAbortRef.current;
+		const moreController = loadMoreAbortRef.current;
+		contentFetchAbortRef.current = null;
+		loadMoreAbortRef.current = null;
+		contentController?.abort();
+		moreController?.abort();
+	}, []);
 
 	// Drag-drop items into folders
 	const [draggedItems, setDraggedItems] = useState<string[]>([]);
@@ -815,7 +822,13 @@ export default function ContentLibrary({
 			const typeSet = new Set<string>();
 			const selectedTypes = filterTypes.length > 0 ? filterTypes : allowedTypes;
 			expandTypeFilters(selectedTypes).forEach((type) => typeSet.add(type));
-			const allowedSet = new Set(expandTypeFilters(allowedTypes));
+			const folderNavigationOnly = mode === "select" && !foldersSelectable;
+			const allowedSet = new Set(expandTypeFilters(
+				folderNavigationOnly && !allowedTypes.includes("carousel_folder")
+					? [...allowedTypes, "carousel_folder"]
+					: allowedTypes,
+			));
+			if (folderNavigationOnly) typeSet.add("carousel_folder");
 			const finalTypes = Array.from(typeSet).filter((type) =>
 				allowedSet.has(type),
 			);
@@ -859,6 +872,8 @@ export default function ContentLibrary({
 			excludeTags,
 			filterTags,
 			filterTypes,
+			foldersSelectable,
+			mode,
 			sizeFilter,
 			sortBy,
 		],
@@ -1036,9 +1051,16 @@ export default function ContentLibrary({
 	// Update parent selection callback
 	useEffect(() => {
 		if (mode === "select" && onSelectionChange) {
-			onSelectionChange(selectedIds);
+			if (foldersSelectable) {
+				onSelectionChange(selectedIds);
+			} else {
+				const visibleFolderIds = new Set(
+					items.filter((item) => item.type === "carousel_folder").map((item) => item.id),
+				);
+				onSelectionChange(selectedIds.filter((id) => !visibleFolderIds.has(id)));
+			}
 		}
-	}, [selectedIds, mode, onSelectionChange]);
+	}, [foldersSelectable, items, selectedIds, mode, onSelectionChange]);
 
 	// -------------------------------------------------------------------------
 	// Actions (Upload, Drop, Create Folder)
@@ -1121,9 +1143,18 @@ export default function ContentLibrary({
 	// -------------------------------------------------------------------------
 	// Selection & CRUD Logic
 	// -------------------------------------------------------------------------
+	const openFolder = useCallback((folderId: string) => {
+		if (disableUrlNavigation) setInternalFolderId(folderId);
+		else router.push(`/content?folderId=${folderId}`);
+	}, [disableUrlNavigation, router]);
 
 	const toggleSelection = useCallback(
 		(id: string) => {
+			if (
+				mode === "select" &&
+				!foldersSelectable &&
+				items.some((item) => item.id === id && item.type === "carousel_folder")
+			) return;
 			selectionTouchedRef.current = true;
 			// Toggle manual quebra o "selecionar tudo": a partir daqui a seleção
 			// é EXPLÍCITA (ids carregados no estado) — sem isso, ações em massa
@@ -1137,7 +1168,7 @@ export default function ContentLibrary({
 				setSelectionOrder([...selectionOrder, id]);
 			}
 		},
-		[selectedIds, selectionOrder],
+		[foldersSelectable, items, mode, selectedIds, selectionOrder],
 	);
 
 	// Drag-drop handlers for moving items into folders
@@ -1228,9 +1259,15 @@ export default function ContentLibrary({
 		if (currentFolderId) params.parent_id = currentFolderId;
 		else params.parent_id = "";
 		const typeSet = new Set<string>();
-		const selectedTypes = filterTypes.length > 0 ? filterTypes : allowedTypes;
+		const selectionAllowedTypes = mode === "select" && !foldersSelectable
+			? allowedTypes.filter((type) => type !== "carousel_folder")
+			: allowedTypes;
+		const selectionFilterTypes = mode === "select" && !foldersSelectable
+			? filterTypes.filter((type) => type !== "carousel_folder")
+			: filterTypes;
+		const selectedTypes = selectionFilterTypes.length > 0 ? selectionFilterTypes : selectionAllowedTypes;
 		expandTypeFilters(selectedTypes).forEach((type) => typeSet.add(type));
-		const allowedSet = new Set(expandTypeFilters(allowedTypes));
+		const allowedSet = new Set(expandTypeFilters(selectionAllowedTypes));
 		const finalTypes = Array.from(typeSet).filter((type) => allowedSet.has(type));
 		const defaultAllowedTypes = [
 			"video",
@@ -1239,8 +1276,8 @@ export default function ContentLibrary({
 			"carousel_item",
 		];
 		const shouldSendTypes =
-			filterTypes.length > 0 ||
-			allowedTypes.join(",") !== defaultAllowedTypes.join(",");
+			selectionFilterTypes.length > 0 ||
+			selectionAllowedTypes.join(",") !== defaultAllowedTypes.join(",");
 		if (shouldSendTypes && finalTypes.length > 0)
 			params.types = finalTypes.join(",");
 		if (debouncedSearch) params.search = debouncedSearch;
@@ -1264,6 +1301,8 @@ export default function ContentLibrary({
 		excludeTags,
 		filterTags,
 		filterTypes,
+		foldersSelectable,
+		mode,
 		sizeFilter,
 		sortBy,
 	]);
@@ -1472,10 +1511,19 @@ export default function ContentLibrary({
 			return 0;
 		});
 	}, [items]);
+	const selectableItems = useMemo(
+		() => mode === "select" && !foldersSelectable
+			? sortedItems.filter((item) => item.type !== "carousel_folder")
+			: sortedItems,
+		[foldersSelectable, mode, sortedItems],
+	);
+	const hasSelectableFilter = !(mode === "select" && !foldersSelectable) ||
+		(filterTypes.length === 0 || filterTypes.some((type) => type !== "carousel_folder")) &&
+		allowedTypes.some((type) => type !== "carousel_folder");
 
 	const handleSelectAll = useCallback(() => {
 		selectionTouchedRef.current = true;
-		const allFilteredIds = sortedItems.map((i) => i.id);
+		const allFilteredIds = selectableItems.map((i) => i.id);
 		const allSelected = allFilteredIds.every((id) => selectedIds.includes(id));
 
 		if (allSelected || selectAllServer) {
@@ -1493,7 +1541,7 @@ export default function ContentLibrary({
 			];
 			setSelectionOrder(newOrder);
 		}
-	}, [sortedItems, selectedIds, selectionOrder, selectAllServer]);
+	}, [selectableItems, selectedIds, selectionOrder, selectAllServer]);
 
 	/**
 	 * "Select All {total}" — busca TODOS os ids que casam com os filtros no
@@ -1503,6 +1551,7 @@ export default function ContentLibrary({
 	 * (PAGE_SIZE=100), então um planner "com todos os reels" saía com 100.
 	 */
 	const handleSelectAllServer = useCallback(async () => {
+		if (!hasSelectableFilter) return;
 		if (selectAllServer) {
 			setSelectAllServer(false);
 			setSelectedIds([]);
@@ -1530,7 +1579,7 @@ export default function ContentLibrary({
 		} finally {
 			setSelectAllLoading(false);
 		}
-	}, [selectAllServer, buildFilterParams]);
+	}, [hasSelectableFilter, selectAllServer, buildFilterParams]);
 
 	// Bulk delete handler — uses server-side bulk endpoint
 	const handleBulkDelete = useCallback(async () => {
@@ -1704,7 +1753,13 @@ export default function ContentLibrary({
 	// Escape → clear selection. Ignored while typing in inputs/textareas.
 	useEffect(() => {
 		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.defaultPrevented) return;
 			const target = e.target as HTMLElement | null;
+			const root = libraryRootRef.current;
+			if (!root || !target || !root.contains(target)) return;
+			if (target.closest("[data-content-library-root]") !== root) return;
+			const activeDialog = target.closest<HTMLElement>('[role="dialog"]');
+			if (activeDialog && root.contains(activeDialog)) return;
 			if (
 				target &&
 				(target.tagName === "INPUT" ||
@@ -1715,6 +1770,7 @@ export default function ContentLibrary({
 				return;
 
 			if (
+				mode === "manage" &&
 				(e.key === "Delete" || e.key === "Backspace") &&
 				(selectedIds.length > 0 || selectAllServer)
 			) {
@@ -1739,6 +1795,7 @@ export default function ContentLibrary({
 		selectedIds.length,
 		selectAllServer,
 		sortedItems.length,
+		mode,
 		handleBulkDelete,
 		handleSelectAll,
 	]);
@@ -1748,6 +1805,8 @@ export default function ContentLibrary({
 
 	return (
 		<div
+			ref={libraryRootRef}
+			data-content-library-root
 			className="flex flex-col h-full bg-ios-background relative"
 			{...getRootProps()}
 		>
@@ -1813,23 +1872,23 @@ export default function ContentLibrary({
 						</select>
 
 						{/* Select All / Deselect All Toggle */}
-						{sortedItems.length > 0 && (
+						{selectableItems.length > 0 && (
 							<div className="flex items-center gap-1">
 								<button
 									onClick={handleSelectAll}
 									className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
-										sortedItems.every((i) => selectedIds.includes(i.id))
+							selectableItems.every((i) => selectedIds.includes(i.id))
 											? "bg-ios-blue text-white border-ios-blue"
 											: "bg-ios-card border-ios-separator text-ios-blue hover:bg-ios-blue/5"
 									}`}
 								>
 									{selectAllServer
 										? `Desmarcar todos`
-										: sortedItems.every((i) => selectedIds.includes(i.id))
+							: selectableItems.every((i) => selectedIds.includes(i.id))
 											? "Desmarcar página"
 											: `Selecionar página`}
 								</button>
-								{totalCount > items.length && !selectAllServer && (
+						{hasSelectableFilter && totalCount > items.length && !selectAllServer && (
 									<button
 										onClick={handleSelectAllServer}
 										disabled={selectAllLoading}
@@ -2176,15 +2235,15 @@ export default function ContentLibrary({
 												handleSelectAll();
 											}}
 											className={`min-h-11 min-w-11 rounded border-2 flex items-center justify-center transition-all ${
-												sortedItems.length > 0 &&
-												sortedItems.every((i) => selectedIds.includes(i.id))
+																	selectableItems.length > 0 &&
+																	selectableItems.every((i) => selectedIds.includes(i.id))
 													? "bg-ios-blue border-ios-blue text-white"
 													: "border-ios-separator hover:border-ios-blue"
 											}`}
 											title="Selecionar ou desmarcar página"
 										>
-											{sortedItems.length > 0 &&
-												sortedItems.every((i) => selectedIds.includes(i.id)) && (
+														{selectableItems.length > 0 &&
+															selectableItems.every((i) => selectedIds.includes(i.id)) && (
 													<Check size={12} />
 												)}
 										</button>
@@ -2256,13 +2315,11 @@ export default function ContentLibrary({
 										<tr
 											key={item.id}
 											onClick={() => {
-												if (item.type === "carousel_folder") {
-													if (mode === "select" && disableUrlNavigation) {
-														toggleSelection(item.id);
-													} else {
-														disableUrlNavigation
-															? setInternalFolderId(item.id)
-															: router.push(`/content?folderId=${item.id}`);
+								if (item.type === "carousel_folder") {
+									if (mode === "select" && disableUrlNavigation && foldersSelectable) {
+										toggleSelection(item.id);
+									} else {
+										openFolder(item.id);
 													}
 												} else {
 													toggleSelection(item.id);
@@ -2277,19 +2334,25 @@ export default function ContentLibrary({
 											{/* Checkbox */}
 											<td
 												className="pl-4 pr-2 py-3 w-10"
-												onClick={(e) => {
-													e.stopPropagation();
-													toggleSelection(item.id);
-												}}
+								onClick={(e) => {
+									e.stopPropagation();
+									if (item.type === "carousel_folder" && mode === "select" && !foldersSelectable) {
+										openFolder(item.id);
+									} else {
+										toggleSelection(item.id);
+									}
+								}}
 											>
-												<div
-													className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all flex-shrink-0 ${
-														isSelected
-															? "bg-ios-blue border-ios-blue text-white"
-															: "border-ios-separator group-hover:border-ios-blue/50"
-													}`}
-												>
-													{isSelected && <Check size={12} />}
+								<div
+									className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all flex-shrink-0 ${
+										isSelected
+										? "bg-ios-blue border-ios-blue text-white"
+										: "border-ios-separator group-hover:border-ios-blue/50"
+									}`}
+								>
+									{item.type === "carousel_folder" && mode === "select" && !foldersSelectable
+										? <CornerDownRight size={12} />
+										: isSelected && <Check size={12} />}
 												</div>
 											</td>
 
@@ -2345,12 +2408,24 @@ export default function ContentLibrary({
 													</div>
 													{/* Text info */}
 													<div className="min-w-0 flex-1">
-														<p
-															className="text-sm font-medium text-ios-text truncate max-w-xs"
-															title={item.name}
-														>
-															{item.name}
-														</p>
+									{item.type === "carousel_folder" && mode === "select" && !foldersSelectable ? (
+										<button
+											type="button"
+											onClick={(e) => {
+												e.stopPropagation();
+												openFolder(item.id);
+											}}
+											className="text-sm font-medium text-ios-text truncate max-w-xs text-left hover:text-ios-blue focus-visible:outline-none focus-visible:underline"
+											aria-label={`Abrir pasta ${item.name}`}
+											title={item.name}
+										>
+											{item.name}
+										</button>
+									) : (
+										<p className="text-sm font-medium text-ios-text truncate max-w-xs" title={item.name}>
+											{item.name}
+										</p>
+									)}
 														{item.caption && (
 															<p
 																className="text-xs text-ios-secondary truncate max-w-xs mt-0.5"
@@ -2477,25 +2552,17 @@ export default function ContentLibrary({
 														</button>
 													</div>
 												)}
-												{mode === "select" && (
-													<div
-														onClick={() => toggleSelection(item.id)}
-														className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-semibold cursor-pointer transition-all ${
-															isSelected
-																? "bg-ios-blue border-ios-blue text-white"
-																: "bg-ios-background border-ios-separator text-ios-secondary hover:border-ios-blue hover:text-ios-blue"
-														}`}
-													>
-														{isSelected ? (
-															<Check size={12} />
-														) : (
-															<div className="w-3 h-3 border-2 border-current rounded-sm" />
-														)}
-														<span className="hidden sm:inline">
-															{isSelected ? "Selected" : "Select"}
-														</span>
-													</div>
-												)}
+								{mode === "select" && item.type === "carousel_folder" && !foldersSelectable && (
+									<button type="button" onClick={() => openFolder(item.id)} className="min-h-11 px-2 rounded-lg text-xs font-semibold text-ios-blue hover:bg-ios-blue/10" aria-label={`Abrir pasta ${item.name}`}>
+										Abrir pasta
+									</button>
+								)}
+								{mode === "select" && !(item.type === "carousel_folder" && !foldersSelectable) && (
+									<button type="button" onClick={() => toggleSelection(item.id)} aria-pressed={isSelected} className={`min-h-11 px-2.5 inline-flex items-center gap-1.5 rounded-lg border text-xs font-semibold transition-all ${isSelected ? "bg-ios-blue border-ios-blue text-white" : "bg-ios-background border-ios-separator text-ios-secondary hover:border-ios-blue hover:text-ios-blue"}`}>
+										{isSelected ? <Check size={12} /> : <span className="w-3 h-3 border-2 border-current rounded-sm" />}
+										<span className="hidden sm:inline">{isSelected ? "Selecionado" : "Selecionar"}</span>
+									</button>
+								)}
 											</td>
 										</tr>
 									);
@@ -2543,6 +2610,8 @@ export default function ContentLibrary({
 								draggedItems={draggedItems}
 								mode={mode}
 								disableUrlNavigation={disableUrlNavigation}
+								foldersSelectable={foldersSelectable}
+								openFolder={openFolder}
 								hasMore={hasMore}
 								loadingMore={loadingMore}
 								itemsCount={items.length}
@@ -2555,8 +2624,6 @@ export default function ContentLibrary({
 								handleDragOver={handleDragOver}
 								handleDragLeave={handleDragLeave}
 								handleDrop={handleDrop}
-								setInternalFolderId={setInternalFolderId}
-								router={router}
 								openEditModal={openEditModal}
 								openImageEditor={openImageEditor}
 								deleteItem={deleteItem}
