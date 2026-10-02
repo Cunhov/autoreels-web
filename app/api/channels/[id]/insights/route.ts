@@ -25,7 +25,7 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 
 /** 5-minute bucket key — stable within the bucket, so the cache actually hits. */
-export function cacheKey(channelId: string, from: string, to: string): string {
+function cacheKey(channelId: string, from: string, to: string): string {
     const window = Math.floor(Date.now() / CACHE_WINDOW_MS);
     return `${channelId}:${from}:${to}:${window}`;
 }

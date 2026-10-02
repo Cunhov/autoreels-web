@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getErrorMessage, getSessionUserId } from "@/lib/api";
-import { buildContentWhere } from "../route";
+import { buildContentWhere } from "../where";
 import { deleteFileFromDisk, collectItemFiles } from "@/lib/deleteFiles";
 import { cleanPathSegment } from "@/lib/upload-path";
 
