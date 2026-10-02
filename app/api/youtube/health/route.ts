@@ -49,15 +49,18 @@ export async function GET() {
 			version: health.version,
 		});
 	} catch (error: unknown) {
+		// This endpoint returns a status document. A reachable app with an
+		// unavailable upstream still returns JSON: Easypanel replaces HTTP 502
+		// responses with its HTML error page, hiding the integration diagnosis.
 		return NextResponse.json(
 			{
 				configured: true,
 				base_url_configured: true,
 				api_key_configured: true,
 				ok: false,
+				upstream_status: 502,
 				error: youtubeErrorMessage(error),
 			},
-			{ status: 502 },
 		);
 	}
 }

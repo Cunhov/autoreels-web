@@ -122,7 +122,7 @@ async function apiAction(path: string, method: string, body?: unknown): Promise<
         const data = await res.json().catch(() => ({}));
         return { ok: false, error: (data as { error?: string }).error || `HTTP ${res.status}` };
     } catch (e: unknown) {
-        return { ok: false, error: (e as { message?: string })?.message || 'Network error' };
+        return { ok: false, error: (e as { message?: string })?.message || 'Falha de rede' };
     }
 }
 
@@ -249,7 +249,7 @@ function PostingHeatmap({ posts, aggregated }: { posts: PostData[]; aggregated?:
     });
     const displayGrid = aggregated || grid;
     const cellMax = Math.max(...displayGrid.flat(), 1);
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 
     return (
         <div className="overflow-x-auto">
@@ -287,7 +287,7 @@ function PostingHeatmap({ posts, aggregated }: { posts: PostData[]; aggregated?:
                     ))}
                 </div>
             </div>
-            <p className="text-[10px] text-ios-text-secondary mt-2">Best posting times based on published posts</p>
+            <p className="text-[10px] text-ios-text-secondary mt-2">Horários das publicações no seu fuso local</p>
         </div>
     );
 }
@@ -307,23 +307,31 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
     const [error, setError] = useState<string | null>(null);
     const [rangeDays, setRangeDays] = useState(30);
     const [statusFilter, setStatusFilter] = useState<'all' | 'published' | 'failed' | 'pending'>('all');
+    const requestSequence = useRef(0);
 
     const fetchData = useCallback(async (range: number) => {
+        const sequence = ++requestSequence.current;
         setLoading(true);
         setError(null);
         try {
-            const pR = await fetch(`/api/post-stats?days=${range}`);
+            const start = new Date();
+            start.setDate(start.getDate() - range + 1);
+            start.setHours(0, 0, 0, 0);
+            const params = new URLSearchParams({ days: String(range), start: start.toISOString(), tz: Intl.DateTimeFormat().resolvedOptions().timeZone });
+            const pR = await fetch(`/api/post-stats?${params}`);
+            if (sequence !== requestSequence.current) return;
             if (pR.ok) {
                 const result = await pR.json() as LocalPostStats;
+                if (sequence !== requestSequence.current) return;
                 setStats(result);
                 setPosts(result.recentFailures || []);
             } else {
                 setError(`Falha ao carregar posts (HTTP ${pR.status})`);
             }
         } catch {
-            setError('Falha de rede ao carregar o dashboard.');
+            if (sequence === requestSequence.current) setError('Falha de rede ao carregar o dashboard.');
         } finally {
-            setLoading(false);
+            if (sequence === requestSequence.current) setLoading(false);
         }
     }, []);
 
@@ -339,7 +347,7 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
 
     const retryPost = async (id: string) => {
         const r = await apiAction(`/api/posts/${id}`, 'PATCH', { status: 'pending' });
-        onToast(r.ok ? 'Post re-enfileirado para publicação' : r.error || 'Falha no retry', r.ok ? 'ok' : 'err');
+        onToast(r.ok ? 'Post re-enfileirado para publicação' : r.error || 'Falha ao tentar novamente', r.ok ? 'ok' : 'err');
         if (r.ok) fetchData(rangeDays);
     };
 
@@ -376,13 +384,13 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
         for (let i = rangeDays - 1; i >= 0; i--) {
             const d = new Date();
             d.setDate(d.getDate() - i);
-            const key = d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+            const key = d.toLocaleDateString('pt-BR', { month: 'numeric', day: 'numeric' });
             counts[key] = 0;
             labels.push(key);
         }
         for (const [key, value] of Object.entries(stats?.dailyPublished || {})) {
             const [year, month, day] = key.split('-').map(Number);
-            const label = new Date(year, month - 1, day).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+            const label = new Date(year, month - 1, day).toLocaleDateString('pt-BR', { month: 'numeric', day: 'numeric' });
             if (label in counts) counts[label] = value;
         }
         return { daily: labels.map(l => counts[l]), dailyLabels: labels };
@@ -409,13 +417,13 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
         [filteredPosts]);
 
     const kpis = [
-        { label: 'Total Posts', value: filteredTotal, icon: Video, color: 'text-ios-blue', bg: 'bg-ios-blue/10' },
-        { label: 'Published', value: published, icon: CheckCircle2, color: 'text-ios-green', bg: 'bg-ios-green/10' },
-        { label: 'Failed', value: failed, icon: XCircle, color: 'text-ios-red', bg: 'bg-ios-red/10' },
-        { label: 'Pending', value: pending, icon: Clock, color: 'text-ios-text-secondary', bg: 'bg-ios-gray-5/50' },
-        { label: 'Success Rate', value: successRate, icon: TrendingUp, color: 'text-ios-green', bg: 'bg-ios-green/10' },
-        { label: 'Channels', value: channels.length, icon: Radio, color: 'text-pink-500', bg: 'bg-pink-100 dark:bg-pink-900/30' },
-        { label: 'Active Planners', value: planners.filter(p => p.status === 'active').length, icon: Sliders, color: 'text-purple-500', bg: 'bg-purple-100 dark:bg-purple-900/30' },
+        { label: 'Total de posts', value: filteredTotal, icon: Video, color: 'text-ios-blue', bg: 'bg-ios-blue/10' },
+        { label: 'Publicados', value: published, icon: CheckCircle2, color: 'text-ios-green', bg: 'bg-ios-green/10' },
+        { label: 'Com falha', value: failed, icon: XCircle, color: 'text-ios-red', bg: 'bg-ios-red/10' },
+        { label: 'Pendentes', value: pending, icon: Clock, color: 'text-ios-text-secondary', bg: 'bg-ios-gray-5/50' },
+        { label: 'Taxa de sucesso', value: successRate, icon: TrendingUp, color: 'text-ios-green', bg: 'bg-ios-green/10' },
+        { label: 'Canais', value: channels.length, icon: Radio, color: 'text-pink-500', bg: 'bg-pink-100 dark:bg-pink-900/30' },
+        { label: 'Planners ativos', value: planners.filter(p => p.status === 'active').length, icon: Sliders, color: 'text-purple-500', bg: 'bg-purple-100 dark:bg-purple-900/30' },
     ];
 
     if (loading && !stats) return (
@@ -443,11 +451,11 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
                     ))}
                     {(['all', 'published', 'failed', 'pending'] as const).map(status => (
                         <button
-                            key={status}
+                            key={{ all: 'Todos', published: 'Publicados', failed: 'Com falha', pending: 'Pendentes' }[status]}
                             onClick={() => setStatusFilter(status)}
                             className={`px-3 py-2 rounded-lg text-sm font-semibold border capitalize ${statusFilter === status ? 'bg-ios-gray-5 text-ios-text border-ios-separator' : 'bg-ios-card border-ios-separator text-ios-text-secondary'}`}
                         >
-                            {status}
+                            {{ all: 'Todos', published: 'Publicados', failed: 'Com falha', pending: 'Pendentes' }[status]}
                         </button>
                     ))}
                 </div>
@@ -481,8 +489,8 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 <IOSCard className="p-5 lg:col-span-2">
                     <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-[17px] font-bold">Posts Per Day</h3>
-                        <span className="text-[12px] text-ios-text-secondary">Last {rangeDays} days</span>
+                        <h3 className="text-[17px] font-bold">Posts por dia</h3>
+                        <span className="text-[12px] text-ios-text-secondary">Últimos {rangeDays} dias</span>
                     </div>
                     {published === 0 ? (
                         <div className="h-32 flex items-center justify-center text-ios-text-secondary text-sm">
@@ -498,9 +506,9 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
                     <DonutChart published={published} failed={failed} pending={pending} />
                     <div className="flex flex-col gap-1.5 w-full">
                         {[
-                            { label: 'Published', color: 'bg-ios-green', val: published },
-                            { label: 'Failed', color: 'bg-ios-red', val: failed },
-                            { label: 'Pending', color: 'bg-ios-gray-2', val: pending },
+                            { label: 'Publicados', color: 'bg-ios-green', val: published },
+                            { label: 'Com falha', color: 'bg-ios-red', val: failed },
+                            { label: 'Pendentes', color: 'bg-ios-gray-2', val: pending },
                         ].map(s => (
                             <div key={s.label} className="flex items-center gap-2 text-[12px]">
                                 <div className={`w-2 h-2 rounded-full ${s.color}`} />
@@ -514,14 +522,14 @@ function LocalDashboard({ channels, onToast, onSelectChannel }: LocalDashboardPr
 
             {/* Heatmap */}
             <IOSCard className="p-5">
-                <h3 className="text-[17px] font-bold mb-4">Posting Heatmap</h3>
+                <h3 className="text-[17px] font-bold mb-4">Horários de publicação</h3>
                 <PostingHeatmap posts={filteredPosts} aggregated={stats?.heatmap} />
             </IOSCard>
 
             {/* Per-channel stats */}
             {channelStats.length > 0 && (
                 <IOSCard className="p-5">
-                    <h3 className="text-[17px] font-bold mb-4">Channels</h3>
+                    <h3 className="text-[17px] font-bold mb-4">Canais</h3>
                     <p className="text-[11px] text-ios-text-secondary -mt-2 mb-2">Toque em um canal para ver as métricas disponíveis.</p>
                     <div className="divide-y divide-ios-separator">
                         {channelStats.map(ch => (
@@ -814,7 +822,7 @@ function ChannelInsights({ channelId, onToast }: { channelId: string; onToast: (
                                             )}
                                         </div>
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-[13px] text-ios-text truncate">{p.caption || <span className="text-ios-text-secondary italic">No caption</span>}</p>
+                                            <p className="text-[13px] text-ios-text truncate">{p.caption || <span className="text-ios-text-secondary italic">Sem legenda</span>}</p>
                                             <p className="text-[10px] text-ios-text-secondary mt-0.5">
                                                 {p.published_at ? new Date(p.published_at).toLocaleString() : ''}
                                             </p>
@@ -860,12 +868,12 @@ function ChannelInsights({ channelId, onToast }: { channelId: string; onToast: (
                                                     ) : p.image_url || p.thumbnail_url ? (
                                                         <img src={p.image_url || p.thumbnail_url || undefined} className="w-full h-full object-cover" alt="" loading="lazy" />
                                                     ) : (
-                                                        <div className="w-full h-full flex items-center justify-center text-[9px] text-ios-text-secondary text-center p-0.5">No media</div>
+                                                        <div className="w-full h-full flex items-center justify-center text-[9px] text-ios-text-secondary text-center p-0.5">Sem mídia</div>
                                                     )}
                                                 </div>
 
                                                 <div className="flex-1 min-w-0">
-                                                    <p className="text-[13px] text-ios-text truncate">{p.caption || <span className="text-ios-text-secondary italic">No caption</span>}</p>
+                                                    <p className="text-[13px] text-ios-text truncate">{p.caption || <span className="text-ios-text-secondary italic">Sem legenda</span>}</p>
                                                     <p className="text-[10px] text-ios-text-secondary mt-0.5">
                                                         {p.published_at ? new Date(p.published_at).toLocaleString() : ''}
                                                         {p.media_type ? ` · ${p.media_type}` : ''}

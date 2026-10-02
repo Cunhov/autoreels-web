@@ -55,7 +55,7 @@ export async function GET(req: Request) {
 	const mediaType = searchParams.get("media_type");
 	const requestedLimit = Number(searchParams.get("limit") || "500");
 	const limit = Number.isFinite(requestedLimit)
-		? Math.min(Math.max(requestedLimit, 1), 1000)
+		? Math.min(Math.max(Math.floor(requestedLimit), 1), 1000)
 		: 500;
 	const requestedOffset = Number(searchParams.get("offset") || "0");
 	const offset = Number.isFinite(requestedOffset) && requestedOffset >= 0

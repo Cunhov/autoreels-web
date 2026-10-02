@@ -18,9 +18,23 @@ export async function GET(req: Request) {
     const days = Number.isFinite(requestedDays) ? Math.min(Math.max(Math.floor(requestedDays), 1), 3650) : 30;
     const allTime = params.get("all") === "1";
     const end = new Date();
-    const start = new Date(end);
-    start.setDate(start.getDate() - days);
+    let start = new Date(end);
+    start.setDate(start.getDate() - days + 1);
     start.setHours(0, 0, 0, 0);
+    if (params.has("start")) {
+        const requestedStart = new Date(params.get("start") || "");
+        if (Number.isNaN(requestedStart.getTime()) || requestedStart > end || requestedStart.getTime() < end.getTime() - 3651 * 86_400_000) {
+            return NextResponse.json({ error: "Período de métricas inválido." }, { status: 400 });
+        }
+        start = requestedStart;
+    }
+    const timeZone = params.get("tz") || "UTC";
+    let dateFormatter: Intl.DateTimeFormat;
+    try {
+        dateFormatter = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", weekday: "short", hour: "2-digit", hourCycle: "h23" });
+    } catch {
+        return NextResponse.json({ error: "Fuso horário inválido." }, { status: 400 });
+    }
 
     try {
         if (allTime) {
@@ -69,11 +83,13 @@ export async function GET(req: Request) {
             }
             const date = post.published_at || post.scheduled_at || post.created_at;
             if (date >= start && date <= end) {
-                const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+                const parts = Object.fromEntries(dateFormatter.formatToParts(date).map(part => [part.type, part.value]));
+                const key = `${parts.year}-${parts.month}-${parts.day}`;
                 daily[key] = (daily[key] || 0) + 1;
                 if (status === "published") {
                     dailyPublished[key] = (dailyPublished[key] || 0) + 1;
-                    heatmap[date.getDay()][date.getHours()]++;
+                    const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(parts.weekday);
+                    heatmap[weekday][Number(parts.hour)]++;
                 }
             }
         }
@@ -83,7 +99,7 @@ export async function GET(req: Request) {
             take: 5,
             select: { id: true, status: true, scheduled_at: true, published_at: true, channel_id: true, caption: true, error_message: true, failed_reason: true, video_url: true, image_url: true, thumbnail_url: true, media_type: true },
         });
-        return NextResponse.json({ start: start.toISOString(), end: end.toISOString(), days, total, statuses, channels, daily, dailyPublished, heatmap, openStatuses: OPEN_STATUSES, recentFailures });
+        return NextResponse.json({ start: start.toISOString(), end: end.toISOString(), timeZone, days, total, statuses, channels, daily, dailyPublished, heatmap, openStatuses: OPEN_STATUSES, recentFailures });
     } catch (error) {
         console.error("Post stats error:", error);
         return NextResponse.json({ error: error instanceof Prisma.PrismaClientKnownRequestError ? "Não foi possível calcular as métricas dos posts." : "Não foi possível carregar as métricas dos posts." }, { status: 500 });
