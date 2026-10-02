@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { X, Globe, Folder, ChevronRight, Check } from 'lucide-react';
 import IOSButton from './IOSButton';
 import { useDialogA11y } from '@/lib/dialog-a11y';
@@ -24,12 +24,15 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
     const [loadingFolders, setLoadingFolders] = useState(false);
     const [currentPath, setCurrentPath] = useState<FolderItem[]>([]);
     const [selectedFolderId, setSelectedFolderId] = useState<string | null>(currentFolderId);
+    const [targetReady, setTargetReady] = useState(false);
     const [importing, setImporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const folderRequestVersionRef = useRef(0);
     const dialogRef = useDialogA11y(true, onClose);
 
     // Fetch folders for the current directory level (same pattern as MoveContentModal)
     async function fetchFolders(parentId: string | null) {
+        const requestVersion = ++folderRequestVersionRef.current;
         setLoadingFolders(true);
         try {
             const params = new URLSearchParams({ type: 'carousel_folder', limit: '500' });
@@ -38,16 +41,22 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
             const res = await fetch(`/api/content-items?${params.toString()}`);
             if (!res.ok) throw new Error('Failed to fetch folders');
             const json = await res.json();
-            setFolders((json.items || json || []) as FolderItem[]);
+            if (requestVersion === folderRequestVersionRef.current) {
+                setFolders((json.items || json || []) as FolderItem[]);
+            }
         } catch {
-            setFolders([]);
+            if (requestVersion === folderRequestVersionRef.current) setFolders([]);
         } finally {
-            setLoadingFolders(false);
+            if (requestVersion === folderRequestVersionRef.current) {
+                setLoadingFolders(false);
+                setTargetReady(true);
+            }
         }
     }
 
     useEffect(() => {
         let cancelled = false;
+        const initializationVersion = folderRequestVersionRef.current;
         const loadCurrentFolder = async () => {
             setSelectedFolderId(currentFolderId);
             if (currentFolderId) {
@@ -61,16 +70,16 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
                         path.unshift(folder);
                         id = folder.parent_id || null;
                     }
-                    if (!cancelled && path[path.length - 1]?.id === currentFolderId) {
+                    if (!cancelled && initializationVersion === folderRequestVersionRef.current && path[path.length - 1]?.id === currentFolderId) {
                         setCurrentPath(path);
                         await fetchFolders(currentFolderId);
-                    } else if (!cancelled) {
+                    } else if (!cancelled && initializationVersion === folderRequestVersionRef.current) {
                         setSelectedFolderId(null);
                         setCurrentPath([]);
                         await fetchFolders(null);
                     }
                 } catch {
-                    if (!cancelled) {
+                    if (!cancelled && initializationVersion === folderRequestVersionRef.current) {
                         setSelectedFolderId(null);
                         setCurrentPath([]);
                         await fetchFolders(null);
@@ -89,16 +98,19 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
     const handleFolderClick = (folder: FolderItem) => {
         setCurrentPath([...currentPath, folder]);
         setSelectedFolderId(folder.id);
+        setTargetReady(false);
         fetchFolders(folder.id);
     };
 
     const handleRootClick = () => {
         setCurrentPath([]);
-        fetchFolders(null);
         setSelectedFolderId(null);
+        setTargetReady(false);
+        fetchFolders(null);
     };
 
     const handleImport = async () => {
+        if (!targetReady || loadingFolders || importing) return;
         if (!url.trim()) {
             setError('Informe a URL do arquivo.');
             return;
@@ -127,7 +139,11 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
         }
     };
 
-    const targetFolderName = currentPath.length > 0 ? currentPath[currentPath.length - 1].name : 'Biblioteca (raiz)';
+    const targetFolderName = !targetReady
+        ? 'Carregando destino…'
+        : currentPath.length > 0
+            ? currentPath[currentPath.length - 1].name
+            : 'Biblioteca (raiz)';
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200" role="presentation" onClick={onClose}>
@@ -198,10 +214,11 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
                                             onClick={() => {
                                                 const newPath = currentPath.slice(0, index + 1);
                                                 setCurrentPath(newPath);
-                                                fetchFolders(folder.id);
                                                 setSelectedFolderId(folder.id);
+                                                setTargetReady(false);
+                                                fetchFolders(folder.id);
                                             }}
-                                            className={`hover:text-blue-500 transition-colors ${index === currentPath.length - 1 ? 'font-semibold text-blue-600' : 'text-gray-600'}`}
+                                            className={`min-h-11 px-2 hover:text-blue-500 transition-colors ${index === currentPath.length - 1 ? 'font-semibold text-blue-600' : 'text-gray-600'}`}
                                         >
                                             {folder.name}
                                         </button>
@@ -211,7 +228,7 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
 
                             {/* Folder list */}
                             <div className="max-h-44 overflow-y-auto p-2 space-y-1">
-                                {loadingFolders ? (
+                {loadingFolders || !targetReady ? (
                                     <div className="flex justify-center py-6">
                                         <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
                                     </div>
@@ -256,10 +273,10 @@ export default function ImportUrlModal({ currentFolderId, onClose, onImported }:
                     <IOSButton variant="secondary" onClick={onClose} disabled={importing} className="!py-2 !px-4 text-sm">
                         Cancelar
                     </IOSButton>
-                    <IOSButton variant="primary" onClick={handleImport} disabled={importing} className="!py-2 !px-4 text-sm">
+                    <IOSButton variant="primary" onClick={handleImport} disabled={importing || !targetReady || loadingFolders} className="!py-2 !px-4 text-sm">
                         {importing
                             ? <span className="flex items-center gap-2"><span className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></span> Importando…</span>
-                            : 'Importar'}
+                            : !targetReady || loadingFolders ? 'Carregando destino…' : 'Importar'}
                     </IOSButton>
                 </div>
             </div>

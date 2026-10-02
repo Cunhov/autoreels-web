@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import {
 	Folder,
 	Video,
+	Image as ImageIcon,
 	MoreVertical,
 	Upload,
 	Plus,
@@ -214,10 +215,21 @@ const GridCellInner = ({
 		formatBytes,
 		formatTime,
 	} = data;
-
 	const index = rowIndex * columnCount + columnIndex;
-	if (index >= sortedItems.length) return null; // Empty slots at end of last row
 	const item = sortedItems[index];
+	const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
+	const imageSrc = item && (item.type === "carousel_folder" || item.type === "video")
+		? item.thumbnail_url || null
+		: item?.url || null;
+	const previousImageSrcRef = useRef(imageSrc);
+	useEffect(() => {
+		if (previousImageSrcRef.current !== imageSrc) {
+			previousImageSrcRef.current = imageSrc;
+			setFailedImageSrc(null);
+		}
+	}, [imageSrc]);
+
+	if (!item) return null; // Empty slots at end of last row
 
 	return (
 		<div style={{ ...style, padding: "0.5rem" }}>
@@ -231,19 +243,6 @@ const GridCellInner = ({
 				onDragOver={(e) => handleDragOver(e, item.id, item)}
 				onDragLeave={handleDragLeave}
 				onDrop={(e) => item.type === "carousel_folder" && handleDrop(e, item.id)}
-				onClick={() => {
-					if (item.type === "carousel_folder") {
-						if (mode === "select" && disableUrlNavigation) {
-							toggleSelection(item.id);
-						} else {
-							disableUrlNavigation
-								? setInternalFolderId(item.id)
-								: router.push(`/content?folderId=${item.id}`);
-						}
-					} else {
-						toggleSelection(item.id);
-					}
-				}}
 				className={`
                     w-full h-full group relative aspect-square rounded-2xl border overflow-hidden cursor-pointer transition-all duration-200
                     ${
@@ -253,20 +252,44 @@ const GridCellInner = ({
 																				}
                     ${dropTargetId === item.id ? "ring-2 ring-green-500 scale-105 bg-green-50 dark:bg-green-900/20" : ""}
                     ${draggedItems.includes(item.id) ? "opacity-50" : ""}
-                    bg-ios-card
+				    bg-ios-card
                 `}
 			>
+				<button
+					type="button"
+					onClick={() => {
+						if (item.type === "carousel_folder") {
+							if (mode === "select" && disableUrlNavigation) {
+								toggleSelection(item.id);
+							} else {
+								disableUrlNavigation
+									? setInternalFolderId(item.id)
+									: router.push(`/content?folderId=${item.id}`);
+							}
+						} else {
+							toggleSelection(item.id);
+						}
+					}}
+					aria-label={item.type === "carousel_folder"
+						? mode === "select" && disableUrlNavigation
+							? `${selectedIds.includes(item.id) ? "Desmarcar" : "Selecionar"} pasta ${item.name}`
+							: `Abrir pasta ${item.name}`
+						: `${selectedIds.includes(item.id) ? "Desmarcar" : "Selecionar"} ${item.type === "video" ? "vídeo" : "imagem"} ${item.name}`}
+					aria-pressed={item.type !== "carousel_folder" || (mode === "select" && disableUrlNavigation) ? selectedIds.includes(item.id) : undefined}
+					className="absolute inset-0 z-10 rounded-2xl bg-transparent focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ios-blue"
+				/>
 				{/* Thumbnail Content */}
 				{item.type === "carousel_folder" ? (
 					<div className="w-full h-full flex flex-col items-center justify-center bg-blue-50/50 dark:bg-blue-900/5 hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors relative overflow-hidden">
-						{item.thumbnail_url ? (
+						{item.thumbnail_url && failedImageSrc !== item.thumbnail_url ? (
 							<>
 								<img
-									onError={(e) => { e.currentTarget.style.display = "none"; }}
 									src={item.thumbnail_url}
 									loading="lazy"
 									decoding="async"
 									className="absolute inset-0 w-full h-full object-cover opacity-60 blur-[1px] group-hover:blur-0 transition-all duration-300"
+									onError={() => setFailedImageSrc(item.thumbnail_url || null)}
+									alt=""
 								/>
 								<div className="absolute inset-0 bg-white/30 dark:bg-black/30 group-hover:bg-transparent transition-colors" />
 								<div className="relative z-10 flex flex-col items-center">
@@ -286,7 +309,7 @@ const GridCellInner = ({
 						)}
 
 						<span
-							className={`text-xs font-medium mt-3 px-3 text-center truncate w-full relative z-10 flex-shrink-0 ${item.thumbnail_url ? "text-white drop-shadow-md" : "text-ios-secondary"}`}
+							className={`text-xs font-medium mt-3 px-3 text-center truncate w-full relative z-10 flex-shrink-0 ${item.thumbnail_url && failedImageSrc !== item.thumbnail_url ? "text-white drop-shadow-md" : "text-ios-secondary"}`}
 						>
 							{item.name}
 						</span>
@@ -294,14 +317,14 @@ const GridCellInner = ({
 				) : (
 					<div className="w-full h-full relative">
 						{item.type === "video" ? (
-							item.thumbnail_url ? (
+							item.thumbnail_url && failedImageSrc !== item.thumbnail_url ? (
 								<img
-									onError={(e) => { e.currentTarget.style.display = "none"; }}
 									src={item.thumbnail_url}
 									alt={item.name}
 									loading="lazy"
 									decoding="async"
 									className="w-full h-full object-cover"
+									onError={() => setFailedImageSrc(item.thumbnail_url || null)}
 								/>
 							) : (
 								<div className="w-full h-full bg-gray-900 flex items-center justify-center relative">
@@ -311,19 +334,23 @@ const GridCellInner = ({
 									</div>
 								</div>
 							)
-						) : (
+						) : item.url && failedImageSrc !== item.url ? (
 							<img
-								onError={(e) => { e.currentTarget.style.display = "none"; }}
-									src={item.url}
+								src={item.url}
 								alt={item.name}
 								loading="lazy"
 								decoding="async"
 								className="w-full h-full object-cover"
+								onError={() => setFailedImageSrc(item.url || null)}
 							/>
+						) : (
+							<div className="w-full h-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+								<ImageIcon size={32} className="text-gray-400" aria-hidden="true" />
+							</div>
 						)}
 
 						{/* Overlay Info (Gradient) */}
-						<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 pt-8 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end">
+						<div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-3 pt-8 opacity-100 transition-opacity flex flex-col justify-end pointer-events-none">
 							<p className="text-white text-xs font-medium truncate drop-shadow-sm">
 								{item.name}
 							</p>
