@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
     Bot,
     FlaskConical,
@@ -17,7 +17,6 @@ import IOSCard from "@/components/IOSComponents";
 import type { AutomationPayload, IgSimulationResult, IgTrigger } from "./types";
 import {
     ACTION_TYPE_LABELS,
-    ApiError,
     TRIGGER_LABELS,
     TRIGGERS,
     apiFetch,
@@ -26,6 +25,37 @@ import {
 
 const inputCls =
     "w-full bg-ios-background border border-ios-separator rounded-lg p-2 text-sm focus:border-ios-blue outline-none placeholder:text-gray-400";
+
+const GATE_LABELS: Record<string, string> = {
+    trigger: "Tipo de evento",
+    channel: "Perfil selecionado",
+    kill_switch: "Automações globais",
+    media_ids: "Publicação selecionada",
+    first_interaction_only: "Primeira interação",
+    negatives: "Palavras a ignorar",
+    keywords: "Palavras-chave",
+    substance: "Catálogo de produtos",
+    quiet_hours: "Horário permitido",
+    bot_pause: "Pausa manual do contato",
+    cooldown: "Intervalo entre mensagens",
+    daily_limit: "Limite diário do contato",
+    rate_limit: "Limite de envios do perfil",
+};
+
+function gateReason(reason: string): string {
+    if (reason === "gatilho incompatível") return "O evento é de outro tipo.";
+    if (reason === "post fora da lista") return "Este post não está selecionado nesta regra.";
+    if (reason === "não é a primeira interação") return "Este contato já interagiu antes.";
+    if (reason === "contém palavra negativa") return "O texto contém um termo excluído.";
+    if (reason === "sem match de palavra-chave") return "Nenhuma palavra-chave corresponde ao texto.";
+    if (reason === "horário de silêncio") return "O horário atual está dentro do período de silêncio.";
+    if (reason === "contato pausado") return "As respostas estão pausadas para este contato.";
+    if (reason === "cooldown ativo") return "Ainda não passou o intervalo entre mensagens.";
+    if (reason === "limite diário atingido") return "Este contato atingiu o limite diário.";
+    if (reason === "throttled") return "O perfil atingiu o limite temporário de envios.";
+    if (reason === "sem match de substância") return "Nenhum item do catálogo corresponde ao texto.";
+    return reason;
+}
 
 interface SimulatorPanelProps {
     channelId: string;
@@ -37,6 +67,8 @@ interface SimulatorPanelProps {
      * Avaliado com prioridade máxima pelo simulador, mesmo sem salvar.
      */
     draft?: AutomationPayload | null;
+    onResultChange?: (result: IgSimulationResult | null) => void;
+    profileLabel?: string;
 }
 
 /**
@@ -49,6 +81,8 @@ export default function SimulatorPanel({
     defaultKind = "comment",
     onToast,
     draft = null,
+    onResultChange,
+    profileLabel,
 }: SimulatorPanelProps) {
     const [open, setOpen] = useState(defaultOpen);
     const [kind, setKind] = useState<IgTrigger>(defaultKind);
@@ -59,6 +93,27 @@ export default function SimulatorPanel({
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [result, setResult] = useState<IgSimulationResult | null>(null);
+    const draftKey = JSON.stringify(draft);
+    const inputKey = JSON.stringify([channelId, draftKey, kind, text, mediaId, username, igUserId]);
+    const generation = useRef(0);
+    const onResultChangeRef = useRef(onResultChange);
+    onResultChangeRef.current = onResultChange;
+
+    useEffect(() => {
+        setKind(defaultKind);
+    }, [defaultKind]);
+
+    useEffect(() => {
+        generation.current += 1;
+        setResult(null);
+        setError("");
+        onResultChangeRef.current?.(null);
+    }, [inputKey]);
+
+    function updateResult(next: IgSimulationResult | null) {
+        setResult(next);
+        onResultChangeRef.current?.(next);
+    }
 
     async function requestSimulation(includeDraft: boolean) {
         const raw = await apiFetch<unknown>("/api/automations/simulate", {
@@ -78,33 +133,23 @@ export default function SimulatorPanel({
 
     async function run() {
         setError("");
-        setResult(null);
+        updateResult(null);
         if (!channelId) {
             setError("Selecione um canal antes de testar.");
             return;
         }
         setLoading(true);
+        const requestGeneration = ++generation.current;
         try {
-            try {
-                setResult(await requestSimulation(true));
-            } catch (e: unknown) {
-                // FIX-A7: rascunho inválido não quebra o fluxo antigo — refaz
-                // a simulação apenas com as automações salvas.
-                if (draft && e instanceof ApiError && e.status === 400) {
-                    setResult(await requestSimulation(false));
-                    onToast?.(
-                        "Rascunho com dados inválidos — simulei apenas as automações salvas.",
-                        "error",
-                    );
-                } else {
-                    throw e;
-                }
-            }
+            const next = await requestSimulation(true);
+            if (generation.current === requestGeneration) updateResult(next);
         } catch (e: unknown) {
             const msg =
                 e instanceof Error ? e.message : "Falha ao simular o evento.";
-            setError(msg);
-            onToast?.(msg, "error");
+            if (generation.current === requestGeneration) {
+                setError(msg);
+                onToast?.(msg, "error");
+            }
         } finally {
             setLoading(false);
         }
@@ -127,8 +172,9 @@ export default function SimulatorPanel({
                         Simulador
                     </h3>
                     <p className="text-[11px] text-ios-text-secondary">
-                        Teste um evento sem disparar nada
+                        {draft ? `Rascunho: ${draft.name || "sem nome"}` : "Teste um evento sem disparar nada"}
                     </p>
+                    <p className="text-[10px] text-ios-text-secondary truncate">{profileLabel || `Perfil ${channelId.slice(0, 8)}`}{draft ? " · não salvo" : ""}</p>
                 </div>
                 {open ? (
                     <ChevronUp size={18} className="text-ios-text-secondary" />
@@ -149,9 +195,7 @@ export default function SimulatorPanel({
                             </label>
                             <select
                                 value={kind}
-                                onChange={(e) =>
-                                    setKind(e.target.value as IgTrigger)
-                                }
+                                onChange={(e) => setKind(e.target.value as IgTrigger)}
                                 className={inputCls}
                             >
                                 {TRIGGERS.map((t) => (
@@ -249,6 +293,7 @@ export default function SimulatorPanel({
                                                 Rascunho
                                             </span>
                                         )}
+                                        {result.matched.automationId !== "draft" && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-ios-gray-5 text-ios-text-secondary">Regra salva</span>}
                                     </p>
                                     <p className="text-[10px] text-ios-text-secondary font-mono truncate">
                                         {result.matched.automationId}
@@ -267,7 +312,7 @@ export default function SimulatorPanel({
                             {result.gates.length > 0 && (
                                 <div>
                                     <p className="text-[11px] font-semibold uppercase tracking-wide text-ios-text-secondary mb-1.5">
-                                        Gates
+                                Verificações
                                     </p>
                                     <ul className="space-y-1">
                                         {result.gates.map((g, i) => (
@@ -287,11 +332,11 @@ export default function SimulatorPanel({
                                                     />
                                                 )}
                                                 <span className="text-ios-text">
-                                                    {g.gate}
+                                                    {GATE_LABELS[g.gate] ?? g.gate}
                                                     {g.reason && (
                                                         <span className="text-ios-text-secondary">
                                                             {" — "}
-                                                            {g.reason}
+                                                            {gateReason(g.reason)}
                                                         </span>
                                                     )}
                                                 </span>
@@ -342,7 +387,8 @@ export default function SimulatorPanel({
                                                         ] ?? a.type}
                                                     </span>
                                                     <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-ios-blue/10 text-ios-blue font-medium">
-                                                        +
+                                                        em
+                                                        {" "}
                                                         {Math.round(
                                                             a.runAtOffsetMs /
                                                                 1000,

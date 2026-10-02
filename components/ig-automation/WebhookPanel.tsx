@@ -18,6 +18,7 @@ import {
     XCircle,
 } from "lucide-react";
 import IOSButton from "@/components/IOSButton";
+import Link from "next/link";
 import IOSCard from "@/components/IOSComponents";
 import IOSSwitch from "@/components/IOSSwitch";
 import IOSToast from "@/components/IOSToast";
@@ -50,7 +51,7 @@ const STATUS_META: Record<
     { label: string; cls: string; icon: typeof CheckCircle2 }
 > = {
     ok: {
-        label: "Assinado",
+        label: "Conexão verificada",
         cls: "bg-ios-green/15 text-ios-green",
         icon: CheckCircle2,
     },
@@ -75,7 +76,7 @@ const STATUS_META: Record<
         icon: XCircle,
     },
     unknown: {
-        label: "Desconhecido",
+        label: "Conexão não verificada",
         cls: "bg-ios-gray-5 text-ios-text-secondary",
         icon: AlertTriangle,
     },
@@ -134,7 +135,7 @@ export default function WebhookPanel({ compact = false }: WebhookPanelProps) {
     const [showToken, setShowToken] = useState(false);
     const [regenerating, setRegenerating] = useState(false);
     const [toggling, setToggling] = useState(false);
-    const [metaOpen, setMetaOpen] = useState(!compact);
+    const [metaOpen, setMetaOpen] = useState(false);
 
     const [toast, setToast] = useState<{
         msg: string;
@@ -199,13 +200,13 @@ export default function WebhookPanel({ compact = false }: WebhookPanelProps) {
                 method: "POST",
                 body: JSON.stringify({ channelId }),
             });
-            showToast("Webhook re-assinado ✓");
+            showToast("Conexão verificada ✓");
             await loadStatuses();
         } catch (e: unknown) {
             showToast(
                 e instanceof Error
                     ? e.message
-                    : "Falha ao re-assinar o webhook.",
+                    : "Falha ao verificar a conexão.",
                 "error",
             );
         } finally {
@@ -285,17 +286,43 @@ export default function WebhookPanel({ compact = false }: WebhookPanelProps) {
             setSettings({ ...settings, dryRun: next });
             showToast(
                 next
-                    ? "Dry-run ativado — ações serão apenas registradas"
-                    : "Dry-run desativado",
+                    ? "Modo de teste ativado — ações serão apenas registradas"
+                    : "Modo de teste desativado — ações podem ser enviadas",
             );
         } catch (e: unknown) {
             showToast(
-                e instanceof Error ? e.message : "Falha ao salvar dry-run.",
+                e instanceof Error ? e.message : "Falha ao salvar modo de teste.",
                 "error",
             );
         } finally {
             setToggling(false);
         }
+    }
+
+    if (compact) {
+        const knownStatuses = statuses.filter((status) => status.status !== "unknown");
+        const allVerified = statuses.length > 0 && statuses.every((status) => status.status === "ok");
+        const statusSummary = statusLoading
+            ? "Consultando conexão…"
+            : statusError || knownStatuses.length === 0
+              ? "Conexão não verificada"
+              : allVerified
+                ? `${statuses.length} perfil${statuses.length === 1 ? " verificado" : "s verificados"}`
+                : `Conexão pendente em ${statuses.length - statuses.filter((status) => status.status === "ok").length} perfil${statuses.length === 1 ? "" : "is"}`;
+        return (
+            <IOSCard className="p-3">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                    <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-semibold text-ios-text">Automações globais</p>
+                        <p className="text-[11px] text-ios-text-secondary">
+                            {settingsLoading ? "Carregando estado…" : !settings ? "Estado global não verificado" : settings.dryRun ? settings.enabled ? "Modo de teste · regras ativas, sem envios reais" : "Modo de teste ativo · automações globais pausadas" : settings.enabled ? "Ativas · envios reais permitidos" : "Pausadas globalmente"}
+                        </p>
+                    </div>
+                    <div className="text-[11px] text-ios-text-secondary">Conexão: {statusSummary}</div>
+                    <Link href="/automations?tab=config" className="min-h-11 inline-flex items-center justify-center px-3 rounded-lg bg-ios-blue/10 text-ios-blue text-[12px] font-semibold">Configurar</Link>
+                </div>
+            </IOSCard>
+        );
     }
 
     return (
@@ -339,10 +366,10 @@ export default function WebhookPanel({ compact = false }: WebhookPanelProps) {
                     <div className="flex items-center justify-between gap-4 flex-1">
                         <div>
                             <p className="text-[14px] font-semibold text-ios-text">
-                                Dry-run
+                                Modo de teste
                             </p>
                             <p className="text-[11px] text-ios-text-secondary">
-                                Loga as ações sem chamar a API do Instagram.
+                                Registra as ações sem enviá-las ao Instagram.
                             </p>
                         </div>
                         {settingsLoading ? (
@@ -355,7 +382,7 @@ export default function WebhookPanel({ compact = false }: WebhookPanelProps) {
                                 checked={settings?.dryRun ?? false}
                                 disabled={toggling || !settings}
                                 onChange={(next) => toggleDryRun(next)}
-                                ariaLabel="Ativar dry-run"
+                                ariaLabel="Ativar modo de teste"
                             />
                         )}
                     </div>
@@ -462,7 +489,7 @@ export default function WebhookPanel({ compact = false }: WebhookPanelProps) {
                                             ) : (
                                                 <Send size={11} />
                                             )}
-                                            Re-assinar
+                                            Verificar conexão
                                         </button>
                                     </div>
                                     {s.lastError && (
@@ -490,10 +517,10 @@ export default function WebhookPanel({ compact = false }: WebhookPanelProps) {
                     </div>
                     <div className="flex-1 min-w-0">
                         <h3 className="text-[15px] font-bold text-ios-text">
-                            Configuração Meta
+                            Configuração avançada do webhook
                         </h3>
                         <p className="text-[11px] text-ios-text-secondary">
-                            URL de callback e verify token do webhook
+                            Dados técnicos para configurar a integração Meta
                         </p>
                     </div>
                     {metaOpen ? (
