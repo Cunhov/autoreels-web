@@ -33,7 +33,6 @@ import {
 	matchSubstancesFuzzy,
 	matchTermsFuzzy,
 	matchText,
-	type IgSubstanceMatch,
 } from "@/lib/ig-automation/matcher";
 import { isQuietNow, normalizeText } from "@/lib/ig-automation/normalize";
 import { renderAction } from "@/lib/ig-automation/render";
@@ -49,6 +48,7 @@ import type {
 	IgRenderVars,
 	IgSimulationResult,
 	IgSubstanceInput,
+	IgSubstanceMatch,
 	IgTrigger,
 } from "@/lib/ig-automation/types";
 
@@ -455,7 +455,9 @@ async function evaluateAutomationGates(
 	// bloqueio de substâncias proibidas (HGH, CJC, GHRP, IGF, wolverine,
 	// retatrutida, tirzepatida...). Vale para o texto e, se configurado
 	// (`blockedCaption`), também para a legenda do post.
-	const blockedTerms = parseStringList(settings?.blockedTerms);
+	const blockedTerms = Array.isArray(settings?.blockedTerms)
+		? settings.blockedTerms.filter((term): term is string => typeof term === "string")
+		: [];
 	let blocked = false;
 	if (blockedTerms.length > 0) {
 		blocked = matchTermsFuzzy(text, blockedTerms);
