@@ -28,7 +28,7 @@ import {
 	type IgLimits,
 } from "@/lib/ig-automation/limits";
 import { bumpStats, logAction } from "@/lib/ig-automation/log";
-import { matchSubstance, matchText } from "@/lib/ig-automation/matcher";
+import { matchSubstances, matchText } from "@/lib/ig-automation/matcher";
 import { isQuietNow, normalizeText } from "@/lib/ig-automation/normalize";
 import { renderAction } from "@/lib/ig-automation/render";
 import type {
@@ -325,6 +325,66 @@ async function loadPostCaption(
 }
 
 /**
+ * Combos configurados em `settings.combos` (ex.: glucosamina + condroitina +
+ * colágeno tipo 2 + MSM => JointFix). Cada item de `terms` é um GRUPO de
+ * sinônimos; o combo casa quando `min` grupos (default: todos) aparecem no texto.
+ */
+interface ComboDefinition {
+	name: string;
+	url: string;
+	description?: string;
+	min: number;
+	terms: string[][];
+}
+
+function parseCombos(settings: Record<string, unknown> | null): ComboDefinition[] {
+	const raw = settings?.combos;
+	if (!Array.isArray(raw)) return [];
+	const out: ComboDefinition[] = [];
+	for (const item of raw) {
+		if (item === null || typeof item !== "object") continue;
+		const candidate = item as Record<string, unknown>;
+		const name = typeof candidate.name === "string" ? candidate.name.trim() : "";
+		const url = typeof candidate.url === "string" ? candidate.url.trim() : "";
+		const groups = Array.isArray(candidate.terms) ? candidate.terms : [];
+		const terms: string[][] = groups
+			.map((group) =>
+				Array.isArray(group)
+					? group
+						.filter((term): term is string => typeof term === "string" && term.trim() !== "")
+						.map((term) => term.trim())
+					: [],
+			)
+			.filter((group) => group.length > 0);
+		if (!name || !url || terms.length === 0) continue;
+		const min =
+			typeof candidate.min === "number" && Number.isFinite(candidate.min)
+				? Math.max(1, Math.min(terms.length, Math.floor(candidate.min)))
+				: terms.length;
+		out.push({
+			name,
+			url,
+			terms,
+			min,
+			description: typeof candidate.description === "string" ? candidate.description : undefined,
+		});
+	}
+	return out;
+}
+
+function matchCombo(text: string, combos: ComboDefinition[]): ComboDefinition | null {
+	if (typeof text !== "string" || text.trim() === "") return null;
+	for (const combo of combos) {
+		let hits = 0;
+		for (const group of combo.terms) {
+			if (matchText(text, group, "any", "contains")) hits += 1;
+		}
+		if (hits >= combo.min) return combo;
+	}
+	return null;
+}
+
+/**
  * Avalia todos os gates da automação (spec §5.8). Com `full=false` (engine)
  * para no primeiro gate que falhar; com `full=true` (simulador) avalia tudo.
  */
@@ -406,23 +466,46 @@ async function evaluateAutomationGates(
 		const substances = options.getSubstances
 			? await options.getSubstances()
 			: await loadSubstances(channel.user_id);
-		// 1º tenta a substância citada no PRÓPRIO comentário; se não houver,
-		// usa a legenda do post (o vídeo) como contexto — ex.: vídeo de bacopa
-		// + comentário "quero" => link da bacopa.
-		let match = matchSubstance(text, substances);
-		if (match === null && event.kind === "comment") {
-			const caption = await loadPostCaption(channel, event.mediaId);
-			if (caption) match = matchSubstance(caption, substances);
+		const combos = parseCombos(settings);
+		// Combos têm prioridade (ex.: glucosamina + condroitina + colágeno tipo 2
+		// + MSM => JointFix). 1º texto do comentário; depois a legenda do post.
+		let captionText: string | null = null;
+		let comboMatch = matchCombo(text, combos);
+		if (comboMatch === null && event.kind === "comment") {
+			captionText = await loadPostCaption(channel, event.mediaId);
+			if (captionText) comboMatch = matchCombo(captionText, combos);
 		}
-		if (match) {
-			vars["substancia.nome"] = match.nome;
-			vars["substancia.descricao"] = match.descricao;
-			vars["substancia.acao"] = match.acao;
-			vars["substancia.dosagem"] = match.dosagem;
-			vars["substancia.duracao"] = match.duracao;
-			vars["substancia.url"] = match.url;
+		// Sem combo: coleta TODAS as substâncias citadas (comentário > legenda)
+		// para enviar todos os links juntos numa única mensagem.
+		let matches = comboMatch === null ? matchSubstances(text, substances) : [];
+		if (matches.length === 0 && comboMatch === null && event.kind === "comment") {
+			if (captionText === null) captionText = await loadPostCaption(channel, event.mediaId);
+			if (captionText) matches = matchSubstances(captionText, substances);
 		}
-		if (!record("substance", match !== null, "sem substância")) {
+		if (comboMatch !== null) {
+			vars["substancia.nome"] = comboMatch.name;
+			vars["substancia.url"] = comboMatch.url;
+			vars["substancia.descricao"] = comboMatch.description ?? "";
+			vars["substancia.acao"] = "";
+			vars["substancia.dosagem"] = "";
+			vars["substancia.duracao"] = "";
+			vars["substancias"] = `• ${comboMatch.name}: ${comboMatch.url}`;
+		} else if (matches.length > 0) {
+			const primary = matches[0];
+			vars["substancia.nome"] = primary.nome;
+			vars["substancia.descricao"] = primary.descricao;
+			vars["substancia.acao"] = primary.acao;
+			vars["substancia.dosagem"] = primary.dosagem;
+			vars["substancia.duracao"] = primary.duracao;
+			vars["substancia.url"] = primary.url;
+			const list = matches.slice(0, 8);
+			let rendered = list.map((item) => `• ${item.nome}: ${item.url}`).join("\n");
+			if (matches.length > list.length) {
+				rendered += `\n• e mais ${matches.length - list.length}...`;
+			}
+			vars["substancias"] = rendered;
+		}
+		if (!record("substance", comboMatch !== null || matches.length > 0, "sem substância")) {
 			return { gates, passed: false, failedGate, vars };
 		}
 	}

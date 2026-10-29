@@ -164,19 +164,20 @@ function substanceTermMatches(
 }
 
 /**
- * Regra n8n: primeiro item do catálogo que casar vence. Cada item é testado
- * pela keyword principal e pelos sinônimos (`keywords`).
+ * Retorna TODAS as substâncias do catálogo que aparecem no texto (na ordem do
+ * catálogo). Usado para montar a lista de links em uma única mensagem.
  */
-export function matchSubstance(
+export function matchSubstances(
 	text: string,
 	substances: IgSubstanceInput[],
-): IgSubstanceMatch | null {
+): IgSubstanceMatch[] {
 	const source = typeof text === "string" ? text : "";
-	if (source.trim() === "") return null;
-	if (!Array.isArray(substances) || substances.length === 0) return null;
+	if (source.trim() === "") return [];
+	if (!Array.isArray(substances) || substances.length === 0) return [];
 
 	const normalizedText = normalizeText(source);
 	const boundaryText = normalizeForWordBoundary(source);
+	const out: IgSubstanceMatch[] = [];
 
 	for (const substance of substances) {
 		if (!substance || typeof substance !== "object") continue;
@@ -188,7 +189,7 @@ export function matchSubstance(
 			substanceTermMatches(term, normalizedText, boundaryText),
 		);
 		if (!matched) continue;
-		return {
+		out.push({
 			...substance,
 			nome: substance.name ?? "",
 			url: substance.url ?? "",
@@ -196,9 +197,20 @@ export function matchSubstance(
 			acao: substance.action ?? "",
 			dosagem: substance.dosage ?? "",
 			duracao: substance.duration ?? "",
-		};
+		});
 	}
-	return null;
+	return out;
+}
+
+/**
+ * Regra n8n: primeiro item do catálogo que casar vence. Cada item é testado
+ * pela keyword principal e pelos sinônimos (`keywords`).
+ */
+export function matchSubstance(
+	text: string,
+	substances: IgSubstanceInput[],
+): IgSubstanceMatch | null {
+	return matchSubstances(text, substances)[0] ?? null;
 }
 
 /**
