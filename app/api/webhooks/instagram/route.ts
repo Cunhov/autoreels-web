@@ -72,13 +72,14 @@ export async function GET(req: Request): Promise<Response> {
 export async function POST(req: Request): Promise<Response> {
 	const rawBody = await req.text();
 	const signature = req.headers.get("x-hub-signature-256") ?? undefined;
-	const secret = (
-		process.env.INSTAGRAM_CLIENT_SECRET ||
-		process.env.META_APP_SECRET ||
-		""
-	).trim();
+	const secrets = [
+		process.env.INSTAGRAM_CLIENT_SECRET,
+		process.env.META_APP_SECRET,
+	]
+		.map((value) => (value || "").trim())
+		.filter(Boolean);
 
-	if (!secret) {
+	if (secrets.length === 0) {
 		console.error(
 			"[ig-webhook] segredo ausente (INSTAGRAM_CLIENT_SECRET/META_APP_SECRET).",
 		);
@@ -87,7 +88,7 @@ export async function POST(req: Request): Promise<Response> {
 			{ status: 500 },
 		);
 	}
-	if (!verifySignature(rawBody, signature, secret)) {
+	if (!secrets.some((secret) => verifySignature(rawBody, signature, secret))) {
 		return NextResponse.json(
 			{ error: "Assinatura inválida." },
 			{ status: 401 },
