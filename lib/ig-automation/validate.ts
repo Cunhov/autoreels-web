@@ -61,7 +61,7 @@ export const IG_EVENT_STATUSES = [
 
 export const IG_ACTION_LOG_STATUSES = ["pending", "sent", "failed", "skipped"] as const;
 
-const MAX_KEYWORDS = 50;
+const MAX_KEYWORDS = 500;
 const MAX_KEYWORD_LENGTH = 120;
 const MAX_MEDIA_IDS = 50;
 const MAX_ACTIONS = 20;

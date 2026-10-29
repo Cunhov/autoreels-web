@@ -11,6 +11,7 @@
  * `simulate` reusa os MESMOS gates/matcher/render, sem escrita no banco e sem
  * chamadas Graph (não gera links de clique — URLs originais são mantidas).
  */
+import { GRAPH_API_VERSION, getGraphBaseUrl } from "@/lib/instagram";
 import { prisma } from "@/lib/prisma";
 import { executeAction } from "@/lib/ig-automation/actions";
 import {
@@ -282,6 +283,48 @@ async function loadSubstances(userId: string): Promise<IgSubstanceInput[]> {
 }
 
 /**
+ * Carrega a legenda do post (DB local ou Graph API) para permitir que a
+ * substância do VÍDEO seja identificada mesmo quando o comentário é genérico
+ * ("quero", "onde compra"). Cache em memória por media id.
+ */
+const captionCache = new Map<string, string | null>();
+
+async function loadPostCaption(
+	channel: EngineChannel,
+	mediaId: string | undefined,
+): Promise<string | null> {
+	if (!mediaId) return null;
+	if (captionCache.has(mediaId)) return captionCache.get(mediaId) ?? null;
+	let caption: string | null = null;
+	try {
+		const post = await prisma.post.findFirst({
+			where: { instagram_media_id: mediaId },
+			select: { caption: true },
+		});
+		const value = post?.caption?.trim();
+		if (value) caption = value;
+	} catch {
+		/* legenda é opcional */
+	}
+	if (!caption && channel.access_token) {
+		try {
+			const base = getGraphBaseUrl(channel.access_token);
+			const url = `${base}/${GRAPH_API_VERSION}/${encodeURIComponent(mediaId)}?fields=caption&access_token=${encodeURIComponent(channel.access_token)}`;
+			const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+			const data = (await response.json()) as { caption?: unknown };
+			if (typeof data.caption === "string" && data.caption.trim() !== "") {
+				caption = data.caption;
+			}
+		} catch {
+			/* busca de legenda é best-effort */
+		}
+	}
+	if (captionCache.size > 500) captionCache.clear();
+	captionCache.set(mediaId, caption);
+	return caption;
+}
+
+/**
  * Avalia todos os gates da automação (spec §5.8). Com `full=false` (engine)
  * para no primeiro gate que falhar; com `full=true` (simulador) avalia tudo.
  */
@@ -363,7 +406,14 @@ async function evaluateAutomationGates(
 		const substances = options.getSubstances
 			? await options.getSubstances()
 			: await loadSubstances(channel.user_id);
-		const match = matchSubstance(text, substances);
+		// 1º tenta a substância citada no PRÓPRIO comentário; se não houver,
+		// usa a legenda do post (o vídeo) como contexto — ex.: vídeo de bacopa
+		// + comentário "quero" => link da bacopa.
+		let match = matchSubstance(text, substances);
+		if (match === null && event.kind === "comment") {
+			const caption = await loadPostCaption(channel, event.mediaId);
+			if (caption) match = matchSubstance(caption, substances);
+		}
 		if (match) {
 			vars["substancia.nome"] = match.nome;
 			vars["substancia.descricao"] = match.descricao;
