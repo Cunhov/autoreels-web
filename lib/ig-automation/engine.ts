@@ -28,7 +28,13 @@ import {
 	type IgLimits,
 } from "@/lib/ig-automation/limits";
 import { bumpStats, logAction } from "@/lib/ig-automation/log";
-import { matchSubstances, matchText } from "@/lib/ig-automation/matcher";
+import {
+	matchSubstances,
+	matchSubstancesFuzzy,
+	matchTermsFuzzy,
+	matchText,
+	type IgSubstanceMatch,
+} from "@/lib/ig-automation/matcher";
 import { isQuietNow, normalizeText } from "@/lib/ig-automation/normalize";
 import { renderAction } from "@/lib/ig-automation/render";
 import type {
@@ -377,7 +383,9 @@ function matchCombo(text: string, combos: ComboDefinition[]): ComboDefinition | 
 	for (const combo of combos) {
 		let hits = 0;
 		for (const group of combo.terms) {
-			if (matchText(text, group, "any", "contains")) hits += 1;
+			if (matchText(text, group, "any", "contains") || matchTermsFuzzy(text, group)) {
+				hits += 1;
+			}
 		}
 		if (hits >= combo.min) return combo;
 	}
@@ -441,6 +449,25 @@ async function evaluateAutomationGates(
 		return { gates, passed: false, failedGate, vars };
 	}
 
+	const settings = parseJsonObject(automation.settings);
+	const substanceMode = settings?.substanceCatalog === true;
+
+	// bloqueio de substâncias proibidas (HGH, CJC, GHRP, IGF, wolverine,
+	// retatrutida, tirzepatida...). Vale para o texto e, se configurado
+	// (`blockedCaption`), também para a legenda do post.
+	const blockedTerms = parseStringList(settings?.blockedTerms);
+	let blocked = false;
+	if (blockedTerms.length > 0) {
+		blocked = matchTermsFuzzy(text, blockedTerms);
+		if (!blocked && settings?.blockedCaption === true && event.kind === "comment") {
+			const caption = await loadPostCaption(channel, event.mediaId);
+			if (caption) blocked = matchTermsFuzzy(caption, blockedTerms);
+		}
+	}
+	if (!record("blocked", !blocked, "termo proibido")) {
+		return { gates, passed: false, failedGate, vars };
+	}
+
 	// keywords — FIX-M1: postback usa `postbackPayload` como texto de match
 	// (payload vazio cai no `event.text`).
 	const keywordsText =
@@ -450,19 +477,28 @@ async function evaluateAutomationGates(
 			? event.postbackPayload
 			: text;
 	const keywords = parseStringList(automation.keywords);
-	const keywordsOk = matchText(
+	let keywordsOk = matchText(
 		keywordsText,
 		keywords,
 		automation.match_mode === "all" ? "all" : "any",
 		parseMatchType(automation.match_type),
 	);
+	// tolerância a erros de digitação: se não casou palavra-chave mas cita uma
+	// substância do catálogo (ex.: "pacopa", "bacopa moniere"), passa adiante.
+	let fuzzyMatches: IgSubstanceMatch[] | null = null;
+	if (!keywordsOk && substanceMode) {
+		const substances = options.getSubstances
+			? await options.getSubstances()
+			: await loadSubstances(channel.user_id);
+		fuzzyMatches = matchSubstancesFuzzy(text, substances);
+		if (fuzzyMatches.length > 0) keywordsOk = true;
+	}
 	if (!record("keywords", keywordsOk, "sem match de palavra-chave")) {
 		return { gates, passed: false, failedGate, vars };
 	}
 
 	// substance (só quando settings.substanceCatalog = true)
-	const settings = parseJsonObject(automation.settings);
-	if (settings?.substanceCatalog === true) {
+	if (substanceMode) {
 		const substances = options.getSubstances
 			? await options.getSubstances()
 			: await loadSubstances(channel.user_id);
@@ -478,6 +514,10 @@ async function evaluateAutomationGates(
 		// Sem combo: coleta TODAS as substâncias citadas (comentário > legenda)
 		// para enviar todos os links juntos numa única mensagem.
 		let matches = comboMatch === null ? matchSubstances(text, substances) : [];
+		if (matches.length === 0 && comboMatch === null) {
+			if (fuzzyMatches === null) fuzzyMatches = matchSubstancesFuzzy(text, substances);
+			matches = fuzzyMatches;
+		}
 		if (matches.length === 0 && comboMatch === null && event.kind === "comment") {
 			if (captionText === null) captionText = await loadPostCaption(channel, event.mediaId);
 			if (captionText) matches = matchSubstances(captionText, substances);

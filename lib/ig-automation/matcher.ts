@@ -213,6 +213,105 @@ export function matchSubstance(
 	return matchSubstances(text, substances)[0] ?? null;
 }
 
+// ─── Fuzzy (erros de digitação) ──────────────────────────────────────────────
+
+function tokenize(text: string): string[] {
+	return normalizeForWordBoundary(text)
+		.toLowerCase()
+		.split(/[^a-z0-9]+/)
+		.filter((token) => token.length > 0);
+}
+
+function levenshtein(a: string, b: string): number {
+	const m = a.length;
+	const n = b.length;
+	if (m === 0) return n;
+	if (n === 0) return m;
+	let prev = new Array<number>(n + 1);
+	let curr = new Array<number>(n + 1);
+	for (let j = 0; j <= n; j++) prev[j] = j;
+	for (let i = 1; i <= m; i++) {
+		curr[0] = i;
+		for (let j = 1; j <= n; j++) {
+			const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+			curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+		}
+		const swap = prev;
+		prev = curr;
+		curr = swap;
+	}
+	return prev[n];
+}
+
+/** Distância máxima aceita por tamanho do termo (curtos exigem exatidão). */
+function fuzzyMaxDistance(length: number): number {
+	if (length <= 4) return 0;
+	if (length <= 8) return 1;
+	return 2;
+}
+
+function fuzzyTermMatch(textTokens: string[], term: string): boolean {
+	const termTokens = tokenize(term);
+	if (termTokens.length === 0) return false;
+	const termJoined = termTokens.join("");
+	const maxDistance = fuzzyMaxDistance(termJoined.length);
+
+	if (termTokens.length === 1) {
+		for (const word of textTokens) {
+			if (levenshtein(word, termJoined) <= maxDistance) return true;
+		}
+		return false;
+	}
+
+	for (let i = 0; i + termTokens.length <= textTokens.length; i++) {
+		const window = textTokens.slice(i, i + termTokens.length).join("");
+		if (levenshtein(window, termJoined) <= maxDistance) return true;
+	}
+	return false;
+}
+
+/** Testa termos (com sinônimos/grupos) tolerando erros de digitação. */
+export function matchTermsFuzzy(text: string, terms: string[]): boolean {
+	const tokens = tokenize(text);
+	if (tokens.length === 0 || !Array.isArray(terms)) return false;
+	return terms.some(
+		(term) => typeof term === "string" && term.trim() !== "" && fuzzyTermMatch(tokens, term),
+	);
+}
+
+/** Como matchSubstances, mas tolera erros de digitação nos nomes/aliases. */
+export function matchSubstancesFuzzy(
+	text: string,
+	substances: IgSubstanceInput[],
+): IgSubstanceMatch[] {
+	const tokens = tokenize(text);
+	if (tokens.length === 0) return [];
+	if (!Array.isArray(substances) || substances.length === 0) return [];
+
+	const out: IgSubstanceMatch[] = [];
+	for (const substance of substances) {
+		if (!substance || typeof substance !== "object") continue;
+		const terms = [
+			substance.keyword,
+			...parseSubstanceKeywords(substance.keywords),
+		];
+		const matched = terms.some(
+			(term) => typeof term === "string" && term.trim() !== "" && fuzzyTermMatch(tokens, term),
+		);
+		if (!matched) continue;
+		out.push({
+			...substance,
+			nome: substance.name ?? "",
+			url: substance.url ?? "",
+			descricao: substance.description ?? "",
+			acao: substance.action ?? "",
+			dosagem: substance.dosage ?? "",
+			duracao: substance.duration ?? "",
+		});
+	}
+	return out;
+}
+
 /**
  * Rotação aleatória de variants evitando repetir `lastUsed` quando houver
  * mais de uma opção utilizável. Sem variants → "".
