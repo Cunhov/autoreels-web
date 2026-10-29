@@ -357,7 +357,8 @@ export async function sendDM(
 export async function getSubscribedFields(
 	ctx: IgGraphContext,
 ): Promise<GraphResult> {
-	return graphRequest(ctx, "GET", "me/subscribed_apps");
+	const target = ctx.accountId ? encodeURIComponent(ctx.accountId) : "me";
+	return graphRequest(ctx, "GET", `${target}/subscribed_apps`);
 }
 
 export async function subscribeAccountFields(
@@ -375,5 +376,6 @@ export async function subscribeAccountFields(
 		};
 	}
 	const query = `subscribed_fields=${encodeURIComponent(clean.join(","))}`;
-	return graphRequest(ctx, "POST", `me/subscribed_apps?${query}`);
+	const target = ctx.accountId ? encodeURIComponent(ctx.accountId) : "me";
+	return graphRequest(ctx, "POST", `${target}/subscribed_apps?${query}`);
 }
