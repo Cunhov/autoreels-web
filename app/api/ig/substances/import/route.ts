@@ -65,9 +65,9 @@ export async function POST(req: Request) {
             where: { keyword: { in: keywords } },
             select: { id: true, keyword: true, user_id: true },
         });
-        // keyword é única globalmente: registros globais (user_id null) nunca
-        // são alterados/sequestrados — conflito 409 informativo.
-        const foreign = existing.find((row) => row.user_id !== userId);
+        // keyword é única globalmente: registros globais (user_id null) podem
+        // ser atualizados pelo admin; registros de outro usuário são conflito.
+        const foreign = existing.find((row) => row.user_id !== null && row.user_id !== userId);
         if (foreign) {
             return NextResponse.json(
                 {
@@ -88,7 +88,7 @@ export async function POST(req: Request) {
                     await tx.igSubstance.update({
                         where: { id: found.id },
                         data: {
-                            user_id: userId,
+                            user_id: found.user_id,
                             name: item.name,
                             keywords: JSON.stringify(item.keywords),
                             description: item.description,

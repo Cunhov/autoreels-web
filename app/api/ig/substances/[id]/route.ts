@@ -22,7 +22,7 @@ export async function PATCH(req: Request, { params }: RouteParams) {
     const { id } = await params;
     try {
         const existing = await prisma.igSubstance.findFirst({
-            where: { id, user_id: userId },
+            where: { id, OR: [{ user_id: null }, { user_id: userId }] },
         });
         if (!existing) return notFound("Substância não encontrada");
 
@@ -61,7 +61,7 @@ export async function DELETE(_req: Request, { params }: RouteParams) {
     const { id } = await params;
     try {
         const existing = await prisma.igSubstance.findFirst({
-            where: { id, user_id: userId },
+            where: { id, OR: [{ user_id: null }, { user_id: userId }] },
             select: { id: true },
         });
         if (!existing) return notFound("Substância não encontrada");

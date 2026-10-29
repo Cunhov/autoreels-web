@@ -25,12 +25,18 @@ export async function GET(req: Request) {
         const { searchParams } = new URL(req.url);
         const q = firstParam(searchParams, "q", "search");
 
-        const where: Prisma.IgSubstanceWhereInput = { user_id: userId };
+        const where: Prisma.IgSubstanceWhereInput = {
+            OR: [{ user_id: null }, { user_id: userId }],
+        };
         if (q) {
             const needle = q.trim();
-            where.OR = [
-                { keyword: { contains: needle } },
-                { name: { contains: needle } },
+            where.AND = [
+                {
+                    OR: [
+                        { keyword: { contains: needle } },
+                        { name: { contains: needle } },
+                    ],
+                },
             ];
         }
 
