@@ -267,6 +267,31 @@ model CronLock {
   @@map("cron_locks")
 }
 
+/// Fila de prioridade: vídeos novos (CRU ou 1ª variação) que devem ser
+/// publicados antes do loop do planner. O Post é criado direto (planner_id
+/// null) e, depois de publicado, o item entra no planner configurado em
+/// `planner_ids`.
+model IgPriorityQueue {
+  id              String    @id @default(uuid())
+  user_id         String
+  channel_id      String
+  content_item_id String
+  post_id         String?
+  job_id          String?   @unique
+  planner_ids     String? // JSON array de planner ids
+  caption         String?
+  scheduled_at    DateTime?
+  status          String    @default("pending") // pending | posted | failed
+  loop_added      Boolean   @default(false)
+  posted_at       DateTime?
+  created_at      DateTime  @default(now())
+
+  @@map("ig_priority_queue")
+  @@index([channel_id, status])
+  @@index([post_id])
+  @@index([loop_added])
+}
+
 model PostMetric {
   id          String   @id @default(uuid())
   post_id     String   @unique

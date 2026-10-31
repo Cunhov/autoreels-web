@@ -97,6 +97,13 @@ type PrismaLike = {
 	post: {
 		create: (args: Prisma.PostCreateArgs) => Promise<Post>;
 	};
+	/** Fila prioritária (opcional: runtimes de teste não precisam dela). */
+	igPriorityQueue?: {
+		findMany: (args: {
+			where: { channel_id: { in: string[] }; status: string };
+			select: { channel_id: true };
+		}) => Promise<Array<{ channel_id: string }>>;
+	};
 	$transaction?: (ops: Prisma.PrismaPromise<unknown>[]) => Promise<unknown[]>;
 };
 
@@ -2033,6 +2040,38 @@ export async function runPlannerOnce(
 		};
 	}
 
+	// ── Fila prioritária: o vídeo novo SUBSTITUI o slot do loop ──────────────
+	// Se o canal tem um Post prioritário pendente, o planner não cria outro
+	// post para ele neste tick (o loop continua nos demais canais). Assim o
+	// total/dia não aumenta: prioritário ocupa o slot, loop preenche o resto.
+	let channelsForRun = publishableChannels;
+	try {
+		const priorityRows = await prisma.igPriorityQueue?.findMany({
+			where: {
+				channel_id: { in: publishableChannels.map((channel) => channel.id) },
+				status: "pending",
+			},
+			select: { channel_id: true },
+		});
+		if (priorityRows && priorityRows.length > 0) {
+			const priorityChannels = new Set(
+				priorityRows.map((row) => row.channel_id),
+			);
+			channelsForRun = publishableChannels.filter(
+				(channel) => !priorityChannels.has(channel.id),
+			);
+			if (channelsForRun.length === 0) {
+				return {
+					ok: false,
+					skipped: "priority_pending",
+					error: "Priority queue pending for all publishable channels",
+				};
+			}
+		}
+	} catch {
+		/* SAFETY: fila prioritária é opcional — planner nunca quebra por ela */
+	}
+
 	// ── Resolução ANTES do claim (achado: tick não é consumido por erro) ──────
 	// M15: retry com avanço de índice para ITEM DELETADO — um content entry que
 	// aponta para library item removido não pode travar o planner para sempre
@@ -2121,12 +2160,12 @@ export async function runPlannerOnce(
 	// encadeado). Resolvemos os datas primeiro (buildPostData é async por causa
 	// dos templates) e só então montamos o array de operações.
 	const postDatas: Prisma.PostUncheckedCreateInput[] = [];
-	for (let i = 0; i < publishableChannels.length; i++) {
+	for (let i = 0; i < channelsForRun.length; i++) {
 		postDatas.push(
 			await buildPostData({
 				prisma,
 				planner: { user_id: planner.user_id, id: planner.id },
-				channel: publishableChannels[i],
+				channel: channelsForRun[i],
 				runtime,
 				config,
 				now,

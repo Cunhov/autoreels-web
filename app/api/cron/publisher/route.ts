@@ -45,6 +45,7 @@ import {
 } from "@/lib/tiktok";
 import { resolveFinalCaption } from "@/lib/planner-runtime";
 import { publishYoutubeFirstComment } from "@/lib/first-comment";
+import { processPublishedPriorityQueue } from "@/lib/priority-queue";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -2251,7 +2252,9 @@ async function handler(request: Request) {
 						OR: [{ scheduled_at: { lte: now } }, { scheduled_at: null }],
 					},
 					include: { channel: true },
-					orderBy: { scheduled_at: "asc" },
+					// planner_id NULL = post avulso/prioritário. No SQLite, NULL
+					// ordena primeiro em ASC — o vídeo novo fura a fila do loop.
+					orderBy: [{ planner_id: "asc" }, { scheduled_at: "asc" }],
 					take: 5,
 				});
 				if (pendingPosts.length > 0) {
@@ -3410,6 +3413,19 @@ async function handler(request: Request) {
 				await sendNotification(
 					`⚠️ ${results.errors} publicação(ões) falharam no último ciclo do publisher.`,
 				);
+			}
+
+			// Fila prioritária: posts avulsos já publicados entram no loop do
+			// planner (append no fim; `published_indexes` não desloca).
+			try {
+				const priority = await processPublishedPriorityQueue(prisma);
+				if (priority.appended > 0 || priority.failed > 0) {
+					console.log(
+						`[priority] checked=${priority.checked} appended=${priority.appended} failed=${priority.failed}`,
+					);
+				}
+			} catch (priorityError) {
+				console.error("[priority] process failed:", priorityError);
 			}
 
 			return NextResponse.json(results);
