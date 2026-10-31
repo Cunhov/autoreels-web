@@ -141,6 +141,22 @@ export async function POST(req: Request) {
 		if (afterLast > nextAt) nextAt = afterLast;
 	}
 
+	// Não colar no post que o loop acabou de publicar: o primeiro prioritário
+	// também respeita o gap mínimo desde o último publicado do canal.
+	const lastPublished = await prisma.post.findFirst({
+		where: {
+			channel_id: channelId,
+			status: "published",
+			published_at: { not: null },
+		},
+		orderBy: { published_at: "desc" },
+		select: { published_at: true },
+	});
+	if (lastPublished?.published_at) {
+		const afterPublished = lastPublished.published_at.getTime() + gapMs;
+		if (afterPublished > nextAt) nextAt = afterPublished;
+	}
+
 	const captionOverride =
 		typeof body.caption === "string" && body.caption.trim()
 			? sanitizeCaption(body.caption)
